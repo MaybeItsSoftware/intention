@@ -57,6 +57,12 @@
 		66B8D0922FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
 		66B8D0932FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
 		66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
+		66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0FE2FE985EF00BC0D7F /* env.txt */; };
+		66B8D1002FE985EF00BC0D7F /* env.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0FE2FE985EF00BC0D7F /* env.txt */; };
+		66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
+		66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
+		66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
+		66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -137,6 +143,9 @@
 		66B8D0762FE985EF00BC0D7F /* providers.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = providers.js; path = "../../Intention Chrome/providers.js"; sourceTree = "<group>"; };
 		66B8D0772FE985EF00BC0D7F /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = "../../Intention Chrome/options.css"; sourceTree = "<group>"; };
 		66B8D0782FE985EF00BC0D7F /* icon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon32.png; path = "../../Intention Chrome/icon32.png"; sourceTree = "<group>"; };
+		66B8D0FE2FE985EF00BC0D7F /* env.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = env.txt; path = "../../Intention Chrome/env.txt"; sourceTree = "<group>"; };
+		66B8D1012FE985EF00BC0D7F /* coaching.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = coaching.html; path = "../../Intention Chrome/coaching.html"; sourceTree = "<group>"; };
+		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -280,6 +289,9 @@
 				66B8D0762FE985EF00BC0D7F /* providers.js */,
 				66B8D0772FE985EF00BC0D7F /* options.css */,
 				66B8D0782FE985EF00BC0D7F /* icon32.png */,
+				66B8D0FE2FE985EF00BC0D7F /* env.txt */,
+				66B8D1012FE985EF00BC0D7F /* coaching.html */,
+				66B8D1042FE985EF00BC0D7F /* coaching.js */,
 			);
 			name = Resources;
 			path = "Shared (Extension)";
@@ -460,6 +472,9 @@
 				66B8D0922FE985EF00BC0D7F /* providers.js in Resources */,
 				66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */,
+				66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */,
+				66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */,
+				66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -481,6 +496,9 @@
 				66B8D0842FE985EF00BC0D7F /* providers.js in Resources */,
 				66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */,
+				66B8D1002FE985EF00BC0D7F /* env.txt in Resources */,
+				66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */,
+				66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

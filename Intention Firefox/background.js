@@ -5,6 +5,88 @@ try {
 }
 
 const GRANTS_DAILY_CAP = 3;
+const INT_LOG = '[Intention]';
+
+// Sync DNR rules based on blocked domains setting
+async function syncBlockingRules() {
+  try {
+    const { blockedDomains = [] } = await getStorage(['blockedDomains']);
+    const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = currentRules.map(r => r.id);
+    
+    const coachingUrl = chrome.runtime.getURL('coaching.html');
+    const addRules = blockedDomains.map((domain, index) => {
+      const ruleId = 1000 + index;
+      const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+      return {
+        id: ruleId,
+        priority: 1,
+        action: {
+          type: 'redirect',
+          redirect: {
+            regexSubstitution: `${coachingUrl}?domain=${domain}`
+          }
+        },
+        condition: {
+          regexFilter: `^https?://(?:[^/]*\\.)?${escaped}(?:/.*)?$`,
+          resourceTypes: ['main_frame']
+        }
+      };
+    });
+
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds,
+      addRules
+    });
+    console.log(INT_LOG, 'Synced dynamic blocking rules:', addRules.length);
+  } catch (e) {
+    console.error(INT_LOG, 'Error syncing dynamic blocking rules:', e);
+  }
+}
+
+// Session rules to temporarily allow a tab to visit a domain
+async function registerSessionRule(tabId, domain, minutes) {
+  try {
+    const ruleId = tabId;
+    const addRules = [{
+      id: ruleId,
+      priority: 2,
+      action: {
+        type: 'allow'
+      },
+      condition: {
+        urlFilter: `*://*.${domain}/*`,
+        tabIds: [tabId],
+        resourceTypes: ['main_frame']
+      }
+    }];
+    
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [ruleId],
+      addRules
+    });
+    console.log(INT_LOG, 'Registered session allow rule for tab', tabId, 'domain', domain);
+  } catch (e) {
+    console.error(INT_LOG, 'Error registering session rule:', e);
+  }
+}
+
+async function removeSessionRule(tabId) {
+  try {
+    await chrome.declarativeNetRequest.updateSessionRules({
+      removeRuleIds: [tabId]
+    });
+    console.log(INT_LOG, 'Removed session allow rule for tab', tabId);
+  } catch (e) {
+    console.error(INT_LOG, 'Error removing session rule:', e);
+  }
+}
+
+// Sync rules on load and install
+chrome.runtime.onInstalled.addListener(() => {
+  syncBlockingRules();
+});
+syncBlockingRules();
 
 chrome.action.onClicked.addListener(() => {
   chrome.runtime.openOptionsPage();
@@ -24,11 +106,16 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     await setStorage({ chatHistories });
   }
   chrome.alarms.clear(`checkin-${tabId}`);
+  removeSessionRule(tabId);
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm.name.startsWith('checkin-')) return;
   const tabId = parseInt(alarm.name.replace('checkin-', ''), 10);
+  
+  // Expiration of session time -> remove DNR allow rule for this tab
+  removeSessionRule(tabId);
+  
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'showCheckin' });
   } catch (e) {
@@ -50,6 +137,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleMessage(message, sender) {
   const tabId = sender.tab?.id;
   switch (message.action) {
+    case 'checkPageMatch': return checkPageMatch(message.host, tabId);
     case 'getConfig': return getFullConfig();
     case 'saveSetup': return saveSetup(message.config);
     case 'saveSettings': return saveSettings(message.config);
@@ -71,9 +159,27 @@ async function handleMessage(message, sender) {
     case 'openOptions':
       chrome.runtime.openOptionsPage();
       return { ok: true };
+    case 'closeCurrentTab': {
+      if (tabId != null) {
+        try { chrome.tabs.remove(tabId); } catch (e) {}
+      }
+      return { ok: true };
+    }
     default:
       throw new Error('Unknown action: ' + message.action);
   }
+}
+
+async function checkPageMatch(host, tabId) {
+  const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
+  const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
+  const session = tabId != null ? (activeSessions[tabId] || null) : null;
+  return {
+    isBlocked: !!matchedDomain,
+    matchedDomain,
+    setupComplete: !!setupComplete,
+    session
+  };
 }
 
 async function getLimitsForDomain(domain) {
@@ -122,11 +228,15 @@ async function saveSetup({ provider, apiKey, model, userContext, contextProjects
     domainLimits: domainLimits || {},
     setupComplete: true
   });
+  await syncBlockingRules();
   return { ok: true };
 }
 
 async function saveSettings(partial) {
   await setStorage(partial);
+  if (partial.blockedDomains) {
+    await syncBlockingRules();
+  }
   return { ok: true };
 }
 
@@ -235,6 +345,7 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
       activeSessions[tabId] = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
       await setStorage({ activeSessions });
       chrome.alarms.create(`checkin-${tabId}`, { delayInMinutes: minutes });
+      await registerSessionRule(tabId, domain, minutes);
       grantedSession = activeSessions[tabId];
     } else if (tc.name === 'update_context' && mode === 'context') {
       const newContext = String(tc.input.new_context || '').slice(0, 5000).trim();
@@ -265,6 +376,7 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
         domainLimits,
         setupComplete: true
       });
+      await syncBlockingRules();
       contextUpdated = { onboardingComplete: true };
     }
   }
@@ -298,6 +410,7 @@ async function endSession({ tabId, reason }) {
     delete chatHistories[String(tabId)];
     await setStorage({ chatHistories });
     chrome.alarms.clear(`checkin-${tabId}`);
+    removeSessionRule(tabId);
   }
   if (reason === 'fulfilled' && tabId != null) {
     try { chrome.tabs.remove(tabId); } catch (e) {}

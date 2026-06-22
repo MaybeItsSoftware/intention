@@ -1,6 +1,6 @@
 async function loadEnv() {
   try {
-    const res = await fetch(chrome.runtime.getURL('.env'));
+    const res = await fetch(chrome.runtime.getURL('env.txt'));
     if (!res.ok) return {};
     const text = await res.text();
     const env = {};

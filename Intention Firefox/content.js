@@ -1,3 +1,6 @@
+const INT_LOG = '[Intention]';
+console.log(INT_LOG, 'content.js loaded (build: gate-fallback v2)', window.location.href);
+
 const OVERLAY_CSS = `
 #intention-root {
   all: initial;
@@ -169,60 +172,96 @@ const OVERLAY_CSS = `
 }
 `;
 
-const rootStyle = document.createElement('style');
-rootStyle.textContent = 'html { display: none !important; }';
-document.documentElement.appendChild(rootStyle);
-
 function injectOverlayStyle() {
   const styleId = 'intention-style';
   if (!document.getElementById(styleId)) {
     const styleEl = document.createElement('style');
     styleEl.id = styleId;
     styleEl.textContent = OVERLAY_CSS;
-    (document.head || document.body || document.documentElement).appendChild(styleEl);
+    (document.body || document.head || document.documentElement).appendChild(styleEl);
   }
 }
 
 let currentSession = null;
 let matchedDomain = null;
+let handled = false;
 
-chrome.storage.local.get(['blockedDomains', 'setupComplete'], (result) => {
-  const domains = result.blockedDomains || [];
-  const setupComplete = !!result.setupComplete;
-  const host = window.location.hostname;
-
-  matchedDomain = domains.find(d => host === d || host.endsWith('.' + d)) || null;
-
-  if (!matchedDomain) {
-    rootStyle.remove();
-    return;
-  }
-
-  if (!setupComplete) {
+function showGate(why) {
+  if (handled) return;
+  handled = true;
+  console.log(INT_LOG, 'showGate ->', why);
+  try {
     ensureBodyAndStop();
     injectOverlayStyle();
-    renderSetupNeededUI();
-    rootStyle.remove();
-    return;
+    renderChatUI({ mode: 'gate', domain: matchedDomain || window.location.hostname });
+  } catch (e) {
+    console.error(INT_LOG, 'failed to render gate:', e);
   }
+}
 
-  chrome.runtime.sendMessage({ action: 'getSession' }, (response) => {
-    if (response && response.session) {
-      currentSession = response.session;
-      runWhenBodyExists(() => {
-        rootStyle.remove();
-        setupInterruptionListener();
-        injectOverlayStyle();
-        renderStatusBadge(response.session);
-      });
-    } else {
-      ensureBodyAndStop();
-      injectOverlayStyle();
-      renderChatUI({ mode: 'gate', domain: matchedDomain });
-      rootStyle.remove();
+function runCheck() {
+  try {
+    const host = window.location.hostname;
+    chrome.runtime.sendMessage({ action: 'checkPageMatch', host }, (response) => {
+      if (chrome.runtime.lastError) {
+        console.warn(INT_LOG, 'checkPageMatch lastError:', chrome.runtime.lastError.message);
+        return;
+      }
+      console.log(INT_LOG, 'checkPageMatch response', response);
+      
+      if (!response || !response.isBlocked) {
+        return;
+      }
+
+      matchedDomain = response.matchedDomain;
+
+      if (!response.setupComplete) {
+        if (handled) return;
+        handled = true;
+        try {
+          ensureBodyAndStop();
+          injectOverlayStyle();
+          renderSetupNeededUI();
+        } catch (e) {
+          console.error(INT_LOG, 'failed to render setup needed UI:', e);
+        }
+        return;
+      }
+
+      if (response.session) {
+        if (handled) return;
+        handled = true;
+        currentSession = response.session;
+        runWhenBodyExists(() => {
+          try {
+            injectOverlayStyle();
+            renderStatusBadge(response.session);
+          } catch (e) {
+            console.error(INT_LOG, 'failed to render status badge:', e);
+          } finally {
+            setupInterruptionListener();
+          }
+        });
+      } else {
+        showGate('no active session (fail-safe)');
+      }
+    });
+  } catch (e) {
+    console.warn(INT_LOG, 'sendMessage threw synchronously:', e);
+  }
+}
+
+if (typeof document.visibilityState !== 'undefined' && (document.visibilityState === 'prerender' || document.visibilityState === 'hidden')) {
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      runCheck();
     }
-  });
-});
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+} else {
+  runCheck();
+}
 
 function ensureBodyAndStop() {
   window.stop();
@@ -303,32 +342,40 @@ function renderChatUI({ mode, domain }) {
   addMessage(messagesEl, 'assistant', seed);
 
   // Fetch stats and render stats row
-  chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
-    if (stats) {
-      const statsRow = document.getElementById('int-stats-row');
-      if (statsRow) {
-        statsRow.innerHTML = `
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesToday || 0}m</div>
-            <div class="int-stat-label">Today</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesWeek || 0}m</div>
-            <div class="int-stat-label">Week</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesYear || 0}m</div>
-            <div class="int-stat-label">Year</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
-            <div class="int-stat-label">All Time</div>
-          </div>
-        `;
-        statsRow.style.display = 'flex';
+  try {
+    chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
+      if (chrome.runtime.lastError) {
+        console.warn(INT_LOG, 'getStatsForDomain lastError:', chrome.runtime.lastError.message);
+        return;
       }
-    }
-  });
+      if (stats) {
+        const statsRow = document.getElementById('int-stats-row');
+        if (statsRow) {
+          statsRow.innerHTML = `
+            <div class="int-stat">
+              <div class="int-stat-value">${stats.minutesToday || 0}m</div>
+              <div class="int-stat-label">Today</div>
+            </div>
+            <div class="int-stat">
+              <div class="int-stat-value">${stats.minutesWeek || 0}m</div>
+              <div class="int-stat-label">Week</div>
+            </div>
+            <div class="int-stat">
+              <div class="int-stat-value">${stats.minutesYear || 0}m</div>
+              <div class="int-stat-label">Year</div>
+            </div>
+            <div class="int-stat">
+              <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
+              <div class="int-stat-label">All Time</div>
+            </div>
+          `;
+          statsRow.style.display = 'flex';
+        }
+      }
+    });
+  } catch (e) {
+    console.warn(INT_LOG, 'getStatsForDomain message threw:', e);
+  }
 
   let sending = false;
 
