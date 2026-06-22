@@ -2,7 +2,7 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
   background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
   color: #e5e7eb;
   min-height: 100vh;

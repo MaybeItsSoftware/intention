@@ -6,7 +6,7 @@
   overflow-y: auto;
   background: #0f1115;
   color: #e7e7ea;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
 }
 
 #intention-root * { box-sizing: border-box; }
@@ -160,7 +160,7 @@
   color: #e7e7ea;
   padding: 7px 13px;
   border-radius: 8px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
   font-size: 13px;
   font-weight: 500;
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);

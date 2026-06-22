@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Validate JSON manifests
+        run: |
+          echo "Validating Chrome manifest..."
+          jq empty "Intention Chrome/manifest.json"
+          echo "Validating Firefox manifest..."
+          jq empty "Intention Firefox/manifest.json"
+
+      - name: Check JS syntax
+        run: |
+          echo "Checking Chrome JS files..."
+          find "Intention Chrome/" -name '*.js' -exec node --check {} +
+          echo "Checking Firefox JS files..."
+          find "Intention Firefox/" -name '*.js' -exec node --check {} +
+
+      - name: Verify file structure
+        run: |
+          REQUIRED_FILES=(
+            manifest.json
+            background.js
+            content.js
+            content.css
+            options.html
+            options.css
+            options.js
+            coaching.html
+            coaching.js
+            prompts.js
+            providers.js
+            tracking.js
+          )
+
+          EXIT_CODE=0
+
+          for dir in "Intention Chrome" "Intention Firefox"; do
+            echo "Checking $dir/..."
+            for file in "${REQUIRED_FILES[@]}"; do
+              if [ ! -f "$dir/$file" ]; then
+                echo "  ✗ Missing: $dir/$file"
+                EXIT_CODE=1
+              else
+                echo "  ✓ Found: $dir/$file"
+              fi
+            done
+          done
+
+          exit $EXIT_CODE
+
+      - name: Cross-platform sync check
+        run: |
+          SHARED_FILES=(
+            content.css
+            content.js
+            options.css
+            options.html
+            options.js
+            coaching.html
+            coaching.js
+            background.js
+            prompts.js
+            providers.js
+            tracking.js
+          )
+
+          CHROME_DIR="Intention Chrome"
+          FIREFOX_DIR="Intention Firefox"
+          APPLE_DIR="Intention Apple/Shared (Extension)/Resources"
+
+          EXIT_CODE=0
+
+          for file in "${SHARED_FILES[@]}"; do
+            echo "Comparing $file..."
+
+            # Chrome vs Firefox
+            if ! diff -q "$CHROME_DIR/$file" "$FIREFOX_DIR/$file" > /dev/null 2>&1; then
+              echo "  ✗ Chrome and Firefox differ: $file"
+              diff --unified=3 "$CHROME_DIR/$file" "$FIREFOX_DIR/$file" || true
+              EXIT_CODE=1
+            else
+              echo "  ✓ Chrome ↔ Firefox: in sync"
+            fi
+
+            # Chrome vs Apple
+            if ! diff -q "$CHROME_DIR/$file" "$APPLE_DIR/$file" > /dev/null 2>&1; then
+              echo "  ✗ Chrome and Apple differ: $file"
+              diff --unified=3 "$CHROME_DIR/$file" "$APPLE_DIR/$file" || true
+              EXIT_CODE=1
+            else
+              echo "  ✓ Chrome ↔ Apple: in sync"
+            fi
+          done
+
+          exit $EXIT_CODE

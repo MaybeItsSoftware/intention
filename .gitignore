@@ -8,6 +8,7 @@ yarn-error.log*
 # Browser Extension Builder output
 *.pem
 *.crx
+build/
 
 # macOS
 .DS_Store

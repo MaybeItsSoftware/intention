@@ -10,7 +10,7 @@ const OVERLAY_CSS = `
   overflow-y: auto;
   background: #0f1115;
   color: #e7e7ea;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
 }
 
 #intention-root * { box-sizing: border-box; }
@@ -163,7 +163,7 @@ const OVERLAY_CSS = `
   color: #e7e7ea;
   padding: 7px 13px;
   border-radius: 8px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
   font-size: 13px;
   font-weight: 500;
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
@@ -179,6 +179,25 @@ function injectOverlayStyle() {
     styleEl.id = styleId;
     styleEl.textContent = OVERLAY_CSS;
     (document.body || document.head || document.documentElement).appendChild(styleEl);
+  }
+
+  // Inject Arvo Google Font
+  if (!document.querySelector('link[href*="fonts.googleapis.com/css2?family=Arvo"]')) {
+    const preconnect1 = document.createElement('link');
+    preconnect1.rel = 'preconnect';
+    preconnect1.href = 'https://fonts.googleapis.com';
+    document.head.appendChild(preconnect1);
+
+    const preconnect2 = document.createElement('link');
+    preconnect2.rel = 'preconnect';
+    preconnect2.href = 'https://fonts.gstatic.com';
+    preconnect2.crossOrigin = 'anonymous';
+    document.head.appendChild(preconnect2);
+
+    const fontLink = document.createElement('link');
+    fontLink.rel = 'stylesheet';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Arvo:ital,wght@0,400;0,700;1,400;1,700&display=swap';
+    document.head.appendChild(fontLink);
   }
 }
 
