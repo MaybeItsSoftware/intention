@@ -9,9 +9,9 @@ body {
 }
 
 .container {
-  max-width: 720px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 40px 24px 80px;
+  padding: 40px 32px 80px;
 }
 
 header h1 {
@@ -36,6 +36,7 @@ header .muted { margin: 0 0 24px; color: #94a3b8; }
 }
 
 .card h2 { margin: 0 0 8px; font-size: 18px; color: #f1f5f9; }
+.card h3 { margin: 20px 0 10px; font-size: 15px; font-weight: 600; color: #f1f5f9; }
 .subtitle { color: #94a3b8; font-size: 14px; margin: 0 0 14px; }
 
 label {
@@ -59,6 +60,23 @@ input[type="text"], input[type="password"], input[type="number"], select, textar
 }
 
 textarea { resize: vertical; }
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg fill='%2394a3b8' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 36px;
+  cursor: pointer;
+}
+
+select option {
+  background-color: #1e293b;
+  color: #f1f5f9;
+}
 
 input:focus, select:focus, textarea:focus {
   border-color: rgba(59, 130, 246, 0.6);
@@ -98,13 +116,13 @@ button.secondary:hover, button.delete-btn:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-ul#domain-list {
+ul#domain-list, ul#setup-websites-list {
   list-style: none;
   padding: 0;
   margin: 10px 0 0;
 }
 
-ul#domain-list li {
+ul#domain-list li, ul#setup-websites-list li {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -115,7 +133,7 @@ ul#domain-list li {
   font-size: 14px;
 }
 
-ul#domain-list li .delete-btn {
+ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn {
   padding: 4px 10px;
   font-size: 12px;
 }
@@ -144,6 +162,10 @@ blockquote {
   justify-content: center;
   z-index: 100;
   padding: 20px;
+}
+
+#coach-modal[hidden] {
+  display: none;
 }
 
 .coach-box {
@@ -210,3 +232,118 @@ blockquote {
   font-size: 12px;
   padding: 6px 12px;
 }
+
+.setup-messages-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.setup-messages-box .int-msg {
+  padding: 10px 14px;
+  border-radius: 14px;
+  max-width: 85%;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.setup-messages-box .int-msg-assistant {
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  align-self: flex-start;
+  color: #e2e8f0;
+}
+
+.setup-messages-box .int-msg-user {
+  background: rgba(255, 255, 255, 0.08);
+  align-self: flex-end;
+  color: #f1f5f9;
+}
+
+.setup-messages-box .int-thinking {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.domain-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.domain-name {
+  font-weight: 500;
+  color: #f1f5f9;
+}
+
+.domain-limit-badge {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.setup-columns {
+  display: flex;
+  flex-direction: row;
+  gap: 32px;
+  margin: 24px 0 16px;
+  flex-wrap: wrap;
+}
+
+.setup-column {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.setup-column h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f1f5f9;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+
+.settings-grid {
+  display: flex;
+  flex-direction: row;
+  gap: 32px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.settings-column {
+  flex: 1 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.inline-limit-input {
+  width: 55px;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  color: #f1f5f9;
+  font-size: 13px;
+  text-align: center;
+  margin: 0 6px;
+  display: inline-block;
+  font-family: inherit;
+}
+
+.inline-limit-input:focus {
+  border-color: rgba(59, 130, 246, 0.6);
+  outline: none;
+}
+

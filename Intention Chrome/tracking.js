@@ -31,8 +31,8 @@ async function withDailyStats(mutator) {
   if (!dailyStats[today]) dailyStats[today] = {};
   mutator(dailyStats, today);
   const allKeys = Object.keys(dailyStats).sort().reverse();
-  if (allKeys.length > 30) {
-    for (const old of allKeys.slice(30)) delete dailyStats[old];
+  if (allKeys.length > 365) {
+    for (const old of allKeys.slice(365)) delete dailyStats[old];
   }
   await setStorage({ dailyStats });
 }
@@ -51,15 +51,31 @@ async function recordSessionMinutes(domain, elapsedMinutes) {
     if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
     stats[today][domain].minutes += elapsedMinutes;
   });
+
+  const { allTimeStats = {} } = await getStorage(['allTimeStats']);
+  if (allTimeStats[domain] === undefined) {
+    const { dailyStats = {} } = await getStorage(['dailyStats']);
+    let sumDaily = 0;
+    for (const entries of Object.values(dailyStats)) {
+      if (entries[domain]) {
+        sumDaily += entries[domain].minutes || 0;
+      }
+    }
+    allTimeStats[domain] = sumDaily;
+  } else {
+    allTimeStats[domain] += elapsedMinutes;
+  }
+  await setStorage({ allTimeStats });
 }
 
 async function getStatsForDomain(domain) {
-  const { dailyStats = {} } = await getStorage(['dailyStats']);
+  const { dailyStats = {}, allTimeStats = {} } = await getStorage(['dailyStats', 'allTimeStats']);
   const todayKey = dateKey();
   const weekKeys = daysAgoKeys(7);
   const monthKeys = daysAgoKeys(30);
+  const yearKeys = daysAgoKeys(365);
 
-  let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0;
+  let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
 
   for (const [k, entries] of Object.entries(dailyStats)) {
@@ -71,16 +87,30 @@ async function getStatsForDomain(domain) {
         }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
         if (monthKeys.includes(k)) minutesMonth += site.minutes || 0;
+        if (yearKeys.includes(k)) minutesYear += site.minutes || 0;
       }
       if (k === todayKey) minutesTodayAll += site.minutes || 0;
       if (weekKeys.includes(k)) minutesWeekAll += site.minutes || 0;
     }
   }
 
+  let minutesAllTime = allTimeStats[domain];
+  if (minutesAllTime === undefined) {
+    let sumDaily = 0;
+    for (const entries of Object.values(dailyStats)) {
+      if (entries[domain]) {
+        sumDaily += entries[domain].minutes || 0;
+      }
+    }
+    minutesAllTime = sumDaily;
+  }
+
   return {
     minutesToday: Math.round(minutesToday),
     minutesWeek: Math.round(minutesWeek),
     minutesMonth: Math.round(minutesMonth),
+    minutesYear: Math.round(minutesYear),
+    minutesAllTime: Math.round(minutesAllTime),
     grantsToday,
     minutesTodayAll: Math.round(minutesTodayAll),
     minutesWeekAll: Math.round(minutesWeekAll)

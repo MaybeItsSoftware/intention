@@ -7,84 +7,94 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		662D61652F81794900F7BE69 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D61642F81794900F7BE69 /* AppDelegate.swift */; };
-		662D61672F81794900F7BE69 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D61662F81794900F7BE69 /* SceneDelegate.swift */; };
-		662D616A2F81794900F7BE69 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 662D61682F81794900F7BE69 /* LaunchScreen.storyboard */; };
-		662D616D2F81794900F7BE69 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 662D616B2F81794900F7BE69 /* Main.storyboard */; };
-		662D61762F81794900F7BE69 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D61752F81794900F7BE69 /* AppDelegate.swift */; };
-		662D61792F81794900F7BE69 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 662D61772F81794900F7BE69 /* Main.storyboard */; };
-		662D61802F81794900F7BE69 /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 662D617F2F81794900F7BE69 /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		662D618A2F81794900F7BE69 /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 662D61892F81794900F7BE69 /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		662D618F2F81794900F7BE69 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 662D61542F81794800F7BE69 /* Main.html */; };
-		662D61902F81794900F7BE69 /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 662D61542F81794800F7BE69 /* Main.html */; };
-		662D61912F81794900F7BE69 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61562F81794800F7BE69 /* Icon.png */; };
-		662D61922F81794900F7BE69 /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61562F81794800F7BE69 /* Icon.png */; };
-		662D61932F81794900F7BE69 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61572F81794800F7BE69 /* Style.css */; };
-		662D61942F81794900F7BE69 /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61572F81794800F7BE69 /* Style.css */; };
-		662D61952F81794900F7BE69 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61582F81794800F7BE69 /* Script.js */; };
-		662D61962F81794900F7BE69 /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61582F81794800F7BE69 /* Script.js */; };
-		662D61972F81794900F7BE69 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D61592F81794800F7BE69 /* ViewController.swift */; };
-		662D61982F81794900F7BE69 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D61592F81794800F7BE69 /* ViewController.swift */; };
-		662D61992F81794900F7BE69 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 662D615A2F81794900F7BE69 /* Assets.xcassets */; };
-		662D619A2F81794900F7BE69 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 662D615A2F81794900F7BE69 /* Assets.xcassets */; };
-		662D619B2F81794900F7BE69 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D615C2F81794900F7BE69 /* SafariWebExtensionHandler.swift */; };
-		662D619C2F81794900F7BE69 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 662D615C2F81794900F7BE69 /* SafariWebExtensionHandler.swift */; };
-		662D61B72F81794900F7BE69 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61AE2F81794900F7BE69 /* content.css */; };
-		662D61B82F81794900F7BE69 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61AF2F81794900F7BE69 /* background.js */; };
-		662D61B92F81794900F7BE69 /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B02F81794900F7BE69 /* icon48.png */; };
-		662D61BA2F81794900F7BE69 /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B12F81794900F7BE69 /* options.js */; };
-		662D61BB2F81794900F7BE69 /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B22F81794900F7BE69 /* icon128.png */; };
-		662D61BC2F81794900F7BE69 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B32F81794900F7BE69 /* manifest.json */; };
-		662D61BD2F81794900F7BE69 /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B42F81794900F7BE69 /* options.html */; };
-		662D61BE2F81794900F7BE69 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B52F81794900F7BE69 /* content.js */; };
-		662D61BF2F81794900F7BE69 /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B62F81794900F7BE69 /* options.css */; };
-		662D61C02F81794900F7BE69 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61AE2F81794900F7BE69 /* content.css */; };
-		662D61C12F81794900F7BE69 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61AF2F81794900F7BE69 /* background.js */; };
-		662D61C22F81794900F7BE69 /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B02F81794900F7BE69 /* icon48.png */; };
-		662D61C32F81794900F7BE69 /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B12F81794900F7BE69 /* options.js */; };
-		662D61C42F81794900F7BE69 /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B22F81794900F7BE69 /* icon128.png */; };
-		662D61C52F81794900F7BE69 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B32F81794900F7BE69 /* manifest.json */; };
-		662D61C62F81794900F7BE69 /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B42F81794900F7BE69 /* options.html */; };
-		662D61C72F81794900F7BE69 /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B52F81794900F7BE69 /* content.js */; };
-		662D61C82F81794900F7BE69 /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 662D61B62F81794900F7BE69 /* options.css */; };
+		66B8D0222FE985EE00BC0D7F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0212FE985EE00BC0D7F /* AppDelegate.swift */; };
+		66B8D0242FE985EE00BC0D7F /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0232FE985EE00BC0D7F /* SceneDelegate.swift */; };
+		66B8D0272FE985EE00BC0D7F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0252FE985EE00BC0D7F /* LaunchScreen.storyboard */; };
+		66B8D02A2FE985EF00BC0D7F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0282FE985EF00BC0D7F /* Main.storyboard */; };
+		66B8D0332FE985EF00BC0D7F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0322FE985EF00BC0D7F /* AppDelegate.swift */; };
+		66B8D0362FE985EF00BC0D7F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0342FE985EF00BC0D7F /* Main.storyboard */; };
+		66B8D03D2FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		66B8D0472FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		66B8D04C2FE985EF00BC0D7F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0112FE985EE00BC0D7F /* Main.html */; };
+		66B8D04D2FE985EF00BC0D7F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0112FE985EE00BC0D7F /* Main.html */; };
+		66B8D04E2FE985EF00BC0D7F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0132FE985EE00BC0D7F /* Icon.png */; };
+		66B8D04F2FE985EF00BC0D7F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0132FE985EE00BC0D7F /* Icon.png */; };
+		66B8D0502FE985EF00BC0D7F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0142FE985EE00BC0D7F /* Style.css */; };
+		66B8D0512FE985EF00BC0D7F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0142FE985EE00BC0D7F /* Style.css */; };
+		66B8D0522FE985EF00BC0D7F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0152FE985EE00BC0D7F /* Script.js */; };
+		66B8D0532FE985EF00BC0D7F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0152FE985EE00BC0D7F /* Script.js */; };
+		66B8D0542FE985EF00BC0D7F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0162FE985EE00BC0D7F /* ViewController.swift */; };
+		66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0162FE985EE00BC0D7F /* ViewController.swift */; };
+		66B8D0562FE985EF00BC0D7F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0172FE985EE00BC0D7F /* Assets.xcassets */; };
+		66B8D0572FE985EF00BC0D7F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0172FE985EE00BC0D7F /* Assets.xcassets */; };
+		66B8D0582FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0192FE985EE00BC0D7F /* SafariWebExtensionHandler.swift */; };
+		66B8D0592FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0192FE985EE00BC0D7F /* SafariWebExtensionHandler.swift */; };
+		66B8D0792FE985EF00BC0D7F /* icon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06B2FE985EF00BC0D7F /* icon16.png */; };
+		66B8D07A2FE985EF00BC0D7F /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		66B8D07B2FE985EF00BC0D7F /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
+		66B8D07C2FE985EF00BC0D7F /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
+		66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06F2FE985EF00BC0D7F /* icon48.png */; };
+		66B8D07E2FE985EF00BC0D7F /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
+		66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0712FE985EF00BC0D7F /* icon128.png */; };
+		66B8D0802FE985EF00BC0D7F /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
+		66B8D0822FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
+		66B8D0832FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
+		66B8D0842FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
+		66B8D0852FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
+		66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06B2FE985EF00BC0D7F /* icon16.png */; };
+		66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		66B8D0892FE985EF00BC0D7F /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
+		66B8D08A2FE985EF00BC0D7F /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
+		66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06F2FE985EF00BC0D7F /* icon48.png */; };
+		66B8D08C2FE985EF00BC0D7F /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
+		66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0712FE985EF00BC0D7F /* icon128.png */; };
+		66B8D08E2FE985EF00BC0D7F /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
+		66B8D0902FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
+		66B8D0912FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
+		66B8D0922FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
+		66B8D0932FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		662D61812F81794900F7BE69 /* PBXContainerItemProxy */ = {
+		66B8D03E2FE985EF00BC0D7F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = 662D614E2F81794800F7BE69 /* Project object */;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 662D617E2F81794900F7BE69;
+			remoteGlobalIDString = 66B8D03B2FE985EF00BC0D7F;
 			remoteInfo = "Intention Safari Extension (iOS)";
 		};
-		662D618B2F81794900F7BE69 /* PBXContainerItemProxy */ = {
+		66B8D0482FE985EF00BC0D7F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
-			containerPortal = 662D614E2F81794800F7BE69 /* Project object */;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 662D61882F81794900F7BE69;
+			remoteGlobalIDString = 66B8D0452FE985EF00BC0D7F;
 			remoteInfo = "Intention Safari Extension (macOS)";
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		662D61A22F81794900F7BE69 /* Embed Foundation Extensions */ = {
+		66B8D05F2FE985EF00BC0D7F /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				662D61802F81794900F7BE69 /* Intention Safari Extension.appex in Embed Foundation Extensions */,
+				66B8D03D2FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61A92F81794900F7BE69 /* Embed Foundation Extensions */ = {
+		66B8D0662FE985EF00BC0D7F /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				662D618A2F81794900F7BE69 /* Intention Safari Extension.appex in Embed Foundation Extensions */,
+				66B8D0472FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -92,61 +102,66 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		662D61552F81794800F7BE69 /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
-		662D61562F81794800F7BE69 /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
-		662D61572F81794800F7BE69 /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
-		662D61582F81794800F7BE69 /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
-		662D61592F81794800F7BE69 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
-		662D615A2F81794900F7BE69 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		662D615C2F81794900F7BE69 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
-		662D61612F81794900F7BE69 /* Intention Safari.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Intention Safari.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		662D61642F81794900F7BE69 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		662D61662F81794900F7BE69 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
-		662D61692F81794900F7BE69 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
-		662D616C2F81794900F7BE69 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		662D616E2F81794900F7BE69 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		662D61732F81794900F7BE69 /* Intention Safari.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Intention Safari.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		662D61752F81794900F7BE69 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		662D61782F81794900F7BE69 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		662D617A2F81794900F7BE69 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		662D617F2F81794900F7BE69 /* Intention Safari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Safari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
-		662D61842F81794900F7BE69 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		662D61892F81794900F7BE69 /* Intention Safari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Safari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
-		662D618E2F81794900F7BE69 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		662D61AE2F81794900F7BE69 /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = content.css; path = ../../Extension/content.css; sourceTree = "<group>"; };
-		662D61AF2F81794900F7BE69 /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = ../../Extension/background.js; sourceTree = "<group>"; };
-		662D61B02F81794900F7BE69 /* icon48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon48.png; path = ../../Extension/icon48.png; sourceTree = "<group>"; };
-		662D61B12F81794900F7BE69 /* options.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = options.js; path = ../../Extension/options.js; sourceTree = "<group>"; };
-		662D61B22F81794900F7BE69 /* icon128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon128.png; path = ../../Extension/icon128.png; sourceTree = "<group>"; };
-		662D61B32F81794900F7BE69 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = ../../Extension/manifest.json; sourceTree = "<group>"; };
-		662D61B42F81794900F7BE69 /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = ../../Extension/options.html; sourceTree = "<group>"; };
-		662D61B52F81794900F7BE69 /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = ../../Extension/content.js; sourceTree = "<group>"; };
-		662D61B62F81794900F7BE69 /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = ../../Extension/options.css; sourceTree = "<group>"; };
+		66B8D0122FE985EE00BC0D7F /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
+		66B8D0132FE985EE00BC0D7F /* Icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icon.png; sourceTree = "<group>"; };
+		66B8D0142FE985EE00BC0D7F /* Style.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = Style.css; sourceTree = "<group>"; };
+		66B8D0152FE985EE00BC0D7F /* Script.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Script.js; sourceTree = "<group>"; };
+		66B8D0162FE985EE00BC0D7F /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		66B8D0172FE985EE00BC0D7F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		66B8D0192FE985EE00BC0D7F /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		66B8D01E2FE985EE00BC0D7F /* Intention Safari.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Intention Safari.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		66B8D0212FE985EE00BC0D7F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		66B8D0232FE985EE00BC0D7F /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		66B8D0262FE985EE00BC0D7F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		66B8D0292FE985EF00BC0D7F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		66B8D02B2FE985EF00BC0D7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		66B8D0302FE985EF00BC0D7F /* Intention Safari.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Intention Safari.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		66B8D0322FE985EF00BC0D7F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		66B8D0352FE985EF00BC0D7F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		66B8D0372FE985EF00BC0D7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Safari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		66B8D0412FE985EF00BC0D7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Safari Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		66B8D04B2FE985EF00BC0D7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		66B8D06B2FE985EF00BC0D7F /* icon16.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon16.png; path = "../../Intention Chrome/icon16.png"; sourceTree = "<group>"; };
+		66B8D06C2FE985EF00BC0D7F /* prompts.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = prompts.js; path = "../../Intention Chrome/prompts.js"; sourceTree = "<group>"; };
+		66B8D06D2FE985EF00BC0D7F /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = content.css; path = "../../Intention Chrome/content.css"; sourceTree = "<group>"; };
+		66B8D06E2FE985EF00BC0D7F /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = "../../Intention Chrome/background.js"; sourceTree = "<group>"; };
+		66B8D06F2FE985EF00BC0D7F /* icon48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon48.png; path = "../../Intention Chrome/icon48.png"; sourceTree = "<group>"; };
+		66B8D0702FE985EF00BC0D7F /* options.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = options.js; path = "../../Intention Chrome/options.js"; sourceTree = "<group>"; };
+		66B8D0712FE985EF00BC0D7F /* icon128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon128.png; path = "../../Intention Chrome/icon128.png"; sourceTree = "<group>"; };
+		66B8D0722FE985EF00BC0D7F /* tracking.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = tracking.js; path = "../../Intention Chrome/tracking.js"; sourceTree = "<group>"; };
+		66B8D0732FE985EF00BC0D7F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = "Resources/manifest.json"; sourceTree = "<group>"; };
+		66B8D0742FE985EF00BC0D7F /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = "../../Intention Chrome/options.html"; sourceTree = "<group>"; };
+		66B8D0752FE985EF00BC0D7F /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = "../../Intention Chrome/content.js"; sourceTree = "<group>"; };
+		66B8D0762FE985EF00BC0D7F /* providers.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = providers.js; path = "../../Intention Chrome/providers.js"; sourceTree = "<group>"; };
+		66B8D0772FE985EF00BC0D7F /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = "../../Intention Chrome/options.css"; sourceTree = "<group>"; };
+		66B8D0782FE985EF00BC0D7F /* icon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon32.png; path = "../../Intention Chrome/icon32.png"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		662D615E2F81794900F7BE69 /* Frameworks */ = {
+		66B8D01B2FE985EE00BC0D7F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61702F81794900F7BE69 /* Frameworks */ = {
+		66B8D02D2FE985EF00BC0D7F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D617C2F81794900F7BE69 /* Frameworks */ = {
+		66B8D0392FE985EF00BC0D7F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61862F81794900F7BE69 /* Frameworks */ = {
+		66B8D0432FE985EF00BC0D7F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -156,110 +171,115 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		662D614D2F81794800F7BE69 = {
+		66B8D00A2FE985ED00BC0D7F = {
 			isa = PBXGroup;
 			children = (
-				662D61522F81794800F7BE69 /* Shared (App) */,
-				662D615B2F81794900F7BE69 /* Shared (Extension) */,
-				662D61632F81794900F7BE69 /* iOS (App) */,
-				662D61742F81794900F7BE69 /* macOS (App) */,
-				662D61832F81794900F7BE69 /* iOS (Extension) */,
-				662D618D2F81794900F7BE69 /* macOS (Extension) */,
-				662D61622F81794900F7BE69 /* Products */,
+				66B8D00F2FE985EE00BC0D7F /* Shared (App) */,
+				66B8D0182FE985EE00BC0D7F /* Shared (Extension) */,
+				66B8D0202FE985EE00BC0D7F /* iOS (App) */,
+				66B8D0312FE985EF00BC0D7F /* macOS (App) */,
+				66B8D0402FE985EF00BC0D7F /* iOS (Extension) */,
+				66B8D04A2FE985EF00BC0D7F /* macOS (Extension) */,
+				66B8D01F2FE985EE00BC0D7F /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		662D61522F81794800F7BE69 /* Shared (App) */ = {
+		66B8D00F2FE985EE00BC0D7F /* Shared (App) */ = {
 			isa = PBXGroup;
 			children = (
-				662D61592F81794800F7BE69 /* ViewController.swift */,
-				662D615A2F81794900F7BE69 /* Assets.xcassets */,
-				662D61532F81794800F7BE69 /* Resources */,
+				66B8D0162FE985EE00BC0D7F /* ViewController.swift */,
+				66B8D0172FE985EE00BC0D7F /* Assets.xcassets */,
+				66B8D0102FE985EE00BC0D7F /* Resources */,
 			);
 			path = "Shared (App)";
 			sourceTree = "<group>";
 		};
-		662D61532F81794800F7BE69 /* Resources */ = {
+		66B8D0102FE985EE00BC0D7F /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				662D61542F81794800F7BE69 /* Main.html */,
-				662D61562F81794800F7BE69 /* Icon.png */,
-				662D61572F81794800F7BE69 /* Style.css */,
-				662D61582F81794800F7BE69 /* Script.js */,
+				66B8D0112FE985EE00BC0D7F /* Main.html */,
+				66B8D0132FE985EE00BC0D7F /* Icon.png */,
+				66B8D0142FE985EE00BC0D7F /* Style.css */,
+				66B8D0152FE985EE00BC0D7F /* Script.js */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		662D615B2F81794900F7BE69 /* Shared (Extension) */ = {
+		66B8D0182FE985EE00BC0D7F /* Shared (Extension) */ = {
 			isa = PBXGroup;
 			children = (
-				662D61AD2F81794900F7BE69 /* Resources */,
-				662D615C2F81794900F7BE69 /* SafariWebExtensionHandler.swift */,
+				66B8D06A2FE985EF00BC0D7F /* Resources */,
+				66B8D0192FE985EE00BC0D7F /* SafariWebExtensionHandler.swift */,
 			);
 			path = "Shared (Extension)";
 			sourceTree = "<group>";
 		};
-		662D61622F81794900F7BE69 /* Products */ = {
+		66B8D01F2FE985EE00BC0D7F /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				662D61612F81794900F7BE69 /* Intention Safari.app */,
-				662D61732F81794900F7BE69 /* Intention Safari.app */,
-				662D617F2F81794900F7BE69 /* Intention Safari Extension.appex */,
-				662D61892F81794900F7BE69 /* Intention Safari Extension.appex */,
+				66B8D01E2FE985EE00BC0D7F /* Intention Safari.app */,
+				66B8D0302FE985EF00BC0D7F /* Intention Safari.app */,
+				66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */,
+				66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		662D61632F81794900F7BE69 /* iOS (App) */ = {
+		66B8D0202FE985EE00BC0D7F /* iOS (App) */ = {
 			isa = PBXGroup;
 			children = (
-				662D61642F81794900F7BE69 /* AppDelegate.swift */,
-				662D61662F81794900F7BE69 /* SceneDelegate.swift */,
-				662D61682F81794900F7BE69 /* LaunchScreen.storyboard */,
-				662D616B2F81794900F7BE69 /* Main.storyboard */,
-				662D616E2F81794900F7BE69 /* Info.plist */,
+				66B8D0212FE985EE00BC0D7F /* AppDelegate.swift */,
+				66B8D0232FE985EE00BC0D7F /* SceneDelegate.swift */,
+				66B8D0252FE985EE00BC0D7F /* LaunchScreen.storyboard */,
+				66B8D0282FE985EF00BC0D7F /* Main.storyboard */,
+				66B8D02B2FE985EF00BC0D7F /* Info.plist */,
 			);
 			path = "iOS (App)";
 			sourceTree = "<group>";
 		};
-		662D61742F81794900F7BE69 /* macOS (App) */ = {
+		66B8D0312FE985EF00BC0D7F /* macOS (App) */ = {
 			isa = PBXGroup;
 			children = (
-				662D61752F81794900F7BE69 /* AppDelegate.swift */,
-				662D61772F81794900F7BE69 /* Main.storyboard */,
-				662D617A2F81794900F7BE69 /* Info.plist */,
+				66B8D0322FE985EF00BC0D7F /* AppDelegate.swift */,
+				66B8D0342FE985EF00BC0D7F /* Main.storyboard */,
+				66B8D0372FE985EF00BC0D7F /* Info.plist */,
 			);
 			path = "macOS (App)";
 			sourceTree = "<group>";
 		};
-		662D61832F81794900F7BE69 /* iOS (Extension) */ = {
+		66B8D0402FE985EF00BC0D7F /* iOS (Extension) */ = {
 			isa = PBXGroup;
 			children = (
-				662D61842F81794900F7BE69 /* Info.plist */,
+				66B8D0412FE985EF00BC0D7F /* Info.plist */,
 			);
 			path = "iOS (Extension)";
 			sourceTree = "<group>";
 		};
-		662D618D2F81794900F7BE69 /* macOS (Extension) */ = {
+		66B8D04A2FE985EF00BC0D7F /* macOS (Extension) */ = {
 			isa = PBXGroup;
 			children = (
-				662D618E2F81794900F7BE69 /* Info.plist */,
+				66B8D04B2FE985EF00BC0D7F /* Info.plist */,
 			);
 			path = "macOS (Extension)";
 			sourceTree = "<group>";
 		};
-		662D61AD2F81794900F7BE69 /* Resources */ = {
+		66B8D06A2FE985EF00BC0D7F /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				662D61AE2F81794900F7BE69 /* content.css */,
-				662D61AF2F81794900F7BE69 /* background.js */,
-				662D61B02F81794900F7BE69 /* icon48.png */,
-				662D61B12F81794900F7BE69 /* options.js */,
-				662D61B22F81794900F7BE69 /* icon128.png */,
-				662D61B32F81794900F7BE69 /* manifest.json */,
-				662D61B42F81794900F7BE69 /* options.html */,
-				662D61B52F81794900F7BE69 /* content.js */,
-				662D61B62F81794900F7BE69 /* options.css */,
+				66B8D06B2FE985EF00BC0D7F /* icon16.png */,
+				66B8D06C2FE985EF00BC0D7F /* prompts.js */,
+				66B8D06D2FE985EF00BC0D7F /* content.css */,
+				66B8D06E2FE985EF00BC0D7F /* background.js */,
+				66B8D06F2FE985EF00BC0D7F /* icon48.png */,
+				66B8D0702FE985EF00BC0D7F /* options.js */,
+				66B8D0712FE985EF00BC0D7F /* icon128.png */,
+				66B8D0722FE985EF00BC0D7F /* tracking.js */,
+				66B8D0732FE985EF00BC0D7F /* manifest.json */,
+				66B8D0742FE985EF00BC0D7F /* options.html */,
+				66B8D0752FE985EF00BC0D7F /* content.js */,
+				66B8D0762FE985EF00BC0D7F /* providers.js */,
+				66B8D0772FE985EF00BC0D7F /* options.css */,
+				66B8D0782FE985EF00BC0D7F /* icon32.png */,
 			);
 			name = Resources;
 			path = "Shared (Extension)";
@@ -268,55 +288,55 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		662D61602F81794900F7BE69 /* Intention Safari (iOS) */ = {
+		66B8D01D2FE985EE00BC0D7F /* Intention Safari (iOS) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 662D61A32F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari (iOS)" */;
+			buildConfigurationList = 66B8D0602FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari (iOS)" */;
 			buildPhases = (
-				662D615D2F81794900F7BE69 /* Sources */,
-				662D615E2F81794900F7BE69 /* Frameworks */,
-				662D615F2F81794900F7BE69 /* Resources */,
-				662D61A22F81794900F7BE69 /* Embed Foundation Extensions */,
+				66B8D01A2FE985EE00BC0D7F /* Sources */,
+				66B8D01B2FE985EE00BC0D7F /* Frameworks */,
+				66B8D01C2FE985EE00BC0D7F /* Resources */,
+				66B8D05F2FE985EF00BC0D7F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				662D61822F81794900F7BE69 /* PBXTargetDependency */,
+				66B8D03F2FE985EF00BC0D7F /* PBXTargetDependency */,
 			);
 			name = "Intention Safari (iOS)";
 			packageProductDependencies = (
 			);
 			productName = "Intention Safari (iOS)";
-			productReference = 662D61612F81794900F7BE69 /* Intention Safari.app */;
+			productReference = 66B8D01E2FE985EE00BC0D7F /* Intention Safari.app */;
 			productType = "com.apple.product-type.application";
 		};
-		662D61722F81794900F7BE69 /* Intention Safari (macOS) */ = {
+		66B8D02F2FE985EF00BC0D7F /* Intention Safari (macOS) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 662D61AA2F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari (macOS)" */;
+			buildConfigurationList = 66B8D0672FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari (macOS)" */;
 			buildPhases = (
-				662D616F2F81794900F7BE69 /* Sources */,
-				662D61702F81794900F7BE69 /* Frameworks */,
-				662D61712F81794900F7BE69 /* Resources */,
-				662D61A92F81794900F7BE69 /* Embed Foundation Extensions */,
+				66B8D02C2FE985EF00BC0D7F /* Sources */,
+				66B8D02D2FE985EF00BC0D7F /* Frameworks */,
+				66B8D02E2FE985EF00BC0D7F /* Resources */,
+				66B8D0662FE985EF00BC0D7F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				662D618C2F81794900F7BE69 /* PBXTargetDependency */,
+				66B8D0492FE985EF00BC0D7F /* PBXTargetDependency */,
 			);
 			name = "Intention Safari (macOS)";
 			packageProductDependencies = (
 			);
 			productName = "Intention Safari (macOS)";
-			productReference = 662D61732F81794900F7BE69 /* Intention Safari.app */;
+			productReference = 66B8D0302FE985EF00BC0D7F /* Intention Safari.app */;
 			productType = "com.apple.product-type.application";
 		};
-		662D617E2F81794900F7BE69 /* Intention Safari Extension (iOS) */ = {
+		66B8D03B2FE985EF00BC0D7F /* Intention Safari Extension (iOS) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 662D619F2F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari Extension (iOS)" */;
+			buildConfigurationList = 66B8D05C2FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari Extension (iOS)" */;
 			buildPhases = (
-				662D617B2F81794900F7BE69 /* Sources */,
-				662D617C2F81794900F7BE69 /* Frameworks */,
-				662D617D2F81794900F7BE69 /* Resources */,
+				66B8D0382FE985EF00BC0D7F /* Sources */,
+				66B8D0392FE985EF00BC0D7F /* Frameworks */,
+				66B8D03A2FE985EF00BC0D7F /* Resources */,
 			);
 			buildRules = (
 			);
@@ -326,16 +346,16 @@
 			packageProductDependencies = (
 			);
 			productName = "Intention Safari Extension (iOS)";
-			productReference = 662D617F2F81794900F7BE69 /* Intention Safari Extension.appex */;
+			productReference = 66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		662D61882F81794900F7BE69 /* Intention Safari Extension (macOS) */ = {
+		66B8D0452FE985EF00BC0D7F /* Intention Safari Extension (macOS) */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 662D61A62F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari Extension (macOS)" */;
+			buildConfigurationList = 66B8D0632FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari Extension (macOS)" */;
 			buildPhases = (
-				662D61852F81794900F7BE69 /* Sources */,
-				662D61862F81794900F7BE69 /* Frameworks */,
-				662D61872F81794900F7BE69 /* Resources */,
+				66B8D0422FE985EF00BC0D7F /* Sources */,
+				66B8D0432FE985EF00BC0D7F /* Frameworks */,
+				66B8D0442FE985EF00BC0D7F /* Resources */,
 			);
 			buildRules = (
 			);
@@ -345,197 +365,207 @@
 			packageProductDependencies = (
 			);
 			productName = "Intention Safari Extension (macOS)";
-			productReference = 662D61892F81794900F7BE69 /* Intention Safari Extension.appex */;
+			productReference = 66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		662D614E2F81794800F7BE69 /* Project object */ = {
+		66B8D00B2FE985ED00BC0D7F /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2610;
-				LastUpgradeCheck = 2610;
+				LastSwiftUpdateCheck = 2630;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
-					662D61602F81794900F7BE69 = {
-						CreatedOnToolsVersion = 26.1.1;
+					66B8D01D2FE985EE00BC0D7F = {
+						CreatedOnToolsVersion = 26.3;
 					};
-					662D61722F81794900F7BE69 = {
-						CreatedOnToolsVersion = 26.1.1;
+					66B8D02F2FE985EF00BC0D7F = {
+						CreatedOnToolsVersion = 26.3;
 					};
-					662D617E2F81794900F7BE69 = {
-						CreatedOnToolsVersion = 26.1.1;
+					66B8D03B2FE985EF00BC0D7F = {
+						CreatedOnToolsVersion = 26.3;
 					};
-					662D61882F81794900F7BE69 = {
-						CreatedOnToolsVersion = 26.1.1;
+					66B8D0452FE985EF00BC0D7F = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
-			buildConfigurationList = 662D61512F81794800F7BE69 /* Build configuration list for PBXProject "Intention Safari" */;
+			buildConfigurationList = 66B8D00E2FE985ED00BC0D7F /* Build configuration list for PBXProject "Intention Safari" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = 662D614D2F81794800F7BE69;
+			mainGroup = 66B8D00A2FE985ED00BC0D7F;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 662D61622F81794900F7BE69 /* Products */;
+			productRefGroup = 66B8D01F2FE985EE00BC0D7F /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				662D61602F81794900F7BE69 /* Intention Safari (iOS) */,
-				662D61722F81794900F7BE69 /* Intention Safari (macOS) */,
-				662D617E2F81794900F7BE69 /* Intention Safari Extension (iOS) */,
-				662D61882F81794900F7BE69 /* Intention Safari Extension (macOS) */,
+				66B8D01D2FE985EE00BC0D7F /* Intention Safari (iOS) */,
+				66B8D02F2FE985EF00BC0D7F /* Intention Safari (macOS) */,
+				66B8D03B2FE985EF00BC0D7F /* Intention Safari Extension (iOS) */,
+				66B8D0452FE985EF00BC0D7F /* Intention Safari Extension (macOS) */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		662D615F2F81794900F7BE69 /* Resources */ = {
+		66B8D01C2FE985EE00BC0D7F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61912F81794900F7BE69 /* Icon.png in Resources */,
-				662D616A2F81794900F7BE69 /* LaunchScreen.storyboard in Resources */,
-				662D618F2F81794900F7BE69 /* Main.html in Resources */,
-				662D61952F81794900F7BE69 /* Script.js in Resources */,
-				662D61992F81794900F7BE69 /* Assets.xcassets in Resources */,
-				662D616D2F81794900F7BE69 /* Main.storyboard in Resources */,
-				662D61932F81794900F7BE69 /* Style.css in Resources */,
+				66B8D04E2FE985EF00BC0D7F /* Icon.png in Resources */,
+				66B8D0272FE985EE00BC0D7F /* LaunchScreen.storyboard in Resources */,
+				66B8D04C2FE985EF00BC0D7F /* Main.html in Resources */,
+				66B8D0522FE985EF00BC0D7F /* Script.js in Resources */,
+				66B8D0562FE985EF00BC0D7F /* Assets.xcassets in Resources */,
+				66B8D02A2FE985EF00BC0D7F /* Main.storyboard in Resources */,
+				66B8D0502FE985EF00BC0D7F /* Style.css in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61712F81794900F7BE69 /* Resources */ = {
+		66B8D02E2FE985EF00BC0D7F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61922F81794900F7BE69 /* Icon.png in Resources */,
-				662D61942F81794900F7BE69 /* Style.css in Resources */,
-				662D61792F81794900F7BE69 /* Main.storyboard in Resources */,
-				662D61962F81794900F7BE69 /* Script.js in Resources */,
-				662D619A2F81794900F7BE69 /* Assets.xcassets in Resources */,
-				662D61902F81794900F7BE69 /* Main.html in Resources */,
+				66B8D04F2FE985EF00BC0D7F /* Icon.png in Resources */,
+				66B8D0512FE985EF00BC0D7F /* Style.css in Resources */,
+				66B8D0362FE985EF00BC0D7F /* Main.storyboard in Resources */,
+				66B8D0532FE985EF00BC0D7F /* Script.js in Resources */,
+				66B8D0572FE985EF00BC0D7F /* Assets.xcassets in Resources */,
+				66B8D04D2FE985EF00BC0D7F /* Main.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D617D2F81794900F7BE69 /* Resources */ = {
+		66B8D03A2FE985EF00BC0D7F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61C72F81794900F7BE69 /* content.js in Resources */,
-				662D61C62F81794900F7BE69 /* options.html in Resources */,
-				662D61C82F81794900F7BE69 /* options.css in Resources */,
-				662D61C12F81794900F7BE69 /* background.js in Resources */,
-				662D61C32F81794900F7BE69 /* options.js in Resources */,
-				662D61C02F81794900F7BE69 /* content.css in Resources */,
-				662D61C42F81794900F7BE69 /* icon128.png in Resources */,
-				662D61C52F81794900F7BE69 /* manifest.json in Resources */,
-				662D61C22F81794900F7BE69 /* icon48.png in Resources */,
+				66B8D08A2FE985EF00BC0D7F /* background.js in Resources */,
+				66B8D0912FE985EF00BC0D7F /* content.js in Resources */,
+				66B8D08E2FE985EF00BC0D7F /* tracking.js in Resources */,
+				66B8D08C2FE985EF00BC0D7F /* options.js in Resources */,
+				66B8D0892FE985EF00BC0D7F /* content.css in Resources */,
+				66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */,
+				66B8D0932FE985EF00BC0D7F /* options.css in Resources */,
+				66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */,
+				66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */,
+				66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */,
+				66B8D0902FE985EF00BC0D7F /* options.html in Resources */,
+				66B8D0922FE985EF00BC0D7F /* providers.js in Resources */,
+				66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */,
+				66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61872F81794900F7BE69 /* Resources */ = {
+		66B8D0442FE985EF00BC0D7F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61BE2F81794900F7BE69 /* content.js in Resources */,
-				662D61BD2F81794900F7BE69 /* options.html in Resources */,
-				662D61BF2F81794900F7BE69 /* options.css in Resources */,
-				662D61B82F81794900F7BE69 /* background.js in Resources */,
-				662D61BA2F81794900F7BE69 /* options.js in Resources */,
-				662D61B72F81794900F7BE69 /* content.css in Resources */,
-				662D61BB2F81794900F7BE69 /* icon128.png in Resources */,
-				662D61BC2F81794900F7BE69 /* manifest.json in Resources */,
-				662D61B92F81794900F7BE69 /* icon48.png in Resources */,
+				66B8D07C2FE985EF00BC0D7F /* background.js in Resources */,
+				66B8D0832FE985EF00BC0D7F /* content.js in Resources */,
+				66B8D0802FE985EF00BC0D7F /* tracking.js in Resources */,
+				66B8D07E2FE985EF00BC0D7F /* options.js in Resources */,
+				66B8D07B2FE985EF00BC0D7F /* content.css in Resources */,
+				66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */,
+				66B8D0852FE985EF00BC0D7F /* options.css in Resources */,
+				66B8D07A2FE985EF00BC0D7F /* prompts.js in Resources */,
+				66B8D0792FE985EF00BC0D7F /* icon16.png in Resources */,
+				66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */,
+				66B8D0822FE985EF00BC0D7F /* options.html in Resources */,
+				66B8D0842FE985EF00BC0D7F /* providers.js in Resources */,
+				66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */,
+				66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		662D615D2F81794900F7BE69 /* Sources */ = {
+		66B8D01A2FE985EE00BC0D7F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61972F81794900F7BE69 /* ViewController.swift in Sources */,
-				662D61652F81794900F7BE69 /* AppDelegate.swift in Sources */,
-				662D61672F81794900F7BE69 /* SceneDelegate.swift in Sources */,
+				66B8D0542FE985EF00BC0D7F /* ViewController.swift in Sources */,
+				66B8D0222FE985EE00BC0D7F /* AppDelegate.swift in Sources */,
+				66B8D0242FE985EE00BC0D7F /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D616F2F81794900F7BE69 /* Sources */ = {
+		66B8D02C2FE985EF00BC0D7F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D61982F81794900F7BE69 /* ViewController.swift in Sources */,
-				662D61762F81794900F7BE69 /* AppDelegate.swift in Sources */,
+				66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */,
+				66B8D0332FE985EF00BC0D7F /* AppDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D617B2F81794900F7BE69 /* Sources */ = {
+		66B8D0382FE985EF00BC0D7F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D619B2F81794900F7BE69 /* SafariWebExtensionHandler.swift in Sources */,
+				66B8D0582FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		662D61852F81794900F7BE69 /* Sources */ = {
+		66B8D0422FE985EF00BC0D7F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				662D619C2F81794900F7BE69 /* SafariWebExtensionHandler.swift in Sources */,
+				66B8D0592FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		662D61822F81794900F7BE69 /* PBXTargetDependency */ = {
+		66B8D03F2FE985EF00BC0D7F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 662D617E2F81794900F7BE69 /* Intention Safari Extension (iOS) */;
-			targetProxy = 662D61812F81794900F7BE69 /* PBXContainerItemProxy */;
+			target = 66B8D03B2FE985EF00BC0D7F /* Intention Safari Extension (iOS) */;
+			targetProxy = 66B8D03E2FE985EF00BC0D7F /* PBXContainerItemProxy */;
 		};
-		662D618C2F81794900F7BE69 /* PBXTargetDependency */ = {
+		66B8D0492FE985EF00BC0D7F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 662D61882F81794900F7BE69 /* Intention Safari Extension (macOS) */;
-			targetProxy = 662D618B2F81794900F7BE69 /* PBXContainerItemProxy */;
+			target = 66B8D0452FE985EF00BC0D7F /* Intention Safari Extension (macOS) */;
+			targetProxy = 66B8D0482FE985EF00BC0D7F /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
-		662D61542F81794800F7BE69 /* Main.html */ = {
+		66B8D0112FE985EE00BC0D7F /* Main.html */ = {
 			isa = PBXVariantGroup;
 			children = (
-				662D61552F81794800F7BE69 /* Base */,
+				66B8D0122FE985EE00BC0D7F /* Base */,
 			);
 			name = Main.html;
 			sourceTree = "<group>";
 		};
-		662D61682F81794900F7BE69 /* LaunchScreen.storyboard */ = {
+		66B8D0252FE985EE00BC0D7F /* LaunchScreen.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (
-				662D61692F81794900F7BE69 /* Base */,
+				66B8D0262FE985EE00BC0D7F /* Base */,
 			);
 			name = LaunchScreen.storyboard;
 			sourceTree = "<group>";
 		};
-		662D616B2F81794900F7BE69 /* Main.storyboard */ = {
+		66B8D0282FE985EF00BC0D7F /* Main.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (
-				662D616C2F81794900F7BE69 /* Base */,
+				66B8D0292FE985EF00BC0D7F /* Base */,
 			);
 			name = Main.storyboard;
 			sourceTree = "<group>";
 		};
-		662D61772F81794900F7BE69 /* Main.storyboard */ = {
+		66B8D0342FE985EF00BC0D7F /* Main.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (
-				662D61782F81794900F7BE69 /* Base */,
+				66B8D0352FE985EF00BC0D7F /* Base */,
 			);
 			name = Main.storyboard;
 			sourceTree = "<group>";
@@ -543,7 +573,7 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
-		662D619D2F81794900F7BE69 /* Debug */ = {
+		66B8D05A2FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -604,7 +634,7 @@
 			};
 			name = Debug;
 		};
-		662D619E2F81794900F7BE69 /* Release */ = {
+		66B8D05B2FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -657,7 +687,7 @@
 			};
 			name = Release;
 		};
-		662D61A02F81794900F7BE69 /* Debug */ = {
+		66B8D05D2FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -690,7 +720,7 @@
 			};
 			name = Debug;
 		};
-		662D61A12F81794900F7BE69 /* Release */ = {
+		66B8D05E2FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -724,7 +754,7 @@
 			};
 			name = Release;
 		};
-		662D61A42F81794900F7BE69 /* Debug */ = {
+		66B8D0612FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -764,7 +794,7 @@
 			};
 			name = Debug;
 		};
-		662D61A52F81794900F7BE69 /* Release */ = {
+		66B8D0622FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -805,7 +835,7 @@
 			};
 			name = Release;
 		};
-		662D61A72F81794900F7BE69 /* Debug */ = {
+		66B8D0642FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -840,7 +870,7 @@
 			};
 			name = Debug;
 		};
-		662D61A82F81794900F7BE69 /* Release */ = {
+		66B8D0652FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -875,7 +905,7 @@
 			};
 			name = Release;
 		};
-		662D61AB2F81794900F7BE69 /* Debug */ = {
+		66B8D0682FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -916,7 +946,7 @@
 			};
 			name = Debug;
 		};
-		662D61AC2F81794900F7BE69 /* Release */ = {
+		66B8D0692FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
@@ -960,52 +990,52 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		662D61512F81794800F7BE69 /* Build configuration list for PBXProject "Intention Safari" */ = {
+		66B8D00E2FE985ED00BC0D7F /* Build configuration list for PBXProject "Intention Safari" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				662D619D2F81794900F7BE69 /* Debug */,
-				662D619E2F81794900F7BE69 /* Release */,
+				66B8D05A2FE985EF00BC0D7F /* Debug */,
+				66B8D05B2FE985EF00BC0D7F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		662D619F2F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari Extension (iOS)" */ = {
+		66B8D05C2FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari Extension (iOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				662D61A02F81794900F7BE69 /* Debug */,
-				662D61A12F81794900F7BE69 /* Release */,
+				66B8D05D2FE985EF00BC0D7F /* Debug */,
+				66B8D05E2FE985EF00BC0D7F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		662D61A32F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari (iOS)" */ = {
+		66B8D0602FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari (iOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				662D61A42F81794900F7BE69 /* Debug */,
-				662D61A52F81794900F7BE69 /* Release */,
+				66B8D0612FE985EF00BC0D7F /* Debug */,
+				66B8D0622FE985EF00BC0D7F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		662D61A62F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari Extension (macOS)" */ = {
+		66B8D0632FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari Extension (macOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				662D61A72F81794900F7BE69 /* Debug */,
-				662D61A82F81794900F7BE69 /* Release */,
+				66B8D0642FE985EF00BC0D7F /* Debug */,
+				66B8D0652FE985EF00BC0D7F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		662D61AA2F81794900F7BE69 /* Build configuration list for PBXNativeTarget "Intention Safari (macOS)" */ = {
+		66B8D0672FE985EF00BC0D7F /* Build configuration list for PBXNativeTarget "Intention Safari (macOS)" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				662D61AB2F81794900F7BE69 /* Debug */,
-				662D61AC2F81794900F7BE69 /* Release */,
+				66B8D0682FE985EF00BC0D7F /* Debug */,
+				66B8D0692FE985EF00BC0D7F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 662D614E2F81794800F7BE69 /* Project object */;
+	rootObject = 66B8D00B2FE985ED00BC0D7F /* Project object */;
 }

@@ -76,8 +76,23 @@ async function handleMessage(message, sender) {
   }
 }
 
+async function getLimitsForDomain(domain) {
+  const { domainLimits = {} } = await getStorage(['domainLimits']);
+  const defaults = { maxGrants: 3, maxMinutes: -1 };
+  if (domain && domainLimits[domain]) {
+    const limits = domainLimits[domain];
+    const maxGrants = Number(limits.maxGrants);
+    const maxMinutes = Number(limits.maxMinutes);
+    return {
+      maxGrants: isNaN(maxGrants) ? defaults.maxGrants : maxGrants,
+      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes
+    };
+  }
+  return defaults;
+}
+
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'blockedDomains', 'setupComplete'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'setupComplete'];
   const stored = await getStorage(keys);
   return {
     setupComplete: !!stored.setupComplete,
@@ -85,19 +100,26 @@ async function getFullConfig() {
     apiKey: stored.apiKey || '',
     model: stored.model || '',
     userContext: stored.userContext || '',
+    contextProjects: stored.contextProjects || '',
+    contextReasons: stored.contextReasons || '',
+    coachInstructions: stored.coachInstructions || DEFAULT_COACH_INSTRUCTIONS,
+    defaultCoachInstructions: DEFAULT_COACH_INSTRUCTIONS,
     blockedDomains: stored.blockedDomains || [],
-    providers: PROVIDERS,
-    grantsCap: GRANTS_DAILY_CAP
+    domainLimits: stored.domainLimits || {},
+    providers: PROVIDERS
   };
 }
 
-async function saveSetup({ provider, apiKey, model, userContext, blockedDomains }) {
+async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits }) {
   await setStorage({
     provider,
     apiKey,
     model: model || PROVIDERS[provider]?.defaultModel || '',
     userContext: userContext || '',
+    contextProjects: contextProjects || '',
+    contextReasons: contextReasons || '',
     blockedDomains: blockedDomains || [],
+    domainLimits: domainLimits || {},
     setupComplete: true
   });
   return { ok: true };
@@ -109,10 +131,10 @@ async function saveSettings(partial) {
 }
 
 async function handleChat({ tabId, mode, domain, userMessage }) {
-  const { provider, apiKey, model, userContext } = await getStorage(['provider', 'apiKey', 'model', 'userContext']);
+  const { provider, apiKey, model, userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
   if (!provider || !apiKey) return { error: 'No API key configured. Open settings to finish setup.' };
 
-  const historyKey = mode === 'context' ? 'context' : (tabId != null ? String(tabId) : null);
+  const historyKey = mode === 'context' || mode === 'setup' ? mode : (tabId != null ? String(tabId) : null);
   if (!historyKey) return { error: 'No history context' };
   const { chatHistories = {} } = await getStorage(['chatHistories']);
   const history = chatHistories[historyKey] || [];
@@ -122,11 +144,16 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
 
   if (mode === 'gate') {
     const stats = await getStatsForDomain(domain);
+    const limits = await getLimitsForDomain(domain);
     systemPrompt = buildGateSystemPrompt({
       domain,
       userContext,
+      contextProjects,
+      contextReasons,
+      coachInstructions,
       grantsToday: stats.grantsToday,
-      grantsCap: GRANTS_DAILY_CAP,
+      grantsCap: limits.maxGrants,
+      minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll
@@ -136,12 +163,17 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
     const { activeSessions = {} } = await getStorage(['activeSessions']);
     const session = activeSessions[tabId] || {};
     const stats = await getStatsForDomain(domain);
+    const limits = await getLimitsForDomain(domain);
     systemPrompt = buildCheckinSystemPrompt({
       domain,
       userContext,
+      contextProjects,
+      contextReasons,
+      coachInstructions,
       originalReason: session.reason,
       grantsToday: stats.grantsToday,
-      grantsCap: GRANTS_DAILY_CAP,
+      grantsCap: limits.maxGrants,
+      minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll
     });
@@ -149,6 +181,9 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
   } else if (mode === 'context') {
     systemPrompt = buildContextSystemPrompt({ currentContext: userContext });
     tools = [UPDATE_CONTEXT_TOOL];
+  } else if (mode === 'setup') {
+    systemPrompt = buildSetupSystemPrompt();
+    tools = [SAVE_ONBOARDING_TOOL];
   } else {
     return { error: `Unknown chat mode: ${mode}` };
   }
@@ -170,11 +205,30 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
   for (const tc of llmResponse.toolCalls || []) {
     if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
       const stats = await getStatsForDomain(domain);
-      if (stats.grantsToday >= GRANTS_DAILY_CAP) {
-        appendedNote = `\n\n_(Intention: daily grant cap reached — no more time can be granted today, but I'm still here to talk.)_`;
+      const limits = await getLimitsForDomain(domain);
+      
+      const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
+      const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
+      
+      if (grantsLimitReached || minutesLimitReached) {
+        const reasonStr = grantsLimitReached ? "daily grant cap reached" : `daily limit of ${limits.maxMinutes} minutes reached`;
+        appendedNote = `\n\n_(Intention: ${reasonStr} — no more time can be granted today, but I'm still here to talk.)_`;
         continue;
       }
-      const minutes = Math.max(1, Math.min(60, Math.round(Number(tc.input.minutes) || 0)));
+      
+      let minutes = Math.max(1, Math.min(60, Math.round(Number(tc.input.minutes) || 0)));
+      if (limits.maxMinutes > 0) {
+        const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
+        if (minutes > remainingMinutes) {
+          minutes = remainingMinutes;
+        }
+      }
+      
+      if (minutes <= 0) {
+        appendedNote = `\n\n_(Intention: daily limit reached — no more time can be granted today.)_`;
+        continue;
+      }
+      
       const reason = String(tc.input.reason || '').slice(0, 240);
       await recordGrant(domain, minutes, reason);
       const { activeSessions = {} } = await getStorage(['activeSessions']);
@@ -188,6 +242,30 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
         await setStorage({ userContext: newContext });
         contextUpdated = { new_context: newContext, diff_summary: String(tc.input.diff_summary || '').slice(0, 240) };
       }
+    } else if (tc.name === 'save_onboarding' && mode === 'setup') {
+      const userContext = String(tc.input.user_context || '').slice(0, 5000).trim();
+      const blockedDomains = (tc.input.blocked_domains || []).map(d => 
+        String(d).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+      ).filter(Boolean);
+      
+      const domainLimits = {};
+      for (const item of tc.input.domain_limits || []) {
+        if (item.domain) {
+          const dom = String(item.domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+          domainLimits[dom] = {
+            maxGrants: Number(item.max_grants_per_day) || 3,
+            maxMinutes: Number(item.max_minutes_per_day) ?? -1
+          };
+        }
+      }
+      
+      await setStorage({
+        userContext,
+        blockedDomains,
+        domainLimits,
+        setupComplete: true
+      });
+      contextUpdated = { onboardingComplete: true };
     }
   }
 

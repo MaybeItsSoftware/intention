@@ -3,155 +3,167 @@
   position: fixed;
   inset: 0;
   z-index: 2147483647;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow-y: auto;
+  background: #0f1115;
+  color: #e7e7ea;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
 }
 
 #intention-root * { box-sizing: border-box; }
 
-#intention-root .int-container {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 24px;
-  padding: 32px;
-  width: min(580px, 92vw);
-  max-height: 88vh;
+#intention-root .int-column {
+  max-width: 620px;
+  margin: 0 auto;
+  min-height: 100%;
+  padding: 14vh 24px 40px;
   display: flex;
   flex-direction: column;
-  color: #e5e7eb;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
-  animation: int-fade-in 0.25s ease-out;
 }
 
 #intention-root h1 {
   margin: 0 0 4px;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #f1f5f9;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b7280;
 }
 
 #intention-root .int-subtitle {
-  margin: 0 0 16px;
-  font-size: 14px;
-  color: #94a3b8;
+  margin: 0 0 30px;
+  font-size: 15px;
+  color: #8b8f99;
 }
 
 #intention-root .int-messages {
   flex: 1;
-  overflow-y: auto;
-  margin-bottom: 14px;
-  max-height: 50vh;
-  min-height: 200px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 4px 2px;
+  gap: 22px;
+  margin-bottom: 26px;
 }
 
 #intention-root .int-msg {
-  padding: 10px 14px;
-  border-radius: 14px;
-  font-size: 14px;
-  line-height: 1.55;
-  max-width: 85%;
+  font-size: 19px;
+  line-height: 1.62;
   white-space: pre-wrap;
+  animation: int-fade-in 0.45s ease-out;
 }
 
 #intention-root .int-msg-assistant {
-  background: rgba(59, 130, 246, 0.14);
-  color: #e2e8f0;
-  align-self: flex-start;
-  border: 1px solid rgba(59, 130, 246, 0.22);
+  color: #f3f4f6;
 }
 
 #intention-root .int-msg-user {
-  background: rgba(255, 255, 255, 0.08);
-  color: #f1f5f9;
-  align-self: flex-end;
+  color: #7c818c;
+}
+
+#intention-root .int-msg-user::before {
+  content: "You — ";
+  color: #4b5563;
 }
 
 #intention-root .int-thinking {
-  opacity: 0.6;
-  font-style: italic;
+  opacity: 0.5;
 }
 
 #intention-root .int-composer {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  padding-bottom: 8px;
 }
 
 #intention-root .int-composer input {
   flex: 1;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
-  font-size: 14px;
+  border: none;
+  background: transparent;
+  color: #f3f4f6;
+  font-size: 18px;
   outline: none;
   font-family: inherit;
+  padding: 4px 0;
 }
 
-#intention-root .int-composer input:focus {
-  border-color: rgba(59, 130, 246, 0.6);
-}
+#intention-root .int-composer input::placeholder { color: #545863; }
 
-#intention-root button {
-  padding: 12px 18px;
+#intention-root .int-composer button {
   border: none;
-  border-radius: 12px;
-  background: #3b82f6;
-  color: white;
+  background: transparent;
+  color: #9aa0ac;
   font-weight: 600;
+  font-size: 15px;
   cursor: pointer;
-  font-size: 14px;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+#intention-root .int-composer button:hover { color: #f3f4f6; }
+
+#intention-root .int-close-row {
+  margin-top: 22px;
+}
+
+/* The setup-needed "Open settings" button reuses plain button styling. */
+#intention-root #int-open-options {
+  align-self: flex-start;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e7e7ea;
+  font-size: 15px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
   font-family: inherit;
 }
 
-#intention-root button:hover { background: #2563eb; }
+#intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
 
 #intention-root button.int-secondary {
+  border: none;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #cbd5e1;
+  color: #545863;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
 }
 
-#intention-root button.int-secondary:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
+#intention-root button.int-secondary:hover { color: #9aa0ac; text-decoration: underline; }
 
-#intention-root .int-close-row {
-  margin-top: 12px;
+#intention-root .int-stats-row {
   display: flex;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 30px;
+  font-size: 13px;
+}
+
+#intention-root .int-stat { display: flex; gap: 5px; }
+#intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
+#intention-root .int-stat-label { color: #545863; }
+
+@keyframes int-fade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 #intention-badge {
   all: initial;
   position: fixed;
-  top: 12px;
-  right: 12px;
-  background: rgba(15, 23, 42, 0.92);
-  color: #e2e8f0;
-  padding: 8px 14px;
-  border-radius: 999px;
+  top: 14px;
+  right: 14px;
+  z-index: 2147483647;
+  background: #11141a;
+  color: #e7e7ea;
+  padding: 7px 13px;
+  border-radius: 8px;
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
   font-size: 13px;
   font-weight: 500;
-  z-index: 2147483646;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   pointer-events: none;
-}
-
-@keyframes int-fade-in {
-  from { opacity: 0; transform: scale(0.97); }
-  to { opacity: 1; transform: scale(1); }
 }

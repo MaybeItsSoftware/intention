@@ -1,6 +1,187 @@
+const OVERLAY_CSS = `
+#intention-root {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  overflow-y: auto;
+  background: #0f1115;
+  color: #e7e7ea;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+}
+
+#intention-root * { box-sizing: border-box; }
+
+#intention-root .int-column {
+  max-width: 620px;
+  margin: 0 auto;
+  min-height: 100%;
+  padding: 14vh 24px 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+#intention-root h1 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+#intention-root .int-subtitle {
+  margin: 0 0 30px;
+  font-size: 15px;
+  color: #8b8f99;
+}
+
+#intention-root .int-messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-bottom: 26px;
+}
+
+#intention-root .int-msg {
+  font-size: 19px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  animation: int-fade-in 0.45s ease-out;
+}
+
+#intention-root .int-msg-assistant {
+  color: #f3f4f6;
+}
+
+#intention-root .int-msg-user {
+  color: #7c818c;
+}
+
+#intention-root .int-msg-user::before {
+  content: "You — ";
+  color: #4b5563;
+}
+
+#intention-root .int-thinking {
+  opacity: 0.5;
+}
+
+#intention-root .int-composer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  padding-bottom: 8px;
+}
+
+#intention-root .int-composer input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #f3f4f6;
+  font-size: 18px;
+  outline: none;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+#intention-root .int-composer input::placeholder { color: #545863; }
+
+#intention-root .int-composer button {
+  border: none;
+  background: transparent;
+  color: #9aa0ac;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+#intention-root .int-composer button:hover { color: #f3f4f6; }
+
+#intention-root .int-close-row {
+  margin-top: 22px;
+}
+
+#intention-root #int-open-options {
+  align-self: flex-start;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e7e7ea;
+  font-size: 15px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
+
+#intention-root button.int-secondary {
+  border: none;
+  background: transparent;
+  color: #545863;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+
+#intention-root button.int-secondary:hover { color: #9aa0ac; text-decoration: underline; }
+
+#intention-root .int-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 30px;
+  font-size: 13px;
+}
+
+#intention-root .int-stat { display: flex; gap: 5px; }
+#intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
+#intention-root .int-stat-label { color: #545863; }
+
+@keyframes int-fade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#intention-badge {
+  all: initial;
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 2147483647;
+  background: #11141a;
+  color: #e7e7ea;
+  padding: 7px 13px;
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+`;
+
 const rootStyle = document.createElement('style');
 rootStyle.textContent = 'html { display: none !important; }';
 document.documentElement.appendChild(rootStyle);
+
+function injectOverlayStyle() {
+  const styleId = 'intention-style';
+  if (!document.getElementById(styleId)) {
+    const styleEl = document.createElement('style');
+    styleEl.id = styleId;
+    styleEl.textContent = OVERLAY_CSS;
+    (document.head || document.body || document.documentElement).appendChild(styleEl);
+  }
+}
 
 let currentSession = null;
 let matchedDomain = null;
@@ -18,9 +199,8 @@ chrome.storage.local.get(['blockedDomains', 'setupComplete'], (result) => {
   }
 
   if (!setupComplete) {
-    window.stop();
-    ensureBody();
-    document.body.innerHTML = '';
+    ensureBodyAndStop();
+    injectOverlayStyle();
     renderSetupNeededUI();
     rootStyle.remove();
     return;
@@ -29,23 +209,42 @@ chrome.storage.local.get(['blockedDomains', 'setupComplete'], (result) => {
   chrome.runtime.sendMessage({ action: 'getSession' }, (response) => {
     if (response && response.session) {
       currentSession = response.session;
-      rootStyle.remove();
-      setupInterruptionListener();
-      renderStatusBadge(response.session);
+      runWhenBodyExists(() => {
+        rootStyle.remove();
+        setupInterruptionListener();
+        injectOverlayStyle();
+        renderStatusBadge(response.session);
+      });
     } else {
-      window.stop();
-      ensureBody();
-      document.body.innerHTML = '';
+      ensureBodyAndStop();
+      injectOverlayStyle();
       renderChatUI({ mode: 'gate', domain: matchedDomain });
       rootStyle.remove();
     }
   });
 });
 
-function ensureBody() {
+function ensureBodyAndStop() {
+  window.stop();
   if (!document.body) {
     const body = document.createElement('body');
     document.documentElement.appendChild(body);
+  } else {
+    document.body.innerHTML = '';
+  }
+}
+
+function runWhenBodyExists(callback) {
+  if (document.body) {
+    callback();
+  } else {
+    const observer = new MutationObserver((mutations, obs) => {
+      if (document.body) {
+        obs.disconnect();
+        callback();
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 }
 
@@ -53,13 +252,13 @@ function renderSetupNeededUI() {
   const root = document.createElement('div');
   root.id = 'intention-root';
   root.innerHTML = `
-    <div class="int-container">
+    <div class="int-column">
       <h1>Intention</h1>
       <p class="int-subtitle">Finish setup to enable your AI coach.</p>
       <button id="int-open-options">Open settings</button>
     </div>
   `;
-  document.documentElement.appendChild(root);
+  document.body.appendChild(root);
   document.getElementById('int-open-options').addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'openOptions' });
   });
@@ -80,12 +279,13 @@ function renderChatUI({ mode, domain }) {
   const root = document.createElement('div');
   root.id = 'intention-root';
   root.innerHTML = `
-    <div class="int-container int-chat">
+    <div class="int-column">
       <h1>Intention</h1>
       <p class="int-subtitle">${subtitle}</p>
+      <div class="int-stats-row" id="int-stats-row" style="display: none;"></div>
       <div class="int-messages" id="int-messages"></div>
       <div class="int-composer">
-        <input type="text" id="int-input" placeholder="Type your reply..." autocomplete="off">
+        <input type="text" id="int-input" placeholder="Type your reply…" autocomplete="off">
         <button id="int-send">Send</button>
       </div>
       <div class="int-close-row">
@@ -93,7 +293,7 @@ function renderChatUI({ mode, domain }) {
       </div>
     </div>
   `;
-  document.documentElement.appendChild(root);
+  document.body.appendChild(root);
 
   const messagesEl = document.getElementById('int-messages');
   const inputEl = document.getElementById('int-input');
@@ -101,6 +301,34 @@ function renderChatUI({ mode, domain }) {
   const closeBtn = document.getElementById('int-close');
 
   addMessage(messagesEl, 'assistant', seed);
+
+  // Fetch stats and render stats row
+  chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
+    if (stats) {
+      const statsRow = document.getElementById('int-stats-row');
+      if (statsRow) {
+        statsRow.innerHTML = `
+          <div class="int-stat">
+            <div class="int-stat-value">${stats.minutesToday || 0}m</div>
+            <div class="int-stat-label">Today</div>
+          </div>
+          <div class="int-stat">
+            <div class="int-stat-value">${stats.minutesWeek || 0}m</div>
+            <div class="int-stat-label">Week</div>
+          </div>
+          <div class="int-stat">
+            <div class="int-stat-value">${stats.minutesYear || 0}m</div>
+            <div class="int-stat-label">Year</div>
+          </div>
+          <div class="int-stat">
+            <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
+            <div class="int-stat-label">All Time</div>
+          </div>
+        `;
+        statsRow.style.display = 'flex';
+      }
+    }
+  });
 
   let sending = false;
 
@@ -118,20 +346,27 @@ function renderChatUI({ mode, domain }) {
       domain,
       userMessage: text
     }, (resp) => {
-      sending = false;
-      thinking.remove();
       if (!resp) {
+        thinking.remove();
         addMessage(messagesEl, 'assistant', '[no response — background worker may be offline]');
+        sending = false;
         return;
       }
       if (resp.error) {
+        thinking.remove();
         addMessage(messagesEl, 'assistant', `[error: ${resp.error}]`);
+        sending = false;
         return;
       }
-      addMessage(messagesEl, 'assistant', resp.assistantText || '(no reply)');
-      if (resp.grantedSession) {
-        setTimeout(() => window.location.reload(), 1200);
-      }
+      // Reuse the "…" placeholder and reveal the reply gradually so it reads
+      // as if the coach is speaking, rather than snapping in all at once.
+      thinking.classList.remove('int-thinking');
+      typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
+        sending = false;
+        if (resp.grantedSession) {
+          setTimeout(() => window.location.reload(), 800);
+        }
+      });
     });
   }
 
@@ -153,18 +388,58 @@ function addMessage(container, role, text, isThinking) {
   return div;
 }
 
+// Reveal `text` into `el` a few characters at a time. Clicking anywhere skips
+// to the full text. `onDone` fires exactly once when the reveal completes.
+function typeMessage(el, container, text, onDone) {
+  el.textContent = '';
+  let i = 0;
+  let finished = false;
+  const step = Math.max(1, Math.ceil(text.length / 140));
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearInterval(timer);
+    el.textContent = text;
+    if (container) container.scrollTop = container.scrollHeight;
+    document.removeEventListener('click', skip, true);
+    if (onDone) onDone();
+  }
+  function skip() { finish(); }
+
+  const timer = setInterval(() => {
+    i += step;
+    el.textContent = text.slice(0, i);
+    if (container) container.scrollTop = container.scrollHeight;
+    if (i >= text.length) finish();
+  }, 18);
+
+  document.addEventListener('click', skip, true);
+}
+
 function renderStatusBadge(session) {
   const badge = document.createElement('div');
   badge.id = 'intention-badge';
   const end = session.startTime + session.intervalMinutes * 60000;
 
   function update() {
-    const remaining = Math.max(0, Math.round((end - Date.now()) / 60000));
-    badge.textContent = `⏱ ${remaining}m · ${session.reason}`;
+    const totalSec = Math.max(0, Math.round((end - Date.now()) / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    // Switch to m:ss in the final minute so the countdown feels live.
+    const timeStr = totalSec >= 60 ? `${m}m left` : `${m}:${String(s).padStart(2, '0')}`;
+    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · ' + session.reason : ''}`;
   }
   update();
-  setInterval(update, 15000);
-  document.documentElement.appendChild(badge);
+  setInterval(update, 1000);
+  document.body.appendChild(badge);
+
+  // SPA sites (Twitter, YouTube, …) re-render <body> and can drop our node.
+  // Re-attach it whenever it goes missing so the timer stays visible.
+  const observer = new MutationObserver(() => {
+    if (!document.body.contains(badge)) document.body.appendChild(badge);
+  });
+  observer.observe(document.body, { childList: true });
 }
 
 function setupInterruptionListener() {

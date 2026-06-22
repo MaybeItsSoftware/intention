@@ -1,3 +1,25 @@
+async function loadEnv() {
+  try {
+    const res = await fetch(chrome.runtime.getURL('.env'));
+    if (!res.ok) return {};
+    const text = await res.text();
+    const env = {};
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const index = trimmed.indexOf('=');
+      if (index !== -1) {
+        const key = trimmed.substring(0, index).trim();
+        const value = trimmed.substring(index + 1).trim().replace(/^["']|["']$/g, '');
+        env[key] = value;
+      }
+    }
+    return env;
+  } catch (e) {
+    return {};
+  }
+}
+
 function sendBg(msg) {
   return new Promise(resolve => chrome.runtime.sendMessage(msg, resolve));
 }
@@ -27,41 +49,184 @@ function populateProviderDropdowns() {
   }
 }
 
+let setupBlockedDomains = [];
+let setupDomainLimits = {};
+
 function showSetupView() {
   document.getElementById('setup-view').hidden = false;
   document.getElementById('settings-view').hidden = true;
 
   const providerSel = document.getElementById('provider-select');
   const modelInput = document.getElementById('model-input');
+  const apiKeyInput = document.getElementById('api-key-input');
+
   const syncPlaceholder = () => {
     const p = PROVIDERS[providerSel.value];
     modelInput.placeholder = p ? p.modelPlaceholder : '';
   };
-  providerSel.addEventListener('change', syncPlaceholder);
+
+  let env = {};
+  const syncEnvFields = () => {
+    const provider = providerSel.value;
+    const providerKey = `${provider.toUpperCase()}_API_KEY`;
+    const modelKey = `${provider.toUpperCase()}_MODEL`;
+
+    const apiKey = env[providerKey] || env.API_KEY || '';
+    if (apiKey) apiKeyInput.value = apiKey;
+    else apiKeyInput.value = '';
+
+    const model = env[modelKey] || env.DEFAULT_MODEL || '';
+    if (model) modelInput.value = model;
+    else modelInput.value = '';
+  };
+
+  providerSel.addEventListener('change', () => {
+    syncPlaceholder();
+    syncEnvFields();
+  });
   syncPlaceholder();
 
-  document.getElementById('save-setup-btn').addEventListener('click', async () => {
+  loadEnv().then(parsedEnv => {
+    env = parsedEnv;
+    if (env.DEFAULT_PROVIDER && PROVIDERS[env.DEFAULT_PROVIDER]) {
+      providerSel.value = env.DEFAULT_PROVIDER;
+      syncPlaceholder();
+    }
+    syncEnvFields();
+  });
+
+  const addBtn = document.getElementById('setup-add-website-btn');
+  const webInput = document.getElementById('setup-website-input');
+  const limitInput = document.getElementById('setup-website-limit');
+  const saveBtn = document.getElementById('setup-save-btn');
+
+  const addDomain = () => {
+    const raw = webInput.value.trim().toLowerCase();
+    if (!raw) return;
+    const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    const limitVal = parseInt(limitInput.value, 10);
+    const limit = isNaN(limitVal) ? 30 : limitVal;
+
+    if (domain && !setupBlockedDomains.includes(domain)) {
+      setupBlockedDomains.push(domain);
+      setupDomainLimits[domain] = {
+        maxGrants: 3,
+        maxMinutes: limit
+      };
+      renderSetupDomains();
+      webInput.value = '';
+      limitInput.value = '30';
+    }
+  };
+
+  addBtn.onclick = addDomain;
+  webInput.onkeydown = e => { if (e.key === 'Enter') addDomain(); };
+  limitInput.onkeydown = e => { if (e.key === 'Enter') addDomain(); };
+
+  saveBtn.onclick = async () => {
     const provider = providerSel.value;
-    const apiKey = document.getElementById('api-key-input').value.trim();
-    const model = modelInput.value.trim();
-    const userContext = document.getElementById('context-input').value.trim();
-    const raw = document.getElementById('domains-input').value.trim();
-    const blockedDomains = raw.split(',')
-      .map(d => d.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase())
-      .filter(Boolean);
+    const apiKey = apiKeyInput.value.trim();
+    const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
 
     if (!provider || !apiKey) {
       setStatus('setup-status', 'Choose a provider and enter an API key.');
       return;
     }
+
+    const projectsAns = document.getElementById('setup-projects-input').value.trim();
+    const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
+
+    // Create user context
+    const userContext = `Projects I could be working on instead:
+${projectsAns || '(not configured)'}
+
+Why I want to stop using these sites so much:
+${reasonsAns || '(not configured)'}`;
+
+    // Build domain limits object
+    const domainLimits = {};
+    for (const d of setupBlockedDomains) {
+      domainLimits[d] = setupDomainLimits[d] || {
+        maxGrants: 3,
+        maxMinutes: 30
+      };
+    }
+
+    setStatus('setup-status', 'Saving setup...', 'info');
+
+    // Save and finalize
     await sendBg({
       action: 'saveSetup',
-      config: { provider, apiKey, model, userContext, blockedDomains }
+      config: {
+        provider,
+        apiKey,
+        model,
+        userContext,
+        contextProjects: projectsAns,
+        contextReasons: reasonsAns,
+        blockedDomains: setupBlockedDomains,
+        domainLimits
+      }
     });
-    setStatus('setup-status', 'Saved. Reloading...', 'success');
-    setTimeout(() => location.reload(), 600);
-  });
+
+    location.reload();
+  };
 }
+
+function renderSetupDomains() {
+  const list = document.getElementById('setup-websites-list');
+  list.innerHTML = '';
+  for (const d of setupBlockedDomains) {
+    const li = document.createElement('li');
+    
+    const infoContainer = document.createElement('div');
+    infoContainer.className = 'domain-info';
+    
+    const span = document.createElement('span');
+    span.textContent = d;
+    span.className = 'domain-name';
+    infoContainer.appendChild(span);
+
+    const limitInfo = setupDomainLimits[d] || { maxGrants: 3, maxMinutes: 30 };
+    
+    const limitSpan = document.createElement('span');
+    limitSpan.className = 'domain-limit-badge';
+    limitSpan.appendChild(document.createTextNode('Limit: '));
+
+    const inlineInput = document.createElement('input');
+    inlineInput.type = 'number';
+    inlineInput.min = '1';
+    inlineInput.className = 'inline-limit-input';
+    inlineInput.value = limitInfo.maxMinutes;
+    inlineInput.addEventListener('change', (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val) && val > 0) {
+        if (!setupDomainLimits[d]) {
+          setupDomainLimits[d] = { maxGrants: 3 };
+        }
+        setupDomainLimits[d].maxMinutes = val;
+      }
+    });
+
+    limitSpan.appendChild(inlineInput);
+    limitSpan.appendChild(document.createTextNode(' min/day'));
+    infoContainer.appendChild(limitSpan);
+    
+    li.appendChild(infoContainer);
+    
+    const btn = document.createElement('button');
+    btn.textContent = 'Remove';
+    btn.className = 'delete-btn';
+    btn.addEventListener('click', () => {
+      setupBlockedDomains = setupBlockedDomains.filter(x => x !== d);
+      delete setupDomainLimits[d];
+      renderSetupDomains();
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
 
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
@@ -69,6 +234,34 @@ async function showSettingsView(state) {
 
   document.getElementById('context-display').textContent =
     state.userContext || '(no context yet — talk to your coach to create one)';
+
+  // Configurable coach instructions (system prompt) + the two settings questions.
+  const instructionsInput = document.getElementById('coach-instructions-input');
+  const projectsInput = document.getElementById('settings-projects-input');
+  const reasonsInput = document.getElementById('settings-reasons-input');
+  instructionsInput.value = state.coachInstructions || '';
+  projectsInput.value = state.contextProjects || '';
+  reasonsInput.value = state.contextReasons || '';
+
+  document.getElementById('save-prompt-btn').addEventListener('click', async () => {
+    await sendBg({
+      action: 'saveSettings',
+      config: {
+        coachInstructions: instructionsInput.value.trim(),
+        contextProjects: projectsInput.value.trim(),
+        contextReasons: reasonsInput.value.trim()
+      }
+    });
+    setStatus('prompt-status', 'Saved.', 'success');
+  });
+
+  document.getElementById('reset-prompt-btn').addEventListener('click', async () => {
+    instructionsInput.value = state.defaultCoachInstructions || '';
+    await sendBg({ action: 'saveSettings', config: { coachInstructions: '' } });
+    const fresh = await getConfig();
+    instructionsInput.value = fresh.coachInstructions || '';
+    setStatus('prompt-status', 'Reset to default.', 'success');
+  });
 
   const provSel = document.getElementById('provider-select-2');
   const modelInput = document.getElementById('model-input-2');
@@ -81,8 +274,26 @@ async function showSettingsView(state) {
     const p = PROVIDERS[provSel.value];
     modelInput.placeholder = p ? p.modelPlaceholder : '';
   };
-  provSel.addEventListener('change', syncPlaceholder);
+
+  const syncEnvSettings = (parsedEnv) => {
+    const provider = provSel.value;
+    const providerKey = `${provider.toUpperCase()}_API_KEY`;
+    const modelKey = `${provider.toUpperCase()}_MODEL`;
+
+    if (!keyInput.value && (parsedEnv[providerKey] || parsedEnv.API_KEY)) {
+      keyInput.value = parsedEnv[providerKey] || parsedEnv.API_KEY;
+    }
+    if (!modelInput.value && (parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL)) {
+      modelInput.value = parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL;
+    }
+  };
+
+  provSel.addEventListener('change', () => {
+    syncPlaceholder();
+    loadEnv().then(syncEnvSettings);
+  });
   syncPlaceholder();
+  loadEnv().then(syncEnvSettings);
 
   document.getElementById('save-provider-btn').addEventListener('click', async () => {
     const provider = provSel.value;
@@ -92,9 +303,12 @@ async function showSettingsView(state) {
     setStatus('provider-status', 'Saved.', 'success');
   });
 
-  renderDomains(state.blockedDomains || []);
+  renderDomains(state.blockedDomains || [], state.domainLimits || {});
   document.getElementById('add-btn').addEventListener('click', addDomain);
   document.getElementById('domain-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') addDomain();
+  });
+  document.getElementById('domain-limit-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') addDomain();
   });
 
@@ -107,34 +321,81 @@ async function showSettingsView(state) {
 
 async function addDomain() {
   const input = document.getElementById('domain-input');
+  const limitInput = document.getElementById('domain-limit-input');
   const raw = input.value.trim().toLowerCase();
   if (!raw) return;
+  
+  const limitVal = parseInt(limitInput.value, 10);
+  const limit = isNaN(limitVal) ? 30 : limitVal;
+  
   const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   const state = await getConfig();
   const domains = state.blockedDomains || [];
+  const limits = state.domainLimits || {};
   if (!domains.includes(domain)) {
     domains.push(domain);
-    await sendBg({ action: 'saveSettings', config: { blockedDomains: domains } });
-    renderDomains(domains);
+    limits[domain] = { maxGrants: 3, maxMinutes: limit };
+    await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
+    renderDomains(domains, limits);
     input.value = '';
+    limitInput.value = '30';
   }
 }
 
 async function removeDomain(d) {
   const state = await getConfig();
   const domains = (state.blockedDomains || []).filter(x => x !== d);
-  await sendBg({ action: 'saveSettings', config: { blockedDomains: domains } });
-  renderDomains(domains);
+  const limits = state.domainLimits || {};
+  if (limits[d]) delete limits[d];
+  await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
+  renderDomains(domains, limits);
 }
 
-function renderDomains(domains) {
+function renderDomains(domains, limits = {}) {
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   for (const d of domains) {
     const li = document.createElement('li');
+    
+    const infoContainer = document.createElement('div');
+    infoContainer.className = 'domain-info';
+    
     const span = document.createElement('span');
     span.textContent = d;
-    li.appendChild(span);
+    span.className = 'domain-name';
+    infoContainer.appendChild(span);
+    
+    const limitInfo = limits[d] || { maxGrants: 3, maxMinutes: 30 };
+    const mins = limitInfo.maxMinutes !== undefined ? limitInfo.maxMinutes : (limitInfo.max_minutes_per_day || 30);
+    
+    const limitSpan = document.createElement('span');
+    limitSpan.className = 'domain-limit-badge';
+    limitSpan.appendChild(document.createTextNode('Limit: '));
+
+    const inlineInput = document.createElement('input');
+    inlineInput.type = 'number';
+    inlineInput.min = '1';
+    inlineInput.className = 'inline-limit-input';
+    inlineInput.value = mins > 0 ? mins : 30;
+    inlineInput.addEventListener('change', async (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val) && val > 0) {
+        const state = await getConfig();
+        const currentLimits = state.domainLimits || {};
+        if (!currentLimits[d]) {
+          currentLimits[d] = { maxGrants: 3 };
+        }
+        currentLimits[d].maxMinutes = val;
+        await sendBg({ action: 'saveSettings', config: { domainLimits: currentLimits } });
+      }
+    });
+
+    limitSpan.appendChild(inlineInput);
+    limitSpan.appendChild(document.createTextNode(' min/day'));
+    infoContainer.appendChild(limitSpan);
+    
+    li.appendChild(infoContainer);
+    
     const btn = document.createElement('button');
     btn.textContent = 'Remove';
     btn.className = 'delete-btn';
@@ -184,16 +445,18 @@ async function openCoachModal() {
     const thinking = addCoachMsg('assistant', '…', true);
     const resp = await sendBg({ action: 'chat', mode: 'context', userMessage: text });
     coachSending = false;
-    thinking.remove();
     if (!resp) {
+      thinking.remove();
       addCoachMsg('assistant', '[no response — background worker may be offline]');
       return;
     }
     if (resp.error) {
+      thinking.remove();
       addCoachMsg('assistant', `[error: ${resp.error}]`);
       return;
     }
-    addCoachMsg('assistant', resp.assistantText || '(no reply)');
+    thinking.classList.remove('int-thinking');
+    typeCoachMsg(thinking, resp.assistantText || '(no reply)');
     if (resp.contextUpdated) {
       addCoachMsg('assistant', `(context saved — ${resp.contextUpdated.diff_summary || 'updated'})`, false, true);
       const state = await getConfig();
@@ -219,6 +482,23 @@ function addCoachMsg(role, text, isThinking, isSystem) {
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
+}
+
+// Reveal the coach's reply gradually into an existing message element.
+function typeCoachMsg(el, text) {
+  const messagesEl = document.getElementById('coach-messages');
+  el.textContent = '';
+  let i = 0;
+  const step = Math.max(1, Math.ceil(text.length / 140));
+  const timer = setInterval(() => {
+    i += step;
+    el.textContent = text.slice(0, i);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (i >= text.length) {
+      clearInterval(timer);
+      el.textContent = text;
+    }
+  }, 18);
 }
 
 function setStatus(id, text, variant = '') {
