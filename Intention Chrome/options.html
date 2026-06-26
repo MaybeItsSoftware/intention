@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Intention Settings</title>
   <link rel="stylesheet" href="options.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Arvo:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="container">
@@ -84,7 +81,7 @@
 
           <section class="card">
             <h2>Coach instructions</h2>
-            <p class="subtitle">The system prompt for your coach. Use <code>{{questions}}</code> and <code>{{usage}}</code> to control where your answers and today's usage are inserted; otherwise they're appended.</p>
+            <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
             <div class="input-group">
               <textarea id="coach-instructions-input" rows="8"></textarea>
             </div>
@@ -117,6 +114,7 @@
               <button id="add-btn" class="secondary">Add</button>
             </div>
             <ul id="domain-list"></ul>
+            <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
         </div>
 
@@ -152,6 +150,21 @@
         <div class="input-group">
           <input type="text" id="coach-input" placeholder="Type a message...">
           <button id="coach-send-btn" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="gate-modal" hidden>
+      <div class="coach-box">
+        <div class="coach-header">
+          <h2 id="gate-title">Convince your coach</h2>
+          <button id="gate-close-btn" class="secondary">Cancel</button>
+        </div>
+        <p class="subtitle" id="gate-subtitle"></p>
+        <div id="gate-messages"></div>
+        <div class="input-group">
+          <input type="text" id="gate-input" placeholder="Make your case...">
+          <button id="gate-send-btn" class="primary">Send</button>
         </div>
       </div>
     </div>

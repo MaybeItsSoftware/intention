@@ -77,6 +77,7 @@ async function getStatsForDomain(domain) {
 
   let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
+  let reasonsToday = [];
 
   for (const [k, entries] of Object.entries(dailyStats)) {
     for (const [d, site] of Object.entries(entries)) {
@@ -84,6 +85,9 @@ async function getStatsForDomain(domain) {
         if (k === todayKey) {
           minutesToday = site.minutes || 0;
           grantsToday = site.grants || 0;
+          reasonsToday = (site.sessions || [])
+            .map(s => (s && s.reason ? String(s.reason).trim() : ''))
+            .filter(Boolean);
         }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
         if (monthKeys.includes(k)) minutesMonth += site.minutes || 0;
@@ -113,7 +117,8 @@ async function getStatsForDomain(domain) {
     minutesAllTime: Math.round(minutesAllTime),
     grantsToday,
     minutesTodayAll: Math.round(minutesTodayAll),
-    minutesWeekAll: Math.round(minutesWeekAll)
+    minutesWeekAll: Math.round(minutesWeekAll),
+    reasonsToday
   };
 }
 

@@ -1,3 +1,8 @@
+@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: swap; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
+
 * { box-sizing: border-box; }
 
 body {
@@ -126,6 +131,7 @@ ul#domain-list li, ul#setup-websites-list li {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 10px;
@@ -153,7 +159,7 @@ blockquote {
 .status { margin-top: 10px; font-size: 13px; color: #94a3b8; min-height: 18px; }
 .status.success { color: #22c55e; }
 
-#coach-modal {
+#coach-modal, #gate-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.72);
@@ -164,7 +170,7 @@ blockquote {
   padding: 20px;
 }
 
-#coach-modal[hidden] {
+#coach-modal[hidden], #gate-modal[hidden] {
   display: none;
 }
 
@@ -188,7 +194,7 @@ blockquote {
 
 .coach-header h2 { margin: 0; }
 
-#coach-messages {
+#coach-messages, #gate-messages {
   flex: 1;
   overflow-y: auto;
   display: flex;
@@ -200,7 +206,7 @@ blockquote {
   padding: 4px 2px;
 }
 
-#coach-messages .int-msg {
+#coach-messages .int-msg, #gate-messages .int-msg {
   padding: 10px 14px;
   border-radius: 14px;
   max-width: 85%;
@@ -209,22 +215,22 @@ blockquote {
   white-space: pre-wrap;
 }
 
-#coach-messages .int-msg-assistant {
+#coach-messages .int-msg-assistant, #gate-messages .int-msg-assistant {
   background: rgba(59, 130, 246, 0.14);
   border: 1px solid rgba(59, 130, 246, 0.22);
   align-self: flex-start;
   color: #e2e8f0;
 }
 
-#coach-messages .int-msg-user {
+#coach-messages .int-msg-user, #gate-messages .int-msg-user {
   background: rgba(255, 255, 255, 0.08);
   align-self: flex-end;
   color: #f1f5f9;
 }
 
-#coach-messages .int-thinking { opacity: 0.6; font-style: italic; }
+#coach-messages .int-thinking, #gate-messages .int-thinking { opacity: 0.6; font-style: italic; }
 
-#coach-messages .int-system {
+#coach-messages .int-system, #gate-messages .int-system {
   align-self: center;
   background: rgba(34, 197, 94, 0.12);
   border: 1px solid rgba(34, 197, 94, 0.22);
@@ -275,18 +281,31 @@ blockquote {
 
 .domain-info {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 .domain-name {
-  font-weight: 500;
+  font-weight: 600;
   color: #f1f5f9;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .domain-limit-badge {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: #94a3b8;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .setup-columns {
@@ -328,21 +347,22 @@ blockquote {
   gap: 16px;
 }
 
-.inline-limit-input {
-  width: 55px;
-  padding: 3px 6px;
+/* Higher specificity than the global input[type="number"]{width:100%} rule */
+input[type="number"].inline-limit-input {
+  width: 58px;
+  padding: 5px 6px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
+  border-radius: 8px;
   color: #f1f5f9;
   font-size: 13px;
   text-align: center;
-  margin: 0 6px;
+  margin: 0;
   display: inline-block;
   font-family: inherit;
 }
 
-.inline-limit-input:focus {
+input[type="number"].inline-limit-input:focus {
   border-color: rgba(59, 130, 246, 0.6);
   outline: none;
 }

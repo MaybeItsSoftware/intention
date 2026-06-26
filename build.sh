@@ -84,6 +84,19 @@ preflight() {
     fail "JavaScript syntax errors found. Fix before building."
   fi
   ok "JS syntax OK"
+
+  # Run the test suite if Node deps are installed. Guarded so a clean checkout
+  # without node_modules (or without npm) still builds.
+  if command -v npm > /dev/null 2>&1 && [[ -d "node_modules" ]]; then
+    info "Running test suite..."
+    if npm test --silent; then
+      ok "Tests passed"
+    else
+      fail "Tests failed. Fix before building."
+    fi
+  else
+    warn "Skipping tests (run 'npm install' to enable the test suite in preflight)"
+  fi
 }
 
 # ---------------------------------------------------------------------------

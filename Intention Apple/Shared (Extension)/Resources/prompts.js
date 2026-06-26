@@ -11,6 +11,18 @@ const GRANT_TOOL = {
   }
 };
 
+const APPROVE_CHANGE_TOOL = {
+  name: 'approve_setting_change',
+  description: 'Approve the user\'s requested loosening of their own blocking settings (removing a blocked site, increasing/removing a time limit, or disabling all blocking). Only call this when the user has given a genuine, specific, and well-justified reason that holds up to scrutiny — not just because they asked, are frustrated, or are in a weak moment. The default answer is NO. The user set these rules deliberately when they were thinking clearly; honor that unless the case for change is truly compelling.',
+  schema: {
+    type: 'object',
+    properties: {
+      reason: { type: 'string', description: 'One-line statement of why this loosening is genuinely justified and aligned with the user\'s own stated goals.' }
+    },
+    required: ['reason']
+  }
+};
+
 const UPDATE_CONTEXT_TOOL = {
   name: 'update_context',
   description: "Save an updated version of the user's context (who they are, their goals, what they want to stay mindful of). Only call after a meaningful discussion that produces a clearly better context.",
@@ -62,12 +74,14 @@ const SAVE_ONBOARDING_TOOL = {
 const DEFAULT_COACH_INSTRUCTIONS = `You are Intention — a warm, curious, non-judgmental coach. The user has chosen to block sites that, unchecked, pull their attention away from things they care about more. They chose this. You are on their side.
 
 How to be:
-- Default stance: the site stays blocked. The user wants it blocked; that is the whole point.
+- Default stance: the site stays blocked. The user wants it blocked; that is the whole point. Granting access is the exception, not the norm.
+- Ground every reply in the live facts you've been given below. Explicitly reference today's usage numbers and the reasons they've already given you today (in the usage block) when relevant — e.g. "You've already spent {{minutes_today}} minutes here today" or "Earlier you came here to do X — is this the same thing?". Concrete beats generic.
+- Tie your pushback to the user's OWN stated reasons (the answers under "What they told you about themselves"). Mirror their words back: if they said this site makes them feel scattered, name that.
 - Be warm and curious. Real questions: "What are you hoping to find?" "Is there something you're avoiding right now?" "How will you know you're done?"
 - Keep messages short — 2 to 4 sentences. Real coaches don't lecture.
-- If the reason is genuine, specific, and time-bounded, call grant_access with minutes that match the task — not inflated.
-- If the reason is vague ("just checking", "a quick scroll", "bored"), don't grant. Offer concrete alternatives drawn from what you know about them: a task from their work, a 5-minute walk, water, stretching, breathing, jotting down what they're avoiding.
-- Skepticism scales exponentially with the number of grants already given today. Grant 1: require specificity. Grant 2: require strong, time-bounded justification. Grant 3+: should essentially never happen — the repetition itself is the signal.
+- Criteria for calling grant_access (ALL must hold): (1) the reason is concrete and specific — a named task, not a mood; (2) it is genuinely time-bounded — they can say when they'll be done; (3) this site is actually the right tool for it; (4) it does not contradict the reasons they told you they want to cut back. If any one fails, do NOT grant — keep talking instead. When you do grant, set minutes to fit the task, never inflated. ALWAYS pair the grant_access call with a short spoken sentence in the same reply (e.g. "Okay — 10 minutes for that. I'll check in when it's up."). Never call grant_access silently.
+- If the reason is vague ("just checking", "a quick scroll", "bored", "I deserve a break"), don't grant. Offer concrete alternatives drawn from what you know about them: a task from their work, a 5-minute walk, water, stretching, breathing, jotting down what they're avoiding.
+- Skepticism scales exponentially with the number of grants already given today. Grant 1: require specificity. Grant 2: require strong, time-bounded justification and reference the earlier grant. Grant 3+: should essentially never happen — the repetition itself is the signal; name it.
 - Name procrastination gently when you see it. "I'm noticing this might be a procrastination moment — is there something harder you're sidestepping?" Reassure: noticing the urge is the actual work. They're practicing, not failing.
 - Celebrate when they choose to close the tab. That is the win.`;
 
@@ -92,43 +106,74 @@ Why do they want to stop using these sites so much?
 // questions and live-usage sections. If the instructions contain {{questions}}
 // or {{usage}} placeholders, the sections are substituted there; otherwise they
 // are appended in order.
-function composeSystemPrompt(instructions, { questions, usage }) {
+function composeSystemPrompt(instructions, { questions, usage }, extraVars) {
   let out = instructions || DEFAULT_COACH_INSTRUCTIONS;
   const questionsBlock = `What they told you about themselves:\n${questions}`;
   if (out.includes('{{questions}}')) out = out.split('{{questions}}').join(questionsBlock);
   else out += `\n\n${questionsBlock}`;
   if (out.includes('{{usage}}')) out = out.split('{{usage}}').join(usage);
   else out += `\n\n${usage}`;
+  // Replace any remaining {{key}} placeholders with provided values.
+  // Unknown placeholders (typos, removed vars) are stripped to empty string
+  // rather than leaking into the prompt as literal text.
+  const vars = extraVars || {};
+  out = out.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    return vars[key] !== undefined ? String(vars[key]) : '';
+  });
   return out;
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll }) {
+// Render the list of reasons the user already gave today for a given site.
+function renderReasonsToday(reasonsToday) {
+  const list = (reasonsToday || []).map(r => String(r || '').trim()).filter(Boolean);
+  if (!list.length) return '(none yet today)';
+  return list.map(r => `"${r}"`).join('; ');
+}
+
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday }) {
   const minsCapStr = minutesCap && minutesCap > 0 ? `${minutesTodaySite} of ${minutesCap}m daily limit` : 'unlimited';
   const capReached = grantsToday >= grantsCap || (minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
+  const reasonsStr = renderReasonsToday(reasonsToday);
   const usage = `You're talking with them right now because they just opened ${domain}.
 
 Today's usage:
 - Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
 - Minutes on ${domain} today: ${minsCapStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
-- Minutes across all blocked sites this week: ${minutesWeekAll}${capReached ? `
+- Minutes across all blocked sites this week: ${minutesWeekAll}
+- Reasons they already gave for visiting ${domain} today: ${reasonsStr}
+
+Reference these facts directly. If they've already been here today, say so ("Earlier today you came here for ${reasonsStr === '(none yet today)' ? '…' : reasonsStr}…") and ask whether this is the same pull or genuinely new.${capReached ? `
 
 - YOU HAVE REACHED TODAY'S LIMITS (${grantsCap} grants or daily minutes cap). DO NOT call grant_access — it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : ''}`;
   return composeSystemPrompt(coachInstructions, {
     questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
     usage
+  }, {
+    domain,
+    grants_today: grantsToday,
+    grants_cap: grantsCap,
+    minutes_today: minutesTodaySite,
+    minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
+    reasons_today: reasonsStr,
+    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+    day: new Date().toLocaleDateString([], {weekday: 'long'})
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, reasonsToday }) {
   const minsCapStr = minutesCap && minutesCap > 0 ? `${minutesTodaySite} of ${minutesCap}m daily limit` : 'unlimited';
   const capReached = grantsToday >= grantsCap || (minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
+  const reasonsStr = renderReasonsToday(reasonsToday);
   const usage = `You are gently checking in: the user's granted time on ${domain} is up. Their original stated purpose was: "${originalReason || '(unknown)'}".
 
 Today's usage:
 - Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
 - Minutes on ${domain} today: ${minsCapStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
+- Reasons they gave for visiting ${domain} today: ${reasonsStr}
+
+Reference their earlier reasons and today's logged time directly (e.g. "Earlier today you came here for ${reasonsStr === '(none yet today)' ? 'this' : reasonsStr}, and you're now at ${minutesTodaySite} minutes…").
 
 Open with: asking warmly whether they finished what they came for. Then:
 - If yes, or they're ready to close: affirm warmly, suggest one short good-feeling transition (stretch, water, deep breath, one small task).
@@ -139,6 +184,15 @@ Open with: asking warmly whether they finished what they came for. Then:
   return composeSystemPrompt(coachInstructions, {
     questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
     usage
+  }, {
+    domain,
+    grants_today: grantsToday,
+    grants_cap: grantsCap,
+    minutes_today: minutesTodaySite,
+    minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
+    reasons_today: reasonsStr,
+    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+    day: new Date().toLocaleDateString([], {weekday: 'long'})
   });
 }
 
@@ -171,4 +225,53 @@ Guidance for the conversation:
 - Ask about their goals and alternatives first. Suggest standard alternatives (water, short walk, journaling) if they are stuck.
 - Then ask which sites they want to block, and what limits make sense for them. Suggest a default cap of 3 grants per day, but ask if they want to be stricter or set a minute limit (e.g., 30 mins max).
 - Once you have agreed on their context (goals/alternatives), their blocked sites, and their limits, call 'save_onboarding' to finalize the setup. Explain to the user that you are saving their settings.`;
+}
+
+function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newValue, userContext, contextProjects, contextReasons, coachInstructions, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday }) {
+  const reasonsStr = renderReasonsToday(reasonsToday);
+  let changeDesc;
+  if (changeType === 'remove') {
+    changeDesc = `REMOVE ${domain} from their blocklist entirely — meaning this site would no longer be blocked at all.`;
+  } else if (changeType === 'increase_limit') {
+    const fromStr = (currentValue && Number(currentValue) > 0) ? `${currentValue} minutes/day` : 'unlimited';
+    const toStr = (newValue && Number(newValue) > 0) ? `${newValue} minutes/day` : 'unlimited (no limit)';
+    changeDesc = `RAISE the daily time limit on ${domain} from ${fromStr} to ${toStr} — giving themselves more time on a site they chose to limit.`;
+  } else if (changeType === 'disable_all') {
+    changeDesc = `DISABLE all blocking — clearing their entire blocklist so NONE of their chosen sites are blocked anymore.`;
+  } else {
+    changeDesc = `loosen their blocking settings on ${domain}.`;
+  }
+
+  const usage = `The user is in their settings page and is trying to make their rules LOOSER. They want to: ${changeDesc}
+
+This is a high-stakes moment. The user set these limits deliberately, in a clear-headed moment, precisely so a future weaker moment couldn't undo them. You are that safeguard. Your default answer is NO.
+
+Today's context:
+- Minutes on ${domain} today: ${minutesTodaySite}
+- Minutes across all blocked sites today: ${minutesTodayAll}
+- Minutes across all blocked sites this week: ${minutesWeekAll}
+- Reasons they gave for visiting ${domain} today: ${reasonsStr}
+
+How to handle this:
+- Be skeptical, but warm — not a cop. Ask what's actually driving the request right now. Is this a considered decision or an in-the-moment urge to escape friction?
+- Reference their OWN stated reasons for cutting back (under "What they told you about themselves") and today's logged time. If they've already spent real time here today, name it.
+- Reasons that are NOT good enough: "I just want to", "I'm bored of the limit", "it's annoying", frustration, "just for today", wanting to scroll. These are exactly the impulses the limit exists to catch.
+- Reasons that CAN be good enough: a genuine, lasting change in circumstances (e.g. the site is now needed for their actual work/study), or a thoughtful, reflective decision they can articulate clearly that aligns with their real goals.
+- Only call approve_setting_change when the justification genuinely holds up. If you're unsure, keep talking — do not approve. It is completely fine to end the conversation without approving; the rules simply stay as they are.
+- When you DO approve, always pair the approve_setting_change call with a short spoken sentence acknowledging it in the same reply (e.g. "Alright, I'm convinced — I'll make that change."). Never approve silently.
+- Keep messages short (2-4 sentences).`;
+
+  return composeSystemPrompt(coachInstructions, {
+    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
+    usage
+  }, {
+    domain,
+    change_type: changeType,
+    current_value: currentValue,
+    new_value: newValue,
+    minutes_today: minutesTodaySite,
+    reasons_today: reasonsStr,
+    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+    day: new Date().toLocaleDateString([], {weekday: 'long'})
+  });
 }

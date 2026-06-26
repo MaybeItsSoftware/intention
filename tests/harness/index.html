@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intention — Overlay Dev Harness</title>
+  <style>
+    /* Harness chrome only — NOT the extension styles. The extension styles
+       live in the variant content.css files loaded into the iframes below. */
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #05060a; color: #cfd2da;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .bar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+      padding: 10px 16px; background: #0c0f15; border-bottom: 1px solid #1d2330; }
+    .bar h1 { font-size: 14px; margin: 0 12px 0 0; letter-spacing: .04em; color: #9aa0ac; }
+    .bar label { color: #8b8f99; }
+    .bar select, .bar button { background: #141925; color: #e7e7ea; border: 1px solid #2a3142;
+      border-radius: 6px; padding: 6px 10px; font: inherit; cursor: pointer; }
+    .bar button:hover { background: #1c2333; }
+    .bar .spacer { flex: 1; }
+    .stage { position: relative; height: calc(100vh - 50px); }
+    /* Single-variant mode: one full-bleed iframe. */
+    #single { width: 100%; height: 100%; border: 0; display: block; }
+    /* Side-by-side mode: three columns each loading a variant's content.css. */
+    #grid { display: none; grid-template-columns: 1fr 1fr 1fr; height: 100%; }
+    #grid.show { display: grid; }
+    #single.hide { display: none; }
+    .cell { display: flex; flex-direction: column; border-right: 1px solid #1d2330; min-width: 0; }
+    .cell:last-child { border-right: 0; }
+    .cell .cap { padding: 6px 10px; background: #0c0f15; color: #7c818c; font-size: 12px;
+      border-bottom: 1px solid #1d2330; text-transform: uppercase; letter-spacing: .08em; }
+    .cell iframe { flex: 1; width: 100%; border: 0; }
+    .hint { color: #545863; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>Intention Overlay Harness</h1>
+    <label>Variant:
+      <select id="variant">
+        <option value="../../Intention Chrome">Chrome</option>
+        <option value="../../Intention Firefox">Firefox</option>
+        <option value="../../Intention Apple/Shared (Extension)/Resources">Apple</option>
+      </select>
+    </label>
+    <label>Mode:
+      <select id="mode">
+        <option value="gate">Gate (just opened)</option>
+        <option value="checkin">Check-in (time up)</option>
+      </select>
+    </label>
+    <button id="reload">Reload overlay</button>
+    <button id="toggle">Compare 3 variants ⇄</button>
+    <span class="spacer"></span>
+    <span class="hint">Mock chrome + fake LLM. No extension load required.</span>
+  </div>
+
+  <div class="stage">
+    <iframe id="single" title="overlay"></iframe>
+    <div id="grid">
+      <div class="cell"><div class="cap">Chrome</div><iframe data-css="../../Intention Chrome/content.css"></iframe></div>
+      <div class="cell"><div class="cap">Firefox</div><iframe data-css="../../Intention Firefox/content.css"></iframe></div>
+      <div class="cell"><div class="cap">Apple</div><iframe data-css="../../Intention Apple/Shared (Extension)/Resources/content.css"></iframe></div>
+    </div>
+  </div>
+
+  <script src="overlay.js"></script>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const single = $('#single');
+    const grid = $('#grid');
+
+    function cssFor(variantDir) { return variantDir + '/content.css'; }
+
+    function renderInto(iframe, cssHref, mode) {
+      const doc = iframe.contentDocument;
+      doc.open();
+      // The overlay markup matches content.js renderChatUI(): #intention-root
+      // with .int-column, .int-subtitle, .int-stats-row, .int-messages,
+      // .int-composer (input + send), .int-close-row, plus #intention-badge.
+      doc.write(`<!DOCTYPE html><html><head>
+        <link rel="stylesheet" href="${cssHref}">
+        </head><body><script src="overlay.js"><\/script>
+        <script>window.__INTENTION_MOUNT && window.__INTENTION_MOUNT(${JSON.stringify({ mode })});<\/script>
+        </body></html>`);
+      doc.close();
+    }
+
+    function rerender() {
+      const variantDir = $('#variant').value;
+      const mode = $('#mode').value;
+      renderInto(single, cssFor(variantDir), mode);
+      // grid cells use their own data-css; refresh them too
+      grid.querySelectorAll('iframe').forEach(f => renderInto(f, f.dataset.css, mode));
+    }
+
+    $('#reload').addEventListener('click', rerender);
+    $('#variant').addEventListener('change', rerender);
+    $('#mode').addEventListener('change', rerender);
+    $('#toggle').addEventListener('click', () => {
+      const showGrid = !grid.classList.contains('show');
+      grid.classList.toggle('show', showGrid);
+      single.classList.toggle('hide', showGrid);
+      rerender();
+    });
+
+    rerender();
+  </script>
+</body>
+</html>

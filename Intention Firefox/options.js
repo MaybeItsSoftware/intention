@@ -317,6 +317,25 @@ async function showSettingsView(state) {
 
   document.getElementById('open-coach-btn').addEventListener('click', openCoachModal);
   document.getElementById('close-coach-btn').addEventListener('click', closeCoachModal);
+
+  // Disabling all blocking is the biggest loosening of all — gate it.
+  document.getElementById('disable-all-btn').addEventListener('click', async () => {
+    const cfg = await getConfig();
+    if (!(cfg.blockedDomains || []).length) {
+      setStatus('prompt-status', 'Nothing is blocked right now.', '');
+      return;
+    }
+    openGateModal({
+      changeType: 'disable_all',
+      domain: null,
+      title: 'Disable all blocking?',
+      subtitle: 'This turns off blocking for every site on your list. Convince your coach this is what you really want.',
+      onApproved: async () => {
+        const state = await getConfig();
+        renderDomains(state.blockedDomains || [], state.domainLimits || {});
+      }
+    });
+  });
 }
 
 async function addDomain() {
@@ -342,13 +361,18 @@ async function addDomain() {
   }
 }
 
-async function removeDomain(d) {
-  const state = await getConfig();
-  const domains = (state.blockedDomains || []).filter(x => x !== d);
-  const limits = state.domainLimits || {};
-  if (limits[d]) delete limits[d];
-  await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
-  renderDomains(domains, limits);
+// Removing a site loosens the rules, so it must be approved by the coach first.
+function removeDomain(d) {
+  openGateModal({
+    changeType: 'remove',
+    domain: d,
+    title: `Remove ${d}?`,
+    subtitle: `Removing ${d} means it won't be blocked anymore. Convince your coach this is the right call.`,
+    onApproved: async () => {
+      const state = await getConfig();
+      renderDomains(state.blockedDomains || [], state.domainLimits || {});
+    }
+  });
 }
 
 function renderDomains(domains, limits = {}) {
@@ -376,18 +400,43 @@ function renderDomains(domains, limits = {}) {
     inlineInput.type = 'number';
     inlineInput.min = '1';
     inlineInput.className = 'inline-limit-input';
-    inlineInput.value = mins > 0 ? mins : 30;
+    const currentMins = mins > 0 ? mins : 30;
+    inlineInput.value = currentMins;
     inlineInput.addEventListener('change', async (e) => {
       const val = parseInt(e.target.value, 10);
-      if (!isNaN(val) && val > 0) {
+      if (isNaN(val) || val <= 0) {
+        e.target.value = currentMins;
+        return;
+      }
+      // Current effective limit: a non-positive maxMinutes means unlimited.
+      const curMaxMinutes = limitInfo.maxMinutes !== undefined ? limitInfo.maxMinutes : (limitInfo.max_minutes_per_day ?? 30);
+      const currentlyUnlimited = !(curMaxMinutes > 0);
+      const isIncrease = currentlyUnlimited ? true : (val > curMaxMinutes);
+
+      if (!isIncrease) {
+        // Decreasing (or unchanged) tightens the rule — apply immediately, free.
         const state = await getConfig();
         const currentLimits = state.domainLimits || {};
-        if (!currentLimits[d]) {
-          currentLimits[d] = { maxGrants: 3 };
-        }
+        if (!currentLimits[d]) currentLimits[d] = { maxGrants: 3 };
         currentLimits[d].maxMinutes = val;
         await sendBg({ action: 'saveSettings', config: { domainLimits: currentLimits } });
+        return;
       }
+
+      // Increasing the limit loosens the rule — must be approved by the coach.
+      e.target.value = currentMins; // revert until/unless approved
+      openGateModal({
+        changeType: 'increase_limit',
+        domain: d,
+        currentValue: currentlyUnlimited ? -1 : curMaxMinutes,
+        newValue: val,
+        title: `Raise the limit on ${d}?`,
+        subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${d}. Convince your coach.`,
+        onApproved: async () => {
+          const state = await getConfig();
+          renderDomains(state.blockedDomains || [], state.domainLimits || {});
+        }
+      });
     });
 
     limitSpan.appendChild(inlineInput);
@@ -487,6 +536,114 @@ function addCoachMsg(role, text, isThinking, isSystem) {
 // Reveal the coach's reply gradually into an existing message element.
 function typeCoachMsg(el, text) {
   const messagesEl = document.getElementById('coach-messages');
+  el.textContent = '';
+  let i = 0;
+  const step = Math.max(1, Math.ceil(text.length / 140));
+  const timer = setInterval(() => {
+    i += step;
+    el.textContent = text.slice(0, i);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (i >= text.length) {
+      clearInterval(timer);
+      el.textContent = text;
+    }
+  }, 18);
+}
+
+// ---- Settings-gate modal: user must convince the coach to loosen a rule ----
+let gateSending = false;
+let gateChange = null;
+
+function openGateModal({ changeType, domain, currentValue, newValue, title, subtitle, onApproved }) {
+  gateChange = { changeType, domain, currentValue, newValue, onApproved };
+  const modal = document.getElementById('gate-modal');
+  modal.hidden = false;
+  document.getElementById('gate-title').textContent = title || 'Convince your coach';
+  document.getElementById('gate-subtitle').textContent = subtitle || '';
+
+  const messagesEl = document.getElementById('gate-messages');
+  messagesEl.innerHTML = '';
+  gateSending = false;
+
+  const seed = changeType === 'remove'
+    ? `You want to remove ${domain} from your blocklist. You set this rule for a reason — tell me what's changed.`
+    : changeType === 'increase_limit'
+      ? `You want more time on ${domain}. Why? What's driving this right now?`
+      : `You want to turn off all blocking. That's a big move — talk to me about what's going on.`;
+  addGateMsg('assistant', seed);
+
+  const input = document.getElementById('gate-input');
+  const send = document.getElementById('gate-send-btn');
+  input.value = '';
+  input.focus();
+
+  const onSend = async () => {
+    const text = input.value.trim();
+    if (!text || gateSending) return;
+    gateSending = true;
+    addGateMsg('user', text);
+    input.value = '';
+    const thinking = addGateMsg('assistant', '…', true);
+    const resp = await sendBg({
+      action: 'chat',
+      mode: 'settings_gate',
+      domain: gateChange.domain,
+      changeType: gateChange.changeType,
+      currentValue: gateChange.currentValue,
+      newValue: gateChange.newValue,
+      userMessage: text
+    });
+    gateSending = false;
+    if (!resp) {
+      thinking.remove();
+      addGateMsg('assistant', '[no response — background worker may be offline]');
+      return;
+    }
+    if (resp.error) {
+      thinking.remove();
+      addGateMsg('assistant', `[error: ${resp.error}]`);
+      return;
+    }
+    thinking.classList.remove('int-thinking');
+    typeGateMsg(thinking, resp.assistantText || '(no reply)');
+    if (resp.approved) {
+      addGateMsg('assistant', '(approved — applying your change)', false, true);
+      const cb = gateChange.onApproved;
+      setTimeout(async () => {
+        if (cb) await cb();
+        closeGateModal();
+      }, 900);
+    }
+  };
+  send.onclick = onSend;
+  input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
+  document.getElementById('gate-close-btn').onclick = closeGateModal;
+}
+
+async function closeGateModal() {
+  const modal = document.getElementById('gate-modal');
+  modal.hidden = true;
+  if (gateChange) {
+    const historyKey = `settings_gate:${gateChange.changeType}:${gateChange.domain || 'all'}`;
+    await sendBg({ action: 'clearChatHistory', historyKey });
+  }
+  gateChange = null;
+}
+
+function addGateMsg(role, text, isThinking, isSystem) {
+  const messagesEl = document.getElementById('gate-messages');
+  const div = document.createElement('div');
+  div.className = `int-msg int-msg-${role}`
+    + (isThinking ? ' int-thinking' : '')
+    + (isSystem ? ' int-system' : '');
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function typeGateMsg(el, text) {
+  const messagesEl = document.getElementById('gate-messages');
   el.textContent = '';
   let i = 0;
   const step = Math.max(1, Math.ceil(text.length / 140));

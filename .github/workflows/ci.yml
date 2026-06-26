@@ -21,6 +21,13 @@ jobs:
         with:
           node-version: lts/*
 
+      - name: Install dependencies and run tests
+        run: |
+          echo "Installing test dependencies..."
+          npm ci
+          echo "Running test suite..."
+          npm test
+
       - name: Validate JSON manifests
         run: |
           echo "Validating Chrome manifest..."

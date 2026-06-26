@@ -67,3 +67,17 @@ After that, the options page only exposes the blocklist and provider settings di
 - `chrome.alarms`, `chrome.storage.local`, `chrome.tabs`, `chrome.runtime`
 - LLM adapters: Anthropic Messages API, OpenAI (+ Groq) Chat Completions, Gemini generateContent
 - Tool-use-based access grant and context update — no free-text commands
+
+## Testing
+
+A Vitest suite covers the prompt composition, tracking/stats, and LLM-provider
+logic (loading the unmodified source files via a `node:vm` loader), plus a
+parity check across the three variants and a browser-based overlay dev harness.
+
+```bash
+npm install
+npm test
+```
+
+See [`tests/README.md`](tests/README.md) for the full guide (watch mode, the
+overlay harness, and live-loading the extension in Firefox / Chrome / Safari).

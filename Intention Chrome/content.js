@@ -1,5 +1,9 @@
-const INT_LOG = '[Intention]';
-console.log(INT_LOG, 'content.js loaded (build: gate-fallback v2)', window.location.href);
+const INT_LOG = "[Intention]";
+console.log(
+  INT_LOG,
+  "content.js loaded (build: gate-fallback v2)",
+  window.location.href,
+);
 
 const OVERLAY_CSS = `
 #intention-root {
@@ -7,7 +11,9 @@ const OVERLAY_CSS = `
   position: fixed;
   inset: 0;
   z-index: 2147483647;
-  overflow-y: auto;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   background: #0f1115;
   color: #e7e7ea;
   font-family: 'Arvo', Georgia, 'Times New Roman', serif;
@@ -45,7 +51,13 @@ const OVERLAY_CSS = `
   flex-direction: column;
   gap: 22px;
   margin-bottom: 26px;
+  overflow-y: auto;
 }
+
+#intention-root .int-messages::-webkit-scrollbar { width: 6px; }
+#intention-root .int-messages::-webkit-scrollbar-track { background: transparent; }
+#intention-root .int-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+#intention-root .int-messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 #intention-root .int-msg {
   font-size: 19px;
@@ -173,31 +185,29 @@ const OVERLAY_CSS = `
 `;
 
 function injectOverlayStyle() {
-  const styleId = 'intention-style';
+  const styleId = "intention-style";
   if (!document.getElementById(styleId)) {
-    const styleEl = document.createElement('style');
+    const styleEl = document.createElement("style");
     styleEl.id = styleId;
     styleEl.textContent = OVERLAY_CSS;
-    (document.body || document.head || document.documentElement).appendChild(styleEl);
+    (document.body || document.head || document.documentElement).appendChild(
+      styleEl,
+    );
   }
 
-  // Inject Arvo Google Font
-  if (!document.querySelector('link[href*="fonts.googleapis.com/css2?family=Arvo"]')) {
-    const preconnect1 = document.createElement('link');
-    preconnect1.rel = 'preconnect';
-    preconnect1.href = 'https://fonts.googleapis.com';
-    document.head.appendChild(preconnect1);
-
-    const preconnect2 = document.createElement('link');
-    preconnect2.rel = 'preconnect';
-    preconnect2.href = 'https://fonts.gstatic.com';
-    preconnect2.crossOrigin = 'anonymous';
-    document.head.appendChild(preconnect2);
-
-    const fontLink = document.createElement('link');
-    fontLink.rel = 'stylesheet';
-    fontLink.href = 'https://fonts.googleapis.com/css2?family=Arvo:ital,wght@0,400;0,700;1,400;1,700&display=swap';
-    document.head.appendChild(fontLink);
+  // Inject Arvo (self-hosted) so the overlay font works regardless of the host
+  // page's CSP — a remote Google Fonts <link> gets blocked on many sites.
+  if (!document.getElementById("intention-font")) {
+    const f = (name) => chrome.runtime.getURL("fonts/" + name);
+    const fontStyle = document.createElement("style");
+    fontStyle.id = "intention-font";
+    fontStyle.textContent = `
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:400; font-display:swap; src:url("${f("Arvo-Regular.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:700; font-display:swap; src:url("${f("Arvo-Bold.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:400; font-display:swap; src:url("${f("Arvo-Italic.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:700; font-display:swap; src:url("${f("Arvo-BoldItalic.woff2")}") format("woff2"); }
+    `;
+    (document.head || document.documentElement).appendChild(fontStyle);
   }
 }
 
@@ -208,134 +218,164 @@ let handled = false;
 function showGate(why) {
   if (handled) return;
   handled = true;
-  console.log(INT_LOG, 'showGate ->', why);
+  console.log(INT_LOG, "showGate ->", why);
   try {
     ensureBodyAndStop();
     injectOverlayStyle();
-    renderChatUI({ mode: 'gate', domain: matchedDomain || window.location.hostname });
+    renderChatUI({
+      mode: "gate",
+      domain: matchedDomain || window.location.hostname,
+    });
   } catch (e) {
-    console.error(INT_LOG, 'failed to render gate:', e);
+    console.error(INT_LOG, "failed to render gate:", e);
   }
 }
 
 function runCheck() {
   try {
     const host = window.location.hostname;
-    chrome.runtime.sendMessage({ action: 'checkPageMatch', host }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.warn(INT_LOG, 'checkPageMatch lastError:', chrome.runtime.lastError.message);
-        return;
-      }
-      console.log(INT_LOG, 'checkPageMatch response', response);
-      
-      if (!response || !response.isBlocked) {
-        return;
-      }
-
-      matchedDomain = response.matchedDomain;
-
-      if (!response.setupComplete) {
-        if (handled) return;
-        handled = true;
-        try {
-          ensureBodyAndStop();
-          injectOverlayStyle();
-          renderSetupNeededUI();
-        } catch (e) {
-          console.error(INT_LOG, 'failed to render setup needed UI:', e);
+    chrome.runtime.sendMessage(
+      { action: "checkPageMatch", host },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            INT_LOG,
+            "checkPageMatch lastError:",
+            chrome.runtime.lastError.message,
+          );
+          return;
         }
-        return;
-      }
+        console.log(INT_LOG, "checkPageMatch response", response);
 
-      if (response.session) {
-        if (handled) return;
-        handled = true;
-        currentSession = response.session;
-        runWhenBodyExists(() => {
+        if (!response || !response.isBlocked) {
+          return;
+        }
+
+        matchedDomain = response.matchedDomain;
+
+        if (!response.setupComplete) {
+          if (handled) return;
+          handled = true;
           try {
+            ensureBodyAndStop();
             injectOverlayStyle();
-            renderStatusBadge(response.session);
+            renderSetupNeededUI();
           } catch (e) {
-            console.error(INT_LOG, 'failed to render status badge:', e);
-          } finally {
-            setupInterruptionListener();
+            console.error(INT_LOG, "failed to render setup needed UI:", e);
           }
-        });
-      } else {
-        showGate('no active session (fail-safe)');
-      }
-    });
+          return;
+        }
+
+        if (response.session) {
+          if (handled) return;
+          handled = true;
+          currentSession = response.session;
+          runWhenBodyExists(() => {
+            try {
+              injectOverlayStyle();
+              renderStatusBadge(response.session);
+            } catch (e) {
+              console.error(INT_LOG, "failed to render status badge:", e);
+            } finally {
+              setupInterruptionListener();
+            }
+          });
+        } else {
+          showGate("no active session (fail-safe)");
+        }
+      },
+    );
   } catch (e) {
-    console.warn(INT_LOG, 'sendMessage threw synchronously:', e);
+    console.warn(INT_LOG, "sendMessage threw synchronously:", e);
   }
 }
 
-if (typeof document.visibilityState !== 'undefined' && (document.visibilityState === 'prerender' || document.visibilityState === 'hidden')) {
+if (
+  typeof document.visibilityState !== "undefined" &&
+  (document.visibilityState === "prerender" ||
+    document.visibilityState === "hidden")
+) {
   const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+    if (document.visibilityState === "visible") {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       runCheck();
     }
   };
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  document.addEventListener("visibilitychange", onVisibilityChange);
 } else {
   runCheck();
 }
 
 function ensureBodyAndStop() {
-  window.stop();
-  if (!document.body) {
-    const body = document.createElement('body');
-    document.documentElement.appendChild(body);
-  } else {
-    document.body.innerHTML = '';
+  if (document.getElementById("intention-host")) {
+    document.getElementById("intention-host").remove();
   }
-}
 
-function runWhenBodyExists(callback) {
-  if (document.body) {
-    callback();
-  } else {
-    const observer = new MutationObserver((mutations, obs) => {
-      if (document.body) {
-        obs.disconnect();
-        callback();
-      }
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-  }
-}
+  // Create a host element
+  const host = document.createElement("div");
+  host.id = "intention-host";
+  document.body.appendChild(host);
 
-function renderSetupNeededUI() {
-  const root = document.createElement('div');
-  root.id = 'intention-root';
+  // Attach a shadow root
+  const shadow = host.attachShadow({ mode: "closed" });
+
+  // Inject styles inside the shadow DOM
+  const styleEl = document.createElement("style");
+  styleEl.textContent = OVERLAY_CSS;
+  shadow.appendChild(styleEl);
+
+  // Create the actual layout container
+  const root = document.createElement("div");
+  root.id = "intention-root";
+
+  // ... (Your HTML string parsing setup here) ...
+  const subtitle =
+    mode === "gate" ? `${domain} — check in` : `${domain} — time up`;
   root.innerHTML = `
-    <div class="int-column">
-      <h1>Intention</h1>
-      <p class="int-subtitle">Finish setup to enable your AI coach.</p>
-      <button id="int-open-options">Open settings</button>
-    </div>
-  `;
-  document.body.appendChild(root);
-  document.getElementById('int-open-options').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'openOptions' });
+      <div class="int-column">
+        <h1>Intention</h1>
+        <p class="int-subtitle">${subtitle}</p>
+        <div class="int-messages" id="int-messages"></div>
+        <div class="int-composer">
+          <input type="text" id="int-input" placeholder="Type your reply…">
+          <button id="int-send">Send</button>
+        </div>
+      </div>
+    `;
+
+  shadow.appendChild(root);
+
+  // NOTE: When looking up elements, search inside the shadow root, not document!
+  const messagesEl = shadow.getElementById("int-messages");
+  const inputEl = shadow.getElementById("int-input");
+  const sendBtn = shadow.getElementById("int-send");
+  shadow.getElementById("int-open-options").addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "openOptions" });
+  });
+
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      sendBtn.click();
+    }
   });
 }
 
 function renderChatUI({ mode, domain }) {
-  if (document.getElementById('intention-root')) {
-    document.getElementById('intention-root').remove();
+  if (document.getElementById("intention-root")) {
+    document.getElementById("intention-root").remove();
   }
-  const seed = mode === 'gate'
-    ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
-    : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
+  const seed =
+    mode === "gate"
+      ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
+      : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
 
-  const subtitle = mode === 'gate'
-    ? `${domain} — let's check in before you go through`
-    : `${domain} — your time is up`;
+  const subtitle =
+    mode === "gate"
+      ? `${domain} — let's check in before you go through`
+      : `${domain} — your time is up`;
 
-  const root = document.createElement('div');
-  root.id = 'intention-root';
+  const root = document.createElement("div");
+  root.id = "intention-root";
   root.innerHTML = `
     <div class="int-column">
       <h1>Intention</h1>
@@ -353,24 +393,30 @@ function renderChatUI({ mode, domain }) {
   `;
   document.body.appendChild(root);
 
-  const messagesEl = document.getElementById('int-messages');
-  const inputEl = document.getElementById('int-input');
-  const sendBtn = document.getElementById('int-send');
-  const closeBtn = document.getElementById('int-close');
+  const messagesEl = document.getElementById("int-messages");
+  const inputEl = document.getElementById("int-input");
+  const sendBtn = document.getElementById("int-send");
+  const closeBtn = document.getElementById("int-close");
 
-  addMessage(messagesEl, 'assistant', seed);
+  addMessage(messagesEl, "assistant", seed);
 
   // Fetch stats and render stats row
   try {
-    chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
-      if (chrome.runtime.lastError) {
-        console.warn(INT_LOG, 'getStatsForDomain lastError:', chrome.runtime.lastError.message);
-        return;
-      }
-      if (stats) {
-        const statsRow = document.getElementById('int-stats-row');
-        if (statsRow) {
-          statsRow.innerHTML = `
+    chrome.runtime.sendMessage(
+      { action: "getStatsForDomain", domain },
+      (stats) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            INT_LOG,
+            "getStatsForDomain lastError:",
+            chrome.runtime.lastError.message,
+          );
+          return;
+        }
+        if (stats) {
+          const statsRow = document.getElementById("int-stats-row");
+          if (statsRow) {
+            statsRow.innerHTML = `
             <div class="int-stat">
               <div class="int-stat-value">${stats.minutesToday || 0}m</div>
               <div class="int-stat-label">Today</div>
@@ -388,12 +434,13 @@ function renderChatUI({ mode, domain }) {
               <div class="int-stat-label">All Time</div>
             </div>
           `;
-          statsRow.style.display = 'flex';
+            statsRow.style.display = "flex";
+          }
         }
-      }
-    });
+      },
+    );
   } catch (e) {
-    console.warn(INT_LOG, 'getStatsForDomain message threw:', e);
+    console.warn(INT_LOG, "getStatsForDomain message threw:", e);
   }
 
   let sending = false;
@@ -402,52 +449,67 @@ function renderChatUI({ mode, domain }) {
     const text = inputEl.value.trim();
     if (!text || sending) return;
     sending = true;
-    addMessage(messagesEl, 'user', text);
-    inputEl.value = '';
-    const thinking = addMessage(messagesEl, 'assistant', '…', true);
+    addMessage(messagesEl, "user", text);
+    inputEl.value = "";
+    const thinking = addMessage(messagesEl, "assistant", "…", true);
 
-    chrome.runtime.sendMessage({
-      action: 'chat',
-      mode,
-      domain,
-      userMessage: text
-    }, (resp) => {
-      if (!resp) {
-        thinking.remove();
-        addMessage(messagesEl, 'assistant', '[no response — background worker may be offline]');
-        sending = false;
-        return;
-      }
-      if (resp.error) {
-        thinking.remove();
-        addMessage(messagesEl, 'assistant', `[error: ${resp.error}]`);
-        sending = false;
-        return;
-      }
-      // Reuse the "…" placeholder and reveal the reply gradually so it reads
-      // as if the coach is speaking, rather than snapping in all at once.
-      thinking.classList.remove('int-thinking');
-      typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
-        sending = false;
-        if (resp.grantedSession) {
-          setTimeout(() => window.location.reload(), 800);
+    chrome.runtime.sendMessage(
+      {
+        action: "chat",
+        mode,
+        domain,
+        userMessage: text,
+      },
+      (resp) => {
+        if (!resp) {
+          thinking.remove();
+          addMessage(
+            messagesEl,
+            "assistant",
+            "[no response — background worker may be offline]",
+          );
+          sending = false;
+          return;
         }
-      });
-    });
+        if (resp.error) {
+          thinking.remove();
+          addMessage(messagesEl, "assistant", `[error: ${resp.error}]`);
+          sending = false;
+          return;
+        }
+        // Reuse the "…" placeholder and reveal the reply gradually so it reads
+        // as if the coach is speaking, rather than snapping in all at once.
+        thinking.classList.remove("int-thinking");
+        typeMessage(
+          thinking,
+          messagesEl,
+          resp.assistantText || "(no reply)",
+          () => {
+            sending = false;
+            if (resp.grantedSession) {
+              setTimeout(() => window.location.reload(), 2200);
+            }
+          },
+        );
+      },
+    );
   }
 
-  sendBtn.addEventListener('click', send);
-  inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-  closeBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
+  sendBtn.addEventListener("click", send);
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+  closeBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "endSession", reason: "fulfilled" });
     window.close();
   });
   inputEl.focus();
 }
 
 function addMessage(container, role, text, isThinking) {
-  const div = document.createElement('div');
-  div.className = `int-msg int-msg-${role}` + (isThinking ? ' int-thinking' : '');
+  const div = document.createElement("div");
+  div.className =
+    `int-msg int-msg-${role}` + (isThinking ? " int-thinking" : "");
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
@@ -457,7 +519,7 @@ function addMessage(container, role, text, isThinking) {
 // Reveal `text` into `el` a few characters at a time. Clicking anywhere skips
 // to the full text. `onDone` fires exactly once when the reveal completes.
 function typeMessage(el, container, text, onDone) {
-  el.textContent = '';
+  el.textContent = "";
   let i = 0;
   let finished = false;
   const step = Math.max(1, Math.ceil(text.length / 140));
@@ -468,10 +530,12 @@ function typeMessage(el, container, text, onDone) {
     clearInterval(timer);
     el.textContent = text;
     if (container) container.scrollTop = container.scrollHeight;
-    document.removeEventListener('click', skip, true);
+    document.removeEventListener("click", skip, true);
     if (onDone) onDone();
   }
-  function skip() { finish(); }
+  function skip() {
+    finish();
+  }
 
   const timer = setInterval(() => {
     i += step;
@@ -480,21 +544,23 @@ function typeMessage(el, container, text, onDone) {
     if (i >= text.length) finish();
   }, 18);
 
-  document.addEventListener('click', skip, true);
+  document.addEventListener("click", skip, true);
 }
 
 function renderStatusBadge(session) {
-  const badge = document.createElement('div');
-  badge.id = 'intention-badge';
-  const end = session.startTime + session.intervalMinutes * 60000;
+  const badge = document.createElement("div");
+  badge.id = "intention-badge";
 
   function update() {
-    const totalSec = Math.max(0, Math.round((end - Date.now()) / 1000));
+    // Count UP from when the session started — show elapsed time, not remaining.
+    const totalSec = Math.max(
+      0,
+      Math.round((Date.now() - session.startTime) / 1000),
+    );
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
-    // Switch to m:ss in the final minute so the countdown feels live.
-    const timeStr = totalSec >= 60 ? `${m}m left` : `${m}:${String(s).padStart(2, '0')}`;
-    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · ' + session.reason : ''}`;
+    const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · "' + session.reason + '"' : ""}`;
   }
   update();
   setInterval(update, 1000);
@@ -510,9 +576,13 @@ function renderStatusBadge(session) {
 
 function setupInterruptionListener() {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'showCheckin') {
-      if (!document.getElementById('intention-root')) {
-        renderChatUI({ mode: 'checkin', domain: currentSession?.domain || matchedDomain || window.location.hostname });
+    if (message.action === "showCheckin") {
+      if (!document.getElementById("intention-root")) {
+        renderChatUI({
+          mode: "checkin",
+          domain:
+            currentSession?.domain || matchedDomain || window.location.hostname,
+        });
       }
     }
   });

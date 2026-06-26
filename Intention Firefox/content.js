@@ -7,7 +7,9 @@ const OVERLAY_CSS = `
   position: fixed;
   inset: 0;
   z-index: 2147483647;
-  overflow-y: auto;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   background: #0f1115;
   color: #e7e7ea;
   font-family: 'Arvo', Georgia, 'Times New Roman', serif;
@@ -45,7 +47,13 @@ const OVERLAY_CSS = `
   flex-direction: column;
   gap: 22px;
   margin-bottom: 26px;
+  overflow-y: auto;
 }
+
+#intention-root .int-messages::-webkit-scrollbar { width: 6px; }
+#intention-root .int-messages::-webkit-scrollbar-track { background: transparent; }
+#intention-root .int-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+#intention-root .int-messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 #intention-root .int-msg {
   font-size: 19px;
@@ -181,23 +189,19 @@ function injectOverlayStyle() {
     (document.body || document.head || document.documentElement).appendChild(styleEl);
   }
 
-  // Inject Arvo Google Font
-  if (!document.querySelector('link[href*="fonts.googleapis.com/css2?family=Arvo"]')) {
-    const preconnect1 = document.createElement('link');
-    preconnect1.rel = 'preconnect';
-    preconnect1.href = 'https://fonts.googleapis.com';
-    document.head.appendChild(preconnect1);
-
-    const preconnect2 = document.createElement('link');
-    preconnect2.rel = 'preconnect';
-    preconnect2.href = 'https://fonts.gstatic.com';
-    preconnect2.crossOrigin = 'anonymous';
-    document.head.appendChild(preconnect2);
-
-    const fontLink = document.createElement('link');
-    fontLink.rel = 'stylesheet';
-    fontLink.href = 'https://fonts.googleapis.com/css2?family=Arvo:ital,wght@0,400;0,700;1,400;1,700&display=swap';
-    document.head.appendChild(fontLink);
+  // Inject Arvo (self-hosted) so the overlay font works regardless of the host
+  // page's CSP — a remote Google Fonts <link> gets blocked on many sites.
+  if (!document.getElementById('intention-font')) {
+    const f = (name) => chrome.runtime.getURL('fonts/' + name);
+    const fontStyle = document.createElement('style');
+    fontStyle.id = 'intention-font';
+    fontStyle.textContent = `
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:400; font-display:swap; src:url("${f('Arvo-Regular.woff2')}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:700; font-display:swap; src:url("${f('Arvo-Bold.woff2')}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:400; font-display:swap; src:url("${f('Arvo-Italic.woff2')}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:700; font-display:swap; src:url("${f('Arvo-BoldItalic.woff2')}") format("woff2"); }
+    `;
+    (document.head || document.documentElement).appendChild(fontStyle);
   }
 }
 
@@ -284,12 +288,14 @@ if (typeof document.visibilityState !== 'undefined' && (document.visibilityState
 
 function ensureBodyAndStop() {
   window.stop();
+  document.documentElement.style.overflow = 'hidden';
   if (!document.body) {
     const body = document.createElement('body');
     document.documentElement.appendChild(body);
   } else {
     document.body.innerHTML = '';
   }
+  document.body.style.overflow = 'hidden';
 }
 
 function runWhenBodyExists(callback) {
@@ -430,7 +436,7 @@ function renderChatUI({ mode, domain }) {
       typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
         sending = false;
         if (resp.grantedSession) {
-          setTimeout(() => window.location.reload(), 800);
+          setTimeout(() => window.location.reload(), 2200);
         }
       });
     });
@@ -486,15 +492,14 @@ function typeMessage(el, container, text, onDone) {
 function renderStatusBadge(session) {
   const badge = document.createElement('div');
   badge.id = 'intention-badge';
-  const end = session.startTime + session.intervalMinutes * 60000;
 
   function update() {
-    const totalSec = Math.max(0, Math.round((end - Date.now()) / 1000));
+    // Count UP from when the session started — show elapsed time, not remaining.
+    const totalSec = Math.max(0, Math.round((Date.now() - session.startTime) / 1000));
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
-    // Switch to m:ss in the final minute so the countdown feels live.
-    const timeStr = totalSec >= 60 ? `${m}m left` : `${m}:${String(s).padStart(2, '0')}`;
-    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · ' + session.reason : ''}`;
+    const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · "' + session.reason + '"' : ''}`;
   }
   update();
   setInterval(update, 1000);

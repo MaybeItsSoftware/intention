@@ -7,6 +7,20 @@ try {
 const GRANTS_DAILY_CAP = 3;
 const INT_LOG = '[Intention]';
 
+async function focusOrCreateTab(urlPattern, createFn) {
+  try {
+    const tabs = await chrome.tabs.query({ url: urlPattern });
+    if (tabs.length > 0) {
+      await chrome.tabs.update(tabs[0].id, { active: true });
+      try { await chrome.windows.update(tabs[0].windowId, { focused: true }); } catch (e) {}
+      return tabs[0];
+    }
+  } catch (e) {
+    console.warn(INT_LOG, 'focusOrCreateTab query error:', e);
+  }
+  return createFn();
+}
+
 // Sync DNR rules based on blocked domains setting
 async function syncBlockingRules() {
   try {
@@ -88,8 +102,9 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 syncBlockingRules();
 
-chrome.action.onClicked.addListener(() => {
-  chrome.runtime.openOptionsPage();
+chrome.action.onClicked.addListener(async () => {
+  const optionsUrl = chrome.runtime.getURL('options.html');
+  await focusOrCreateTab(optionsUrl, () => chrome.runtime.openOptionsPage());
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
@@ -147,7 +162,15 @@ async function handleMessage(message, sender) {
       return { session: activeSessions[tabId] || null };
     }
     case 'chat':
-      return handleChat({ tabId, mode: message.mode, domain: message.domain, userMessage: message.userMessage });
+      return handleChat({
+        tabId,
+        mode: message.mode,
+        domain: message.domain,
+        userMessage: message.userMessage,
+        changeType: message.changeType,
+        currentValue: message.currentValue,
+        newValue: message.newValue
+      });
     case 'clearChatHistory':
       return clearChatHistory(message.historyKey || (tabId != null ? String(tabId) : null));
     case 'endSession':
@@ -156,14 +179,36 @@ async function handleMessage(message, sender) {
       return getStatsForDomain(message.domain);
     case 'getStatsSummary':
       return getStatsSummary();
-    case 'openOptions':
-      chrome.runtime.openOptionsPage();
+    case 'openOptions': {
+      const optionsUrl = chrome.runtime.getURL('options.html');
+      await focusOrCreateTab(optionsUrl, () => chrome.runtime.openOptionsPage());
       return { ok: true };
+    }
     case 'closeCurrentTab': {
       if (tabId != null) {
         try { chrome.tabs.remove(tabId); } catch (e) {}
       }
       return { ok: true };
+    }
+    case 'checkDuplicateCoaching': {
+      const coachingUrl = chrome.runtime.getURL('coaching.html');
+      try {
+        const tabs = await chrome.tabs.query({ url: coachingUrl + '*' });
+        const dupes = tabs.filter(t => {
+          try {
+            const u = new URL(t.url);
+            return u.searchParams.get('domain') === message.domain && t.id !== tabId;
+          } catch (e) { return false; }
+        });
+        if (dupes.length > 0) {
+          await chrome.tabs.update(dupes[0].id, { active: true });
+          try { await chrome.windows.update(dupes[0].windowId, { focused: true }); } catch (e) {}
+          return { duplicate: true, existingTabId: dupes[0].id };
+        }
+      } catch (e) {
+        console.warn(INT_LOG, 'checkDuplicateCoaching error:', e);
+      }
+      return { duplicate: false };
     }
     default:
       throw new Error('Unknown action: ' + message.action);
@@ -240,11 +285,14 @@ async function saveSettings(partial) {
   return { ok: true };
 }
 
-async function handleChat({ tabId, mode, domain, userMessage }) {
+async function handleChat({ tabId, mode, domain, userMessage, changeType, currentValue, newValue }) {
   const { provider, apiKey, model, userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
   if (!provider || !apiKey) return { error: 'No API key configured. Open settings to finish setup.' };
 
-  const historyKey = mode === 'context' || mode === 'setup' ? mode : (tabId != null ? String(tabId) : null);
+  let historyKey;
+  if (mode === 'context' || mode === 'setup') historyKey = mode;
+  else if (mode === 'settings_gate') historyKey = `settings_gate:${changeType}:${domain || 'all'}`;
+  else historyKey = (tabId != null ? String(tabId) : null);
   if (!historyKey) return { error: 'No history context' };
   const { chatHistories = {} } = await getStorage(['chatHistories']);
   const history = chatHistories[historyKey] || [];
@@ -266,7 +314,8 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
-      minutesWeekAll: stats.minutesWeekAll
+      minutesWeekAll: stats.minutesWeekAll,
+      reasonsToday: stats.reasonsToday
     });
     tools = [GRANT_TOOL];
   } else if (mode === 'checkin') {
@@ -285,9 +334,27 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
       grantsCap: limits.maxGrants,
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
-      minutesTodayAll: stats.minutesTodayAll
+      minutesTodayAll: stats.minutesTodayAll,
+      reasonsToday: stats.reasonsToday
     });
     tools = [GRANT_TOOL];
+  } else if (mode === 'settings_gate') {
+    const stats = await getStatsForDomain(domain);
+    systemPrompt = buildSettingsGateSystemPrompt({
+      domain,
+      changeType,
+      currentValue,
+      newValue,
+      userContext,
+      contextProjects,
+      contextReasons,
+      coachInstructions,
+      minutesTodaySite: stats.minutesToday,
+      minutesTodayAll: stats.minutesTodayAll,
+      minutesWeekAll: stats.minutesWeekAll,
+      reasonsToday: stats.reasonsToday
+    });
+    tools = [APPROVE_CHANGE_TOOL];
   } else if (mode === 'context') {
     systemPrompt = buildContextSystemPrompt({ currentContext: userContext });
     tools = [UPDATE_CONTEXT_TOOL];
@@ -310,9 +377,14 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
 
   let grantedSession = null;
   let contextUpdated = null;
+  let settingApproved = null;
   let appendedNote = '';
 
   for (const tc of llmResponse.toolCalls || []) {
+    if (tc.name === 'approve_setting_change' && mode === 'settings_gate') {
+      settingApproved = await applySettingChange({ domain, changeType, newValue });
+      continue;
+    }
     if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
       const stats = await getStatsForDomain(domain);
       const limits = await getLimitsForDomain(domain);
@@ -381,12 +453,63 @@ async function handleChat({ tabId, mode, domain, userMessage }) {
     }
   }
 
-  const assistantText = (llmResponse.text || '') + appendedNote;
+  // Never let the coach accept silently: if the model emitted only a tool call
+  // with no spoken text, supply a default acceptance message so the user always
+  // sees the coach acknowledge before being let through / having a change applied.
+  const rawText = (llmResponse.text || '').trim();
+  let acceptanceFallback = '';
+  if (!rawText) {
+    if (grantedSession) {
+      const mins = grantedSession.intervalMinutes;
+      const r = grantedSession.reason ? ` for "${grantedSession.reason}"` : '';
+      acceptanceFallback = `Okay — you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
+    } else if (settingApproved) {
+      if (changeType === 'remove') acceptanceFallback = `Alright, I'm convinced — I've removed ${domain} from your blocklist.`;
+      else if (changeType === 'increase_limit') acceptanceFallback = `Okay, you've made your case — I've raised your daily limit on ${domain}.`;
+      else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
+      else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
+    }
+  }
+  const assistantText = (rawText || acceptanceFallback) + appendedNote;
   history.push({ role: 'assistant', content: assistantText || '(…)' });
   chatHistories[historyKey] = history.slice(-40);
   await setStorage({ chatHistories });
 
-  return { assistantText, grantedSession, contextUpdated };
+  return { assistantText, grantedSession, contextUpdated, approved: settingApproved ? true : false };
+}
+
+// Perform the actual loosening mutation once the coach approves it, then
+// persist and re-sync the blocking rules. Returns the resulting state.
+async function applySettingChange({ domain, changeType, newValue }) {
+  const { blockedDomains = [], domainLimits = {} } = await getStorage(['blockedDomains', 'domainLimits']);
+
+  if (changeType === 'remove') {
+    const domains = blockedDomains.filter(x => x !== domain);
+    const limits = { ...domainLimits };
+    if (limits[domain]) delete limits[domain];
+    await setStorage({ blockedDomains: domains, domainLimits: limits });
+    await syncBlockingRules();
+    return { changeType, domain, blockedDomains: domains, domainLimits: limits };
+  }
+
+  if (changeType === 'increase_limit') {
+    const limits = { ...domainLimits };
+    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
+    const parsed = Number(newValue);
+    // -1 (or any non-positive sentinel) means unlimited.
+    limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
+    await setStorage({ domainLimits: limits });
+    await syncBlockingRules();
+    return { changeType, domain, domainLimits: limits, maxMinutes: limits[domain].maxMinutes };
+  }
+
+  if (changeType === 'disable_all') {
+    await setStorage({ blockedDomains: [] });
+    await syncBlockingRules();
+    return { changeType, blockedDomains: [] };
+  }
+
+  return null;
 }
 
 async function clearChatHistory(historyKey) {

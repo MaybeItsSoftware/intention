@@ -5,6 +5,14 @@ console.log(INT_LOG, 'coaching.js loaded');
 const urlParams = new URLSearchParams(window.location.search);
 const domain = urlParams.get('domain') || window.location.hostname;
 
+// Check for duplicate coaching tab for same domain
+chrome.runtime.sendMessage({ action: 'checkDuplicateCoaching', domain }, (resp) => {
+  if (chrome.runtime.lastError) return;
+  if (resp?.duplicate) {
+    window.close();
+  }
+});
+
 document.getElementById('int-subtitle').textContent = `${domain} — let's check in before you go through`;
 
 const messagesEl = document.getElementById('int-messages');
@@ -87,7 +95,7 @@ async function send() {
         // Redirect back to the target website once session is granted
         setTimeout(() => {
           window.location.href = `https://${domain}`;
-        }, 800);
+        }, 2200);
       }
     });
   });
