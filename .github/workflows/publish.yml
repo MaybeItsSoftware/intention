@@ -1,0 +1,83 @@
+name: Publish to Stores
+
+# Auto-publishes to the Chrome Web Store and Firefox Add-ons (AMO) on every
+# vX.Y tag push, provided the required secrets are configured (see
+# DEPLOYMENT.md). Each job skips gracefully — without failing the run — if
+# its secrets are missing, so tagging a release always works even before
+# store credentials are set up.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  chrome:
+    name: Publish to Chrome Web Store
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check secrets configured
+        id: check
+        run: |
+          if [[ -n "${{ secrets.CHROME_EXTENSION_ID }}" && -n "${{ secrets.CHROME_CLIENT_ID }}" && -n "${{ secrets.CHROME_CLIENT_SECRET }}" && -n "${{ secrets.CHROME_REFRESH_TOKEN }}" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Chrome Web Store secrets not configured — skipping publish. See DEPLOYMENT.md."
+          fi
+
+      - name: Zip Chrome extension
+        if: steps.check.outputs.configured == 'true'
+        run: (cd "Intention Chrome" && zip -r -q "../intention-chrome.zip" . -x "env.txt" "*.DS_Store")
+
+      - name: Upload & publish to Chrome Web Store
+        if: steps.check.outputs.configured == 'true'
+        uses: mnao305/chrome-extension-upload@v6.0.0
+        with:
+          file-path: intention-chrome.zip
+          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          client-id: ${{ secrets.CHROME_CLIENT_ID }}
+          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          publish: true
+
+  firefox:
+    name: Publish to Firefox Add-ons (AMO)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check secrets configured
+        id: check
+        run: |
+          if [[ -n "${{ secrets.AMO_JWT_ISSUER }}" && -n "${{ secrets.AMO_JWT_SECRET }}" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AMO secrets not configured — skipping publish. See DEPLOYMENT.md."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install deploy tooling
+        if: steps.check.outputs.configured == 'true'
+        run: npm install
+
+      - name: Lint, sign, and submit to AMO
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          npx web-ext sign \
+            --source-dir="Intention Firefox" \
+            --artifacts-dir=build \
+            --channel=listed \
+            --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
+            --api-secret="${{ secrets.AMO_JWT_SECRET }}"

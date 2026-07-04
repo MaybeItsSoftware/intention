@@ -3,13 +3,17 @@
   "name": "Intention",
   "version": "2.0",
   "description": "AI-powered focus gate. Bring your own LLM to coach you past distracting sites.",
+  "homepage_url": "https://github.com/MaybeItsAdam/intention",
   "browser_specific_settings": {
     "gecko": {
       "id": "intention@maybeitsadam",
-      "strict_min_version": "121.0"
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["browsingActivity", "personalCommunications"]
+      }
     },
     "gecko_android": {
-      "strict_min_version": "121.0"
+      "strict_min_version": "142.0"
     }
   },
   "permissions": [

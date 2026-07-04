@@ -3,6 +3,7 @@
   "name": "Intention",
   "version": "2.0",
   "description": "AI-powered focus gate. Bring your own LLM to coach you past distracting sites.",
+  "homepage_url": "https://github.com/MaybeItsAdam/intention",
   "permissions": [
     "storage",
     "alarms",

@@ -1,0 +1,16 @@
+{
+  "name": "intention",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Dev/deployment tooling for the Intention browser extension. Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
+  "scripts": {
+    "bump-version": "scripts/bump-version.sh",
+    "lint:firefox": "web-ext lint --source-dir=\"Intention Firefox\"",
+    "build:firefox": "web-ext build --source-dir=\"Intention Firefox\" --artifacts-dir=build --overwrite-dest",
+    "sign:firefox": "web-ext sign --source-dir=\"Intention Firefox\" --artifacts-dir=build --channel=unlisted",
+    "build": "./build.sh"
+  },
+  "devDependencies": {
+    "web-ext": "^10.4.0"
+  }
+}

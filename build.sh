@@ -44,6 +44,22 @@ preflight() {
 
   info "Version: $VERSION"
 
+  # Verify manifest versions match across Chrome/Firefox
+  FIREFOX_VERSION=$(python3 -c "import json; print(json.load(open('$FIREFOX_DIR/manifest.json'))['version'])")
+  [[ "$VERSION" == "$FIREFOX_VERSION" ]] || fail "Version mismatch: Chrome=$VERSION Firefox=$FIREFOX_VERSION (run scripts/bump-version.sh)"
+  ok "Chrome/Firefox versions match ($VERSION)"
+
+  # Verify Safari Xcode project version matches, if present
+  APPLE_PBXPROJ="$APPLE_DIR/Intention Safari.xcodeproj/project.pbxproj"
+  if [[ -f "$APPLE_PBXPROJ" ]]; then
+    APPLE_VERSIONS=$(grep -oE "MARKETING_VERSION = [0-9.]+;" "$APPLE_PBXPROJ" | sed -E 's/MARKETING_VERSION = ([0-9.]+);/\1/' | sort -u)
+    APPLE_VERSION_COUNT=$(echo "$APPLE_VERSIONS" | wc -l | tr -d ' ')
+    if [[ "$APPLE_VERSION_COUNT" != "1" ]] || [[ "$APPLE_VERSIONS" != "$VERSION" ]]; then
+      fail "Safari MARKETING_VERSION ($APPLE_VERSIONS) doesn't match manifest version ($VERSION) — run scripts/bump-version.sh $VERSION"
+    fi
+    ok "Safari Xcode version matches ($VERSION)"
+  fi
+
   # Verify cross-platform sync (shared files must be identical)
   SHARED_FILES=(
     content.css content.js options.css options.html options.js
@@ -84,6 +100,18 @@ preflight() {
     fail "JavaScript syntax errors found. Fix before building."
   fi
   ok "JS syntax OK"
+
+  # AMO validation (best-effort — requires `npm install` once)
+  if [[ -d node_modules/web-ext ]]; then
+    info "Linting Firefox extension with web-ext (AMO validation)..."
+    if npx --no-install web-ext lint --source-dir="$FIREFOX_DIR"; then
+      ok "web-ext lint passed"
+    else
+      fail "web-ext lint found errors — fix before submitting to addons.mozilla.org"
+    fi
+  else
+    warn "web-ext not installed — skipping AMO lint (run: npm install)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
