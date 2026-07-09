@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script>
+    // Hidden background WKWebView host, mirroring Intention Android's
+    // background.html: shims window.chrome for background.js/tracking.js/
+    // providers.js/prompts.js to run against, backed by native Swift
+    // (BackgroundJSHost.swift) via window.webkit.messageHandlers.intentionNative.
+    //
+    // Note: window.browser is intentionally left undefined here — the
+    // native-messaging config bridge in tracking.js (pushConfigToNative /
+    // syncConfigFromNative) is only meaningful inside the real Safari Web
+    // Extension process; in this app-hosted context chrome.storage.local
+    // already talks directly to the same App Group storage, so that bridge
+    // correctly stays a no-op.
+    (function() {
+      const listeners = [];
+
+      window.IntentionCallbacks = {
+        _nextId: 1,
+        _registry: {},
+        register: function(callback) {
+          if (!callback) return "";
+          const id = "bg_cb_" + (this._nextId++);
+          this._registry[id] = callback;
+          return id;
+        },
+        invoke: function(id, payloadJson) {
+          if (this._registry[id]) {
+            try {
+              const parsed = payloadJson ? JSON.parse(payloadJson).value : null;
+              this._registry[id](parsed);
+            } catch (e) {
+              console.error("[IntentionBackground] Error invoking callback " + id, e);
+              this._registry[id](null);
+            }
+            delete this._registry[id];
+          }
+        }
+      };
+
+      function post(payload) {
+        window.webkit.messageHandlers.intentionNative.postMessage(payload);
+      }
+
+      window.chrome = {
+        runtime: {
+          onMessage: {
+            addListener: function(listener) { listeners.push(listener); }
+          },
+          onInstalled: {
+            // Trigger it immediately so blocking rules / bootstrap sync run.
+            addListener: function(listener) { setTimeout(listener, 0); }
+          },
+          getURL: function(path) { return path; },
+          openOptionsPage: function() {}
+        },
+        action: {
+          onClicked: { addListener: function() {} }
+        },
+        tabs: {
+          onRemoved: { addListener: function() {} },
+          remove: function() {},
+          query: function(_query, callback) { if (callback) callback([]); },
+          update: function() {}
+        },
+        windows: {
+          update: function() {}
+        },
+        alarms: {
+          onAlarm: { addListener: function(listener) { window.alarmListener = listener; } },
+          create: function() {},
+          clear: function() {}
+        },
+        storage: {
+          local: {
+            get: function(keys, callback) {
+              const cbId = window.IntentionCallbacks.register(callback);
+              post({ type: 'getStorage', keys: (typeof keys === 'string' ? [keys] : keys) || null, callbackId: cbId });
+            },
+            set: function(items, callback) {
+              const cbId = window.IntentionCallbacks.register(callback);
+              post({ type: 'setStorage', items: items, callbackId: cbId });
+            }
+          }
+        },
+        declarativeNetRequest: {
+          getDynamicRules: function() { return Promise.resolve([]); },
+          updateDynamicRules: function() { return Promise.resolve(); },
+          updateSessionRules: function() { return Promise.resolve(); }
+        }
+      };
+
+      // Native (BackgroundJSHost.swift) calls this to invoke listeners
+      // registered by background.js via chrome.runtime.onMessage.addListener.
+      window.triggerMessage = function(messagePayload, senderPayload, callbackId) {
+        const message = JSON.parse(messagePayload).value;
+        const sender = JSON.parse(senderPayload).value;
+        let responded = false;
+
+        const sendResponse = function(response) {
+          if (responded) return;
+          responded = true;
+          post({ type: 'messageResponse', callbackId: callbackId, response: response });
+        };
+
+        for (const listener of listeners) {
+          const isAsync = listener(message, sender, sendResponse);
+          if (!isAsync && !responded) {
+            sendResponse(null);
+          }
+        }
+      };
+    })();
+  </script>
+  <!-- Load the shared business logic scripts, same order as manifest.json's
+       background.scripts list. -->
+  <script src="providers.js"></script>
+  <script src="prompts.js"></script>
+  <script src="tracking.js"></script>
+  <script src="background.js"></script>
+</head>
+<body>
+</body>
+</html>

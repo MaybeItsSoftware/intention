@@ -1,5 +1,9 @@
-const INT_LOG = '[Intention]';
-console.log(INT_LOG, 'content.js loaded (build: gate-fallback v2)', window.location.href);
+const INT_LOG = "[Intention]";
+console.log(
+  INT_LOG,
+  "content.js loaded (build: gate-fallback v2)",
+  window.location.href,
+);
 
 const OVERLAY_CSS = `
 #intention-root {
@@ -176,30 +180,47 @@ const OVERLAY_CSS = `
   font-weight: 500;
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  pointer-events: none;
+  pointer-events: auto;
 }
+
+#intention-badge-finish {
+  all: unset;
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #0f1115;
+  background: #e7e7ea;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#intention-badge-finish:hover { background: #ffffff; }
 `;
 
 function injectOverlayStyle() {
-  const styleId = 'intention-style';
+  const styleId = "intention-style";
   if (!document.getElementById(styleId)) {
-    const styleEl = document.createElement('style');
+    const styleEl = document.createElement("style");
     styleEl.id = styleId;
     styleEl.textContent = OVERLAY_CSS;
-    (document.body || document.head || document.documentElement).appendChild(styleEl);
+    (document.body || document.head || document.documentElement).appendChild(
+      styleEl,
+    );
   }
 
   // Inject Arvo (self-hosted) so the overlay font works regardless of the host
   // page's CSP — a remote Google Fonts <link> gets blocked on many sites.
-  if (!document.getElementById('intention-font')) {
-    const f = (name) => chrome.runtime.getURL('fonts/' + name);
-    const fontStyle = document.createElement('style');
-    fontStyle.id = 'intention-font';
+  if (!document.getElementById("intention-font")) {
+    const f = (name) => chrome.runtime.getURL("fonts/" + name);
+    const fontStyle = document.createElement("style");
+    fontStyle.id = "intention-font";
     fontStyle.textContent = `
-      @font-face { font-family:'Arvo'; font-style:normal; font-weight:400; font-display:swap; src:url("${f('Arvo-Regular.woff2')}") format("woff2"); }
-      @font-face { font-family:'Arvo'; font-style:normal; font-weight:700; font-display:swap; src:url("${f('Arvo-Bold.woff2')}") format("woff2"); }
-      @font-face { font-family:'Arvo'; font-style:italic; font-weight:400; font-display:swap; src:url("${f('Arvo-Italic.woff2')}") format("woff2"); }
-      @font-face { font-family:'Arvo'; font-style:italic; font-weight:700; font-display:swap; src:url("${f('Arvo-BoldItalic.woff2')}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:400; font-display:swap; src:url("${f("Arvo-Regular.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:normal; font-weight:700; font-display:swap; src:url("${f("Arvo-Bold.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:400; font-display:swap; src:url("${f("Arvo-Italic.woff2")}") format("woff2"); }
+      @font-face { font-family:'Arvo'; font-style:italic; font-weight:700; font-display:swap; src:url("${f("Arvo-BoldItalic.woff2")}") format("woff2"); }
     `;
     (document.head || document.documentElement).appendChild(fontStyle);
   }
@@ -212,90 +233,108 @@ let handled = false;
 function showGate(why) {
   if (handled) return;
   handled = true;
-  console.log(INT_LOG, 'showGate ->', why);
+  console.log(INT_LOG, "showGate ->", why);
   try {
     ensureBodyAndStop();
     injectOverlayStyle();
-    renderChatUI({ mode: 'gate', domain: matchedDomain || window.location.hostname });
+    renderChatUI({
+      mode: "gate",
+      domain: matchedDomain || window.location.hostname,
+    });
   } catch (e) {
-    console.error(INT_LOG, 'failed to render gate:', e);
+    console.error(INT_LOG, "failed to render gate:", e);
   }
 }
 
 function runCheck() {
   try {
     const host = window.location.hostname;
-    chrome.runtime.sendMessage({ action: 'checkPageMatch', host }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.warn(INT_LOG, 'checkPageMatch lastError:', chrome.runtime.lastError.message);
-        return;
-      }
-      console.log(INT_LOG, 'checkPageMatch response', response);
-      
-      if (!response || !response.isBlocked) {
-        return;
-      }
-
-      matchedDomain = response.matchedDomain;
-
-      if (!response.setupComplete) {
-        if (handled) return;
-        handled = true;
-        try {
-          ensureBodyAndStop();
-          injectOverlayStyle();
-          renderSetupNeededUI();
-        } catch (e) {
-          console.error(INT_LOG, 'failed to render setup needed UI:', e);
+    chrome.runtime.sendMessage(
+      { action: "checkPageMatch", host },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            INT_LOG,
+            "checkPageMatch lastError:",
+            chrome.runtime.lastError.message,
+          );
+          return;
         }
-        return;
-      }
+        console.log(INT_LOG, "checkPageMatch response", response);
 
-      if (response.session) {
-        if (handled) return;
-        handled = true;
-        currentSession = response.session;
-        runWhenBodyExists(() => {
+        if (!response) {
+          return;
+        }
+
+        if (!response.setupComplete) {
+          if (handled) return;
+          handled = true;
           try {
+            ensureBodyAndStop();
             injectOverlayStyle();
-            renderStatusBadge(response.session);
+            renderSetupNeededUI();
           } catch (e) {
-            console.error(INT_LOG, 'failed to render status badge:', e);
-          } finally {
-            setupInterruptionListener();
+            console.error(INT_LOG, "failed to render setup needed UI:", e);
           }
-        });
-      } else {
-        showGate('no active session (fail-safe)');
-      }
-    });
+          return;
+        }
+
+        if (!response.isBlocked) {
+          return;
+        }
+
+        matchedDomain = response.matchedDomain;
+
+        if (response.session) {
+          if (handled) return;
+          handled = true;
+          currentSession = response.session;
+          runWhenBodyExists(() => {
+            try {
+              injectOverlayStyle();
+              renderStatusBadge(response.session);
+            } catch (e) {
+              console.error(INT_LOG, "failed to render status badge:", e);
+            } finally {
+              setupInterruptionListener();
+            }
+          });
+        } else {
+          showGate("no active session (fail-safe)");
+        }
+      },
+    );
   } catch (e) {
-    console.warn(INT_LOG, 'sendMessage threw synchronously:', e);
+    console.warn(INT_LOG, "sendMessage threw synchronously:", e);
   }
 }
 
-if (typeof document.visibilityState !== 'undefined' && (document.visibilityState === 'prerender' || document.visibilityState === 'hidden')) {
+if (
+  typeof document.visibilityState !== "undefined" &&
+  (document.visibilityState === "prerender" ||
+    document.visibilityState === "hidden")
+) {
   const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+    if (document.visibilityState === "visible") {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       runCheck();
     }
   };
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  document.addEventListener("visibilitychange", onVisibilityChange);
 } else {
   runCheck();
 }
 
 function ensureBodyAndStop() {
   window.stop();
-  document.documentElement.style.overflow = 'hidden';
+  document.documentElement.style.overflow = "hidden";
   if (!document.body) {
-    const body = document.createElement('body');
+    const body = document.createElement("body");
     document.documentElement.appendChild(body);
   } else {
-    document.body.innerHTML = '';
+    document.body.innerHTML = "";
   }
-  document.body.style.overflow = 'hidden';
+  document.body.style.overflow = "hidden";
 }
 
 function runWhenBodyExists(callback) {
@@ -308,13 +347,16 @@ function runWhenBodyExists(callback) {
         callback();
       }
     });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
   }
 }
 
 function renderSetupNeededUI() {
-  const root = document.createElement('div');
-  root.id = 'intention-root';
+  const root = document.createElement("div");
+  root.id = "intention-root";
   root.innerHTML = `
     <div class="int-column">
       <h1>Intention</h1>
@@ -323,25 +365,29 @@ function renderSetupNeededUI() {
     </div>
   `;
   document.body.appendChild(root);
-  document.getElementById('int-open-options').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'openOptions' });
-  });
+  document
+    .getElementById("int-open-options")
+    .addEventListener("click", () => {
+      chrome.runtime.sendMessage({ action: "openOptions" });
+    });
 }
 
 function renderChatUI({ mode, domain }) {
-  if (document.getElementById('intention-root')) {
-    document.getElementById('intention-root').remove();
+  if (document.getElementById("intention-root")) {
+    document.getElementById("intention-root").remove();
   }
-  const seed = mode === 'gate'
-    ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
-    : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
+  const seed =
+    mode === "gate"
+      ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
+      : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
 
-  const subtitle = mode === 'gate'
-    ? `${domain} — let's check in before you go through`
-    : `${domain} — your time is up`;
+  const subtitle =
+    mode === "gate"
+      ? `${domain} — let's check in before you go through`
+      : `${domain} — your time is up`;
 
-  const root = document.createElement('div');
-  root.id = 'intention-root';
+  const root = document.createElement("div");
+  root.id = "intention-root";
   root.innerHTML = `
     <div class="int-column">
       <h1>Intention</h1>
@@ -359,24 +405,30 @@ function renderChatUI({ mode, domain }) {
   `;
   document.body.appendChild(root);
 
-  const messagesEl = document.getElementById('int-messages');
-  const inputEl = document.getElementById('int-input');
-  const sendBtn = document.getElementById('int-send');
-  const closeBtn = document.getElementById('int-close');
+  const messagesEl = document.getElementById("int-messages");
+  const inputEl = document.getElementById("int-input");
+  const sendBtn = document.getElementById("int-send");
+  const closeBtn = document.getElementById("int-close");
 
-  addMessage(messagesEl, 'assistant', seed);
+  addMessage(messagesEl, "assistant", seed);
 
   // Fetch stats and render stats row
   try {
-    chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
-      if (chrome.runtime.lastError) {
-        console.warn(INT_LOG, 'getStatsForDomain lastError:', chrome.runtime.lastError.message);
-        return;
-      }
-      if (stats) {
-        const statsRow = document.getElementById('int-stats-row');
-        if (statsRow) {
-          statsRow.innerHTML = `
+    chrome.runtime.sendMessage(
+      { action: "getStatsForDomain", domain },
+      (stats) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            INT_LOG,
+            "getStatsForDomain lastError:",
+            chrome.runtime.lastError.message,
+          );
+          return;
+        }
+        if (stats) {
+          const statsRow = document.getElementById("int-stats-row");
+          if (statsRow) {
+            statsRow.innerHTML = `
             <div class="int-stat">
               <div class="int-stat-value">${stats.minutesToday || 0}m</div>
               <div class="int-stat-label">Today</div>
@@ -394,12 +446,13 @@ function renderChatUI({ mode, domain }) {
               <div class="int-stat-label">All Time</div>
             </div>
           `;
-          statsRow.style.display = 'flex';
+            statsRow.style.display = "flex";
+          }
         }
-      }
-    });
+      },
+    );
   } catch (e) {
-    console.warn(INT_LOG, 'getStatsForDomain message threw:', e);
+    console.warn(INT_LOG, "getStatsForDomain message threw:", e);
   }
 
   let sending = false;
@@ -408,52 +461,67 @@ function renderChatUI({ mode, domain }) {
     const text = inputEl.value.trim();
     if (!text || sending) return;
     sending = true;
-    addMessage(messagesEl, 'user', text);
-    inputEl.value = '';
-    const thinking = addMessage(messagesEl, 'assistant', '…', true);
+    addMessage(messagesEl, "user", text);
+    inputEl.value = "";
+    const thinking = addMessage(messagesEl, "assistant", "…", true);
 
-    chrome.runtime.sendMessage({
-      action: 'chat',
-      mode,
-      domain,
-      userMessage: text
-    }, (resp) => {
-      if (!resp) {
-        thinking.remove();
-        addMessage(messagesEl, 'assistant', '[no response — background worker may be offline]');
-        sending = false;
-        return;
-      }
-      if (resp.error) {
-        thinking.remove();
-        addMessage(messagesEl, 'assistant', `[error: ${resp.error}]`);
-        sending = false;
-        return;
-      }
-      // Reuse the "…" placeholder and reveal the reply gradually so it reads
-      // as if the coach is speaking, rather than snapping in all at once.
-      thinking.classList.remove('int-thinking');
-      typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
-        sending = false;
-        if (resp.grantedSession) {
-          setTimeout(() => window.location.reload(), 2200);
+    chrome.runtime.sendMessage(
+      {
+        action: "chat",
+        mode,
+        domain,
+        userMessage: text,
+      },
+      (resp) => {
+        if (!resp) {
+          thinking.remove();
+          addMessage(
+            messagesEl,
+            "assistant",
+            "[no response — background worker may be offline]",
+          );
+          sending = false;
+          return;
         }
-      });
-    });
+        if (resp.error) {
+          thinking.remove();
+          addMessage(messagesEl, "assistant", `[error: ${resp.error}]`);
+          sending = false;
+          return;
+        }
+        // Reuse the "…" placeholder and reveal the reply gradually so it reads
+        // as if the coach is speaking, rather than snapping in all at once.
+        thinking.classList.remove("int-thinking");
+        typeMessage(
+          thinking,
+          messagesEl,
+          resp.assistantText || "(no reply)",
+          () => {
+            sending = false;
+            if (resp.grantedSession) {
+              setTimeout(() => window.location.reload(), 2200);
+            }
+          },
+        );
+      },
+    );
   }
 
-  sendBtn.addEventListener('click', send);
-  inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
-  closeBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
+  sendBtn.addEventListener("click", send);
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send();
+  });
+  closeBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "endSession", reason: "fulfilled" });
     window.close();
   });
   inputEl.focus();
 }
 
 function addMessage(container, role, text, isThinking) {
-  const div = document.createElement('div');
-  div.className = `int-msg int-msg-${role}` + (isThinking ? ' int-thinking' : '');
+  const div = document.createElement("div");
+  div.className =
+    `int-msg int-msg-${role}` + (isThinking ? " int-thinking" : "");
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
@@ -463,7 +531,7 @@ function addMessage(container, role, text, isThinking) {
 // Reveal `text` into `el` a few characters at a time. Clicking anywhere skips
 // to the full text. `onDone` fires exactly once when the reveal completes.
 function typeMessage(el, container, text, onDone) {
-  el.textContent = '';
+  el.textContent = "";
   let i = 0;
   let finished = false;
   const step = Math.max(1, Math.ceil(text.length / 140));
@@ -474,10 +542,12 @@ function typeMessage(el, container, text, onDone) {
     clearInterval(timer);
     el.textContent = text;
     if (container) container.scrollTop = container.scrollHeight;
-    document.removeEventListener('click', skip, true);
+    document.removeEventListener("click", skip, true);
     if (onDone) onDone();
   }
-  function skip() { finish(); }
+  function skip() {
+    finish();
+  }
 
   const timer = setInterval(() => {
     i += step;
@@ -486,24 +556,44 @@ function typeMessage(el, container, text, onDone) {
     if (i >= text.length) finish();
   }, 18);
 
-  document.addEventListener('click', skip, true);
+  document.addEventListener("click", skip, true);
 }
 
 function renderStatusBadge(session) {
-  const badge = document.createElement('div');
-  badge.id = 'intention-badge';
+  const badge = document.createElement("div");
+  badge.id = "intention-badge";
+
+  const timeEl = document.createElement("span");
+  timeEl.id = "intention-badge-time";
+  badge.appendChild(timeEl);
+
+  const finishBtn = document.createElement("button");
+  finishBtn.id = "intention-badge-finish";
+  finishBtn.type = "button";
+  finishBtn.textContent = "Finished";
+  badge.appendChild(finishBtn);
 
   function update() {
     // Count UP from when the session started — show elapsed time, not remaining.
-    const totalSec = Math.max(0, Math.round((Date.now() - session.startTime) / 1000));
+    const totalSec = Math.max(
+      0,
+      Math.round((Date.now() - session.startTime) / 1000),
+    );
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
-    const timeStr = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    badge.textContent = `⏱ ${timeStr}${session.reason ? ' · "' + session.reason + '"' : ''}`;
+    const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    timeEl.textContent = `⏱ ${timeStr}${session.reason ? ' · "' + session.reason + '"' : ""}`;
   }
   update();
-  setInterval(update, 1000);
+  const intervalId = setInterval(update, 1000);
   document.body.appendChild(badge);
+
+  finishBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "endSession", reason: "fulfilled" });
+    clearInterval(intervalId);
+    observer.disconnect();
+    badge.remove();
+  });
 
   // SPA sites (Twitter, YouTube, …) re-render <body> and can drop our node.
   // Re-attach it whenever it goes missing so the timer stays visible.
@@ -515,9 +605,13 @@ function renderStatusBadge(session) {
 
 function setupInterruptionListener() {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'showCheckin') {
-      if (!document.getElementById('intention-root')) {
-        renderChatUI({ mode: 'checkin', domain: currentSession?.domain || matchedDomain || window.location.hostname });
+    if (message.action === "showCheckin") {
+      if (!document.getElementById("intention-root")) {
+        renderChatUI({
+          mode: "checkin",
+          domain:
+            currentSession?.domain || matchedDomain || window.location.hostname,
+        });
       }
     }
   });

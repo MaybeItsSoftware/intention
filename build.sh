@@ -4,8 +4,9 @@
 #
 # Usage:
 #   ./build.sh           Build Chrome + Firefox zips
-#   ./build.sh --all     Build Chrome + Firefox zips + Safari Xcode project
+#   ./build.sh --all     Build Chrome + Firefox zips + Safari Xcode project + iOS + Android
 #   ./build.sh --safari  Build Safari Xcode project only
+#   ./build.sh --ios     Build + run Safari extension on iOS Simulator
 #
 # Output goes to build/ directory.
 
@@ -148,17 +149,100 @@ build_safari() {
 }
 
 # ---------------------------------------------------------------------------
+# Build + run iOS (Simulator)
+# ---------------------------------------------------------------------------
+
+build_ios() {
+  if [[ ! -d "$APPLE_DIR/Intention Safari.xcodeproj" ]]; then
+    warn "Xcode project not found — regenerating Safari wrapper..."
+    xcrun safari-web-extension-converter "./$CHROME_DIR" \
+      --project-location . \
+      --app-name "Intention Safari" \
+      --no-open
+    ok "Safari wrapper regenerated"
+  fi
+
+  info "Building Safari extension (iOS Simulator)..."
+  xcodebuild \
+    -project "$APPLE_DIR/Intention Safari.xcodeproj" \
+    -scheme "Intention Safari (iOS)" \
+    -configuration Debug \
+    -sdk iphonesimulator \
+    -derivedDataPath "$BUILD_DIR/ios-derived" \
+    -quiet \
+    build
+  ok "Safari iOS build complete"
+
+  local app_path
+  app_path=$(find "$BUILD_DIR/ios-derived" -name "*.app" -path "*iphonesimulator*" -maxdepth 6 | head -1)
+  [[ -n "$app_path" ]] || fail "Could not locate built .app for iOS Simulator"
+
+  local bundle_id
+  bundle_id=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$app_path/Info.plist" 2>/dev/null)
+  [[ -n "$bundle_id" ]] || fail "Could not read CFBundleIdentifier from $app_path/Info.plist"
+
+  info "Booting iOS Simulator..."
+  open -a Simulator
+
+  info "Waiting for simulator to boot..."
+  local booted_udid=""
+  for i in $(seq 1 30); do
+    booted_udid=$(xcrun simctl list devices booted | grep -m1 -oE '[0-9A-F-]{36}' || true)
+    [[ -n "$booted_udid" ]] && break
+    sleep 1
+  done
+  [[ -n "$booted_udid" ]] || fail "No booted simulator found after waiting"
+
+  info "Installing on simulator ($booted_udid)..."
+  xcrun simctl install booted "$app_path"
+  ok "Installed"
+
+  info "Launching $bundle_id..."
+  xcrun simctl launch booted "$bundle_id"
+  ok "Launched on iOS Simulator"
+}
+
+# ---------------------------------------------------------------------------
+# Sync Android assets
+# ---------------------------------------------------------------------------
+
+build_android() {
+  local android_assets_dir="Intention Android/app/src/main/assets"
+  if [[ -d "Intention Android" ]]; then
+    info "Syncing assets to Intention Android..."
+    mkdir -p "$android_assets_dir"
+    
+    # Copy shared files
+    for f in "${SHARED_FILES[@]}"; do
+      cp "$CHROME_DIR/$f" "$android_assets_dir/"
+    done
+    
+    # Copy fonts
+    mkdir -p "$android_assets_dir/fonts"
+    cp -R "$CHROME_DIR/fonts/" "$android_assets_dir/fonts/"
+    
+    ok "Android assets synced complete"
+  else
+    warn "Android project directory not found, skipping sync"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 main() {
   local do_extensions=false
   local do_safari=false
+  local do_ios=false
+  local do_android=false
 
   case "${1:-}" in
-    --all)    do_extensions=true; do_safari=true ;;
+    --all)    do_extensions=true; do_safari=true; do_ios=true; do_android=true ;;
     --safari) do_safari=true ;;
-    *)        do_extensions=true ;;
+    --ios)    do_ios=true ;;
+    --android) do_android=true ;;
+    *)        do_extensions=true; do_android=true ;;
   esac
 
   echo ""
@@ -177,6 +261,14 @@ main() {
     build_safari
   fi
 
+  if $do_ios; then
+    build_ios
+  fi
+
+  if $do_android; then
+    build_android
+  fi
+
   echo ""
   ok "Build complete → ./$BUILD_DIR/"
   ls -lh "$BUILD_DIR"/ 2>/dev/null | grep -v "^total" | grep -v "safari-derived" || true
@@ -184,3 +276,4 @@ main() {
 }
 
 main "$@"
+

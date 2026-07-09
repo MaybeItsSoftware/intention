@@ -63,6 +63,21 @@
 		66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
 		66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
 		66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
+		0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
+		125A0D90AB57B28FE647ACAB /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
+		CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
+		97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */; };
+		4EEBFA67CC1061C2552E484E /* background.html in Resources */ = {isa = PBXBuildFile; fileRef = F7AA81643104FBF47EF49C27 /* background.html */; };
+		76E2C3F3EF9D235A2AC0F8E1 /* ios-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 8B14A43335CF347D3C27E481 /* ios-bridge.js */; };
+		5EEE962544C952A6A70D7462 /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
+		C11391A3091DB42063A78CA3 /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
+		B3D5D21070C5C5FB7732D8D1 /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		3A17ECA87CF0BC7FC6F1C80E /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
+		1EDF5969600008746A5F0B50 /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		79E816C9538AF8290B28BE79 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -146,6 +161,14 @@
 		66B8D0FE2FE985EF00BC0D7F /* env.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = env.txt; path = "../../Intention Chrome/env.txt"; sourceTree = "<group>"; };
 		66B8D1012FE985EF00BC0D7F /* coaching.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = coaching.html; path = "../../Intention Chrome/coaching.html"; sourceTree = "<group>"; };
 		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
+		1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupConfig.swift; sourceTree = "<group>"; };
+		EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSBridgeCodec.swift; sourceTree = "<group>"; };
+		B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundJSHost.swift; sourceTree = "<group>"; };
+		F7AA81643104FBF47EF49C27 /* background.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = background.html; sourceTree = "<group>"; };
+		8B14A43335CF347D3C27E481 /* ios-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "ios-bridge.js"; sourceTree = "<group>"; };
+		2BE36CEA3FB8DD72FFBE228A /* iOS (App).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS (App).entitlements"; sourceTree = "<group>"; };
+		68A62FDB51C54FAF28354D17 /* iOS (Extension).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS (Extension).entitlements"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,12 +208,24 @@
 			children = (
 				66B8D00F2FE985EE00BC0D7F /* Shared (App) */,
 				66B8D0182FE985EE00BC0D7F /* Shared (Extension) */,
+				BF6CF1868EB926C9BE668207 /* Shared (iOS) */,
 				66B8D0202FE985EE00BC0D7F /* iOS (App) */,
 				66B8D0312FE985EF00BC0D7F /* macOS (App) */,
 				66B8D0402FE985EF00BC0D7F /* iOS (Extension) */,
 				66B8D04A2FE985EF00BC0D7F /* macOS (Extension) */,
 				66B8D01F2FE985EE00BC0D7F /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		BF6CF1868EB926C9BE668207 /* Shared (iOS) */ = {
+			isa = PBXGroup;
+			children = (
+				1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */,
+				EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */,
+				E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */,
+				B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */,
+			);
+			path = "Shared (iOS)";
 			sourceTree = "<group>";
 		};
 		66B8D00F2FE985EE00BC0D7F /* Shared (App) */ = {
@@ -210,6 +245,8 @@
 				66B8D0132FE985EE00BC0D7F /* Icon.png */,
 				66B8D0142FE985EE00BC0D7F /* Style.css */,
 				66B8D0152FE985EE00BC0D7F /* Script.js */,
+				F7AA81643104FBF47EF49C27 /* background.html */,
+				8B14A43335CF347D3C27E481 /* ios-bridge.js */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -242,6 +279,7 @@
 				66B8D0252FE985EE00BC0D7F /* LaunchScreen.storyboard */,
 				66B8D0282FE985EF00BC0D7F /* Main.storyboard */,
 				66B8D02B2FE985EF00BC0D7F /* Info.plist */,
+				2BE36CEA3FB8DD72FFBE228A /* iOS (App).entitlements */,
 			);
 			path = "iOS (App)";
 			sourceTree = "<group>";
@@ -260,6 +298,7 @@
 			isa = PBXGroup;
 			children = (
 				66B8D0412FE985EF00BC0D7F /* Info.plist */,
+				68A62FDB51C54FAF28354D17 /* iOS (Extension).entitlements */,
 			);
 			path = "iOS (Extension)";
 			sourceTree = "<group>";
@@ -438,6 +477,15 @@
 				66B8D0562FE985EF00BC0D7F /* Assets.xcassets in Resources */,
 				66B8D02A2FE985EF00BC0D7F /* Main.storyboard in Resources */,
 				66B8D0502FE985EF00BC0D7F /* Style.css in Resources */,
+				4EEBFA67CC1061C2552E484E /* background.html in Resources */,
+				76E2C3F3EF9D235A2AC0F8E1 /* ios-bridge.js in Resources */,
+				5EEE962544C952A6A70D7462 /* options.html in Resources */,
+				C11391A3091DB42063A78CA3 /* options.js in Resources */,
+				B3D5D21070C5C5FB7732D8D1 /* options.css in Resources */,
+				3A17ECA87CF0BC7FC6F1C80E /* providers.js in Resources */,
+				1EDF5969600008746A5F0B50 /* prompts.js in Resources */,
+				863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */,
+				79E816C9538AF8290B28BE79 /* background.js in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -512,6 +560,10 @@
 				66B8D0542FE985EF00BC0D7F /* ViewController.swift in Sources */,
 				66B8D0222FE985EE00BC0D7F /* AppDelegate.swift in Sources */,
 				66B8D0242FE985EE00BC0D7F /* SceneDelegate.swift in Sources */,
+				0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */,
+				C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */,
+				CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */,
+				97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -529,6 +581,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				66B8D0582FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */,
+				D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */,
+				125A0D90AB57B28FE647ACAB /* AppGroupStorage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -708,6 +762,7 @@
 		66B8D05D2FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Extension)/iOS (Extension).entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -741,6 +796,7 @@
 		66B8D05E2FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Extension)/iOS (Extension).entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -777,6 +833,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "iOS (App)/iOS (App).entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -817,6 +874,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "iOS (App)/iOS (App).entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;

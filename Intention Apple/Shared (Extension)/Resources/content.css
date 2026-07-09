@@ -173,5 +173,20 @@
   font-weight: 500;
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  pointer-events: none;
+  pointer-events: auto;
 }
+
+#intention-badge-finish {
+  all: unset;
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #0f1115;
+  background: #e7e7ea;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#intention-badge-finish:hover { background: #ffffff; }

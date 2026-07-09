@@ -16,20 +16,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: |
+          echo "Installing test dependencies..."
+          npm ci
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Zip Chrome extension
-        run: zip -r "intention-chrome-v${{ steps.version.outputs.VERSION }}.zip" "Intention Chrome/"
-
-      - name: Zip Firefox extension
-        run: zip -r "intention-firefox-v${{ steps.version.outputs.VERSION }}.zip" "Intention Firefox/"
+      - name: Run Preflight Checks and Package Extensions
+        run: |
+          chmod +x ./build.sh
+          ./build.sh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            intention-chrome-v${{ steps.version.outputs.VERSION }}.zip
-            intention-firefox-v${{ steps.version.outputs.VERSION }}.zip
+            build/intention-chrome-v${{ steps.version.outputs.VERSION }}.zip
+            build/intention-firefox-v${{ steps.version.outputs.VERSION }}.zip
+
+      # =========================================================================
+      # AUTOMATED STOREFRONT DEPLOYMENTS (FOR DEVOPS)
+      # Uncomment the steps below after configuring your Secrets in GitHub.
+      # Reference the DEVOPS.md guide in the root for instructions.
+      # =========================================================================
+
+      # - name: Publish to Chrome Web Store
+      #   uses: wdzeng/chrome-extension@v1
+      #   with:
+      #     client-id: ${{ secrets.CHROME_CLIENT_ID }}
+      #     client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+      #     refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+      #     extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
+      #     zip-path: build/intention-chrome-v${{ steps.version.outputs.VERSION }}.zip
+
+      # - name: Publish to Firefox Add-ons (AMO)
+      #   uses: wdzeng/firefox-addon@v1
+      #   with:
+      #     api-key: ${{ secrets.AMO_JWT_ISSUER }}
+      #     api-secret: ${{ secrets.AMO_JWT_SECRET }}
+      #     guid: 'intention@maybeitsadam'
+      #     xpi-path: build/intention-firefox-v${{ steps.version.outputs.VERSION }}.zip

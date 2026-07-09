@@ -13,7 +13,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Start the hidden background WebView host so it's ready by the time
+        // ViewController's options.html WebView sends its first message.
+        BackgroundJSHost.shared.start()
         return true
     }
 

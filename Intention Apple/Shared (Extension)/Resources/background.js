@@ -62,6 +62,7 @@ async function syncBlockingRules() {
 async function registerSessionRule(tabId, domain, minutes) {
   try {
     const ruleId = tabId;
+    const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
     const addRules = [{
       id: ruleId,
       priority: 2,
@@ -69,7 +70,7 @@ async function registerSessionRule(tabId, domain, minutes) {
         type: 'allow'
       },
       condition: {
-        urlFilter: `*://*.${domain}/*`,
+        regexFilter: `^https?://(?:[^/]*\\.)?${escaped}(?:/.*)?$`,
         tabIds: [tabId],
         resourceTypes: ['main_frame']
       }
@@ -97,10 +98,15 @@ async function removeSessionRule(tabId) {
 }
 
 // Sync rules on load and install
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   syncBlockingRules();
+  if (details.reason === 'install') {
+    chrome.runtime.openOptionsPage();
+  }
 });
 syncBlockingRules();
+// No-op outside the Safari Web Extension runtime — see tracking.js.
+syncConfigFromNative();
 
 chrome.action.onClicked.addListener(async () => {
   const optionsUrl = chrome.runtime.getURL('options.html');
@@ -216,6 +222,8 @@ async function handleMessage(message, sender) {
 }
 
 async function checkPageMatch(host, tabId) {
+  // Throttled no-op outside the Safari Web Extension runtime — see tracking.js.
+  await syncConfigFromNative();
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
   const session = tabId != null ? (activeSessions[tabId] || null) : null;

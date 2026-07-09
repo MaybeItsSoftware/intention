@@ -22,7 +22,73 @@ function getStorage(keys) {
 }
 
 function setStorage(obj) {
+  pushConfigToNative(obj);
   return new Promise(resolve => chrome.storage.local.set(obj, resolve));
+}
+
+// ---------------------------------------------------------------------------
+// Native app config bridge (Apple platforms only).
+//
+// The iOS app hosts its own copy of this extension's config UI in a WebView
+// and needs to stay in sync with the config the Safari Web Extension actually
+// runs with. `browser.runtime.sendNativeMessage` only exists in Safari (and
+// Firefox, where it's harmlessly a no-op since we have no registered native
+// host there) — it's absent in Chrome's `browser` global entirely, so this
+// whole bridge is inert everywhere except the Safari Web Extension runtime,
+// where SafariWebExtensionHandler.swift answers `pushConfig`/`pullConfig`.
+const CONFIG_KEYS = [
+  'provider', 'apiKey', 'model', 'userContext', 'contextProjects',
+  'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits',
+  'setupComplete'
+];
+const NATIVE_APP_ID = 'com.intention.app'; // ignored by Safari (single native host per app)
+const NATIVE_PULL_THROTTLE_MS = 30000;
+
+let syncingFromNative = false;
+let lastNativePullAt = 0;
+
+function hasNativeMessaging() {
+  return typeof browser !== 'undefined' && browser.runtime && typeof browser.runtime.sendNativeMessage === 'function';
+}
+
+// Fire-and-forget push of any config keys being written so the native app's
+// shared storage reflects settings changed from within Safari's own options
+// page. Never blocks or throws into setStorage's caller.
+function pushConfigToNative(obj) {
+  if (syncingFromNative || !hasNativeMessaging()) return;
+  const config = {};
+  for (const k of Object.keys(obj)) {
+    if (CONFIG_KEYS.includes(k)) config[k] = obj[k];
+  }
+  if (!Object.keys(config).length) return;
+  try {
+    const result = browser.runtime.sendNativeMessage(NATIVE_APP_ID, { action: 'pushConfig', config });
+    if (result && typeof result.catch === 'function') result.catch(() => {});
+  } catch (e) {
+    // No native host reachable — ignore.
+  }
+}
+
+// Pull the latest config from the native app's shared storage so settings
+// changed in the native iOS app reach the running extension. Throttled since
+// callers (e.g. checkPageMatch) may invoke this on every navigation.
+async function syncConfigFromNative() {
+  if (!hasNativeMessaging()) return;
+  const now = Date.now();
+  if (now - lastNativePullAt < NATIVE_PULL_THROTTLE_MS) return;
+  lastNativePullAt = now;
+  try {
+    const response = await browser.runtime.sendNativeMessage(NATIVE_APP_ID, { action: 'pullConfig' });
+    if (!response || !response.config) return;
+    syncingFromNative = true;
+    try {
+      await setStorage(response.config);
+    } finally {
+      syncingFromNative = false;
+    }
+  } catch (e) {
+    // No native host reachable — ignore.
+  }
 }
 
 async function withDailyStats(mutator) {

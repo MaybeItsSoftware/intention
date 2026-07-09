@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Intention",
-  "version": "2.0",
+  "version": "0.1.0",
   "description": "AI-powered focus gate. Bring your own LLM to coach you past distracting sites.",
   "browser_specific_settings": {
     "gecko": {
@@ -29,21 +29,36 @@
     "128": "icon128.png"
   },
   "background": {
-    "scripts": ["providers.js", "prompts.js", "tracking.js", "background.js"]
+    "scripts": [
+      "providers.js",
+      "prompts.js",
+      "tracking.js",
+      "background.js"
+    ]
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "css": ["content.css"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start",
       "all_frames": false
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["fonts/*.woff2"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "options_ui": {

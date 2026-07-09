@@ -46,3 +46,9 @@ DerivedData
 *.xcuserstate
 .env
 env.txt
+
+# Android / Gradle
+.gradle/
+local.properties
+*.apk
+*.aab

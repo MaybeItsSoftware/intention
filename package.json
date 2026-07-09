@@ -1,6 +1,6 @@
 {
   "name": "intention-extension",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Tests and dev tooling for the Intention browser extension (Chrome / Firefox / Apple variants).",
   "type": "module",
@@ -10,7 +10,11 @@
     "dev:firefox": "web-ext run --source-dir \"Intention Firefox\"",
     "dev:chrome": "web-ext run --target chromium --source-dir \"Intention Chrome\"",
     "dev:chrome:manual": "node -e \"console.log('\\nLoad the Chrome extension unpacked:\\n  1. Open chrome://extensions\\n  2. Enable Developer mode (top-right)\\n  3. Click \\\"Load unpacked\\\"\\n  4. Select the \\\"Intention Chrome\\\" folder in this repo\\n  5. Reload it from chrome://extensions after any source change\\n')\"",
-    "harness": "npx http-server tests/harness -p 8080 -c-1"
+    "dev:safari": "./build.sh --safari && open \"build/Intention Safari.app\"",
+    "dev:ios": "./build.sh --ios",
+    "dev:android": "./build.sh --android && cd \"Intention Android\" && ./gradlew installDebug && adb shell am start -n com.maybeitsadam.intention/.MainActivity",
+    "harness": "npx http-server tests/harness -p 8080 -c-1",
+    "bump": "./bump-version.sh"
   },
   "devDependencies": {
     "http-server": "^14.1.1",

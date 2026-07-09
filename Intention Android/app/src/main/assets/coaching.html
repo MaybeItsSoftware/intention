@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Intention — Let's check in</title>
+  <style>
+    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: swap; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0f1115;
+      color: #e7e7ea;
+      font-family: 'Arvo', Georgia, 'Times New Roman', serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    * {
+      box-sizing: border-box;
+    }
+
+    .int-column {
+      max-width: 620px;
+      margin: 0 auto;
+      min-height: 100vh;
+      padding: 14vh 24px 40px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    h1 {
+      margin: 0 0 4px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #6b7280;
+    }
+
+    .int-subtitle {
+      margin: 0 0 30px;
+      font-size: 15px;
+      color: #8b8f99;
+    }
+
+    .int-stats-row {
+      display: none;
+      flex-wrap: wrap;
+      gap: 18px;
+      margin-bottom: 30px;
+      font-size: 13px;
+    }
+
+    .int-stat {
+      display: flex;
+      gap: 5px;
+    }
+
+    .int-stat-value {
+      color: #9aa0ac;
+      font-weight: 600;
+    }
+
+    .int-stat-label {
+      color: #545863;
+    }
+
+    .int-messages {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      margin-bottom: 26px;
+      overflow-y: auto;
+    }
+
+    .int-messages::-webkit-scrollbar { width: 6px; }
+    .int-messages::-webkit-scrollbar-track { background: transparent; }
+    .int-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+    .int-messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+    .int-msg {
+      font-size: 19px;
+      line-height: 1.62;
+      white-space: pre-wrap;
+      animation: int-fade-in 0.45s ease-out;
+    }
+
+    .int-msg-assistant {
+      color: #f3f4f6;
+    }
+
+    .int-msg-user {
+      color: #7c818c;
+    }
+
+    .int-msg-user::before {
+      content: "You — ";
+      color: #4b5563;
+    }
+
+    .int-thinking {
+      opacity: 0.5;
+    }
+
+    .int-composer {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+      padding-bottom: 8px;
+    }
+
+    .int-composer input {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: #f3f4f6;
+      font-size: 18px;
+      outline: none;
+      font-family: inherit;
+      padding: 4px 0;
+    }
+
+    .int-composer input::placeholder {
+      color: #545863;
+    }
+
+    .int-composer button {
+      border: none;
+      background: transparent;
+      color: #9aa0ac;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      font-family: inherit;
+      padding: 4px 0;
+    }
+
+    .int-composer button:hover {
+      color: #f3f4f6;
+    }
+
+    .int-close-row {
+      margin-top: 22px;
+    }
+
+    button.int-secondary {
+      border: none;
+      background: transparent;
+      color: #545863;
+      font-size: 14px;
+      cursor: pointer;
+      font-family: inherit;
+      padding: 0;
+    }
+
+    button.int-secondary:hover {
+      color: #9aa0ac;
+      text-decoration: underline;
+    }
+
+    @keyframes int-fade-in {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="int-column">
+    <h1>Intention</h1>
+    <p class="int-subtitle" id="int-subtitle">Checking in...</p>
+    <div class="int-stats-row" id="int-stats-row"></div>
+    <div class="int-messages" id="int-messages"></div>
+    <div class="int-composer">
+      <input type="text" id="int-input" placeholder="Type your reply…" autocomplete="off">
+      <button id="int-send">Send</button>
+    </div>
+    <div class="int-close-row">
+      <button id="int-close" class="int-secondary">Close tab</button>
+    </div>
+  </div>
+  <script src="coaching.js"></script>
+</body>
+</html>
