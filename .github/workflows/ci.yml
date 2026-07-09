@@ -35,12 +35,35 @@ jobs:
           echo "Validating Firefox manifest..."
           jq empty "Intention Firefox/manifest.json"
 
+      - name: Verify version sync across platforms
+        run: |
+          CHROME_VERSION=$(jq -r .version "Intention Chrome/manifest.json")
+          FIREFOX_VERSION=$(jq -r .version "Intention Firefox/manifest.json")
+          echo "Chrome: $CHROME_VERSION | Firefox: $FIREFOX_VERSION"
+          [[ "$CHROME_VERSION" == "$FIREFOX_VERSION" ]] || { echo "::error::Chrome/Firefox version mismatch"; exit 1; }
+
+          PBXPROJ="Intention Apple/Intention Safari.xcodeproj/project.pbxproj"
+          if [[ -f "$PBXPROJ" ]]; then
+            APPLE_VERSIONS=$(grep -oE "MARKETING_VERSION = [0-9.]+;" "$PBXPROJ" | sed -E 's/MARKETING_VERSION = ([0-9.]+);/\1/' | sort -u)
+            if [[ "$(echo "$APPLE_VERSIONS" | wc -l)" != "1" ]] || [[ "$APPLE_VERSIONS" != "$CHROME_VERSION" ]]; then
+              echo "::error::Safari MARKETING_VERSION ($APPLE_VERSIONS) doesn't match manifest version ($CHROME_VERSION)"
+              exit 1
+            fi
+          fi
+          echo "✓ Versions in sync"
+
       - name: Check JS syntax
         run: |
           echo "Checking Chrome JS files..."
           find "Intention Chrome/" -name '*.js' -exec node --check {} +
           echo "Checking Firefox JS files..."
           find "Intention Firefox/" -name '*.js' -exec node --check {} +
+
+      - name: Install deploy tooling
+        run: npm install
+
+      - name: Lint Firefox extension (AMO validation)
+        run: npx web-ext lint --source-dir="Intention Firefox"
 
       - name: Verify file structure
         run: |

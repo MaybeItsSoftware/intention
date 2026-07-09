@@ -2,7 +2,7 @@
   "name": "intention-extension",
   "version": "0.1.0",
   "private": true,
-  "description": "Tests and dev tooling for the Intention browser extension (Chrome / Firefox / Apple variants).",
+  "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
   "type": "module",
   "scripts": {
     "test": "vitest run",
@@ -14,11 +14,15 @@
     "dev:ios": "./build.sh --ios",
     "dev:android": "./build.sh --android && cd \"Intention Android\" && ./gradlew installDebug && adb shell am start -n com.maybeitsadam.intention/.MainActivity",
     "harness": "npx http-server tests/harness -p 8080 -c-1",
-    "bump": "./bump-version.sh"
+    "bump-version": "scripts/bump-version.sh",
+    "lint:firefox": "web-ext lint --source-dir=\"Intention Firefox\"",
+    "build": "./build.sh",
+    "build:firefox": "web-ext build --source-dir=\"Intention Firefox\" --artifacts-dir=build --overwrite-dest",
+    "sign:firefox": "web-ext sign --source-dir=\"Intention Firefox\" --artifacts-dir=build --channel=unlisted"
   },
   "devDependencies": {
     "http-server": "^14.1.1",
     "vitest": "^2.1.8",
-    "web-ext": "^8.3.0"
+    "web-ext": "^10.4.0"
   }
 }

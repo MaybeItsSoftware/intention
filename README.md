@@ -81,3 +81,7 @@ npm test
 
 See [`tests/README.md`](tests/README.md) for the full guide (watch mode, the
 overlay harness, and live-loading the extension in Firefox / Chrome / Safari).
+
+## Building & publishing
+
+`./build.sh` produces versioned Chrome/Firefox zips (and, with `--all`/`--safari`, the Safari `.app` — macOS + Xcode only) into `build/`. `scripts/bump-version.sh <version>` syncs the version across all three platforms in one command. See [DEPLOYMENT.md](DEPLOYMENT.md) for the full Chrome Web Store / Firefox AMO / Apple App Store submission guide, including which secrets enable auto-publishing from CI. Data handling is described in [PRIVACY.md](PRIVACY.md).

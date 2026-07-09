@@ -4,7 +4,7 @@ This file defines custom rules and guidelines for AI agents working in this repo
 
 ## Overview
 
-**Intention** is a browser extension that puts an AI coach between you and distracting websites. It supports Chrome, Firefox, and Safari (macOS + iOS). There is no build system, bundler, or `package.json` — everything is vanilla JavaScript, HTML, and CSS (Manifest V3).
+**Intention** is a browser extension that puts an AI coach between you and distracting websites. It supports Chrome, Firefox, and Safari (macOS + iOS). The extension itself has no build system or bundler — everything shipped to browsers is vanilla JavaScript, HTML, and CSS (Manifest V3). The root `package.json` exists only for deployment tooling (`web-ext` lint/build for Firefox); it is never loaded by the extension and must not grow into a bundler/transpiler setup for app code.
 
 ## Repository Layout
 
@@ -18,8 +18,12 @@ intention/
 │   ├── iOS (App)/  /  iOS (Extension)/
 │   ├── macOS (App)/ / macOS (Extension)/
 │   └── Intention Safari.xcodeproj
-├── .github/workflows/         # CI + Release workflows
+├── .github/workflows/         # CI + Release + Publish workflows
+├── scripts/bump-version.sh    # Syncs version across Chrome/Firefox manifests + Xcode project
 ├── icon.svg / icon_glyph.svg  # Source icons
+├── package.json               # Dev-only: web-ext tooling for Firefox lint/build
+├── PRIVACY.md                 # Privacy policy (linked from store listings)
+├── DEPLOYMENT.md              # Store submission guide (secrets, checklist, release flow)
 └── README.md
 ```
 
@@ -63,29 +67,40 @@ The CI workflow enforces this via `diff`. When editing any shared file, **always
 
 ## Building Locally
 
-Run `./build.sh` from the repo root. It performs pre-flight checks (cross-platform sync, manifest validation, JS syntax) then produces zipped extension packages in `build/`.
+Run `./build.sh` from the repo root. It performs pre-flight checks (version sync, cross-platform file sync, manifest validation, JS syntax, `web-ext lint` if `npm install` has been run) then produces zipped extension packages in `build/`.
 
 | Command | What it builds |
 |---------|---------------|
 | `./build.sh` | Chrome + Firefox zips |
-| `./build.sh --all` | Chrome + Firefox zips + Safari Xcode build |
-| `./build.sh --safari` | Safari Xcode build only |
+| `./build.sh --all` | Chrome + Firefox zips + Safari Xcode build (macOS only) |
+| `./build.sh --safari` | Safari Xcode build only (macOS only) |
 
 Output: `build/intention-chrome-v{VERSION}.zip`, `build/intention-firefox-v{VERSION}.zip`, and optionally the Safari `.app`.
+
+Run `npm install` once to get `web-ext` for Firefox linting (`npm run lint:firefox`) — dev tooling only, not part of the shipped extension.
+
+## Version bumps
+
+`scripts/bump-version.sh <version> [build_number]` updates the Chrome manifest, Firefox manifest, and the Safari Xcode project's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in one command. Always use it instead of hand-editing versions — `build.sh` and CI both fail the build if the three drift out of sync.
 
 ## CI/CD
 
 ### CI (`ci.yml`) — runs on push/PR to `main`
 1. Validates JSON manifests with `jq`
-2. Checks JS syntax with `node --check`
-3. Verifies all required files exist in Chrome and Firefox directories
-4. Confirms cross-platform file sync (Chrome ↔ Firefox ↔ Apple)
+2. Verifies Chrome/Firefox/Safari versions are in sync
+3. Checks JS syntax with `node --check`
+4. Verifies all required files exist in Chrome and Firefox directories
+5. Confirms cross-platform file sync (Chrome ↔ Firefox ↔ Apple)
+6. Runs `web-ext lint` against the Firefox extension (AMO validation)
 
 ### Release (`release.yml`) — runs on `v*` tag push
 1. Zips `Intention Chrome/` and `Intention Firefox/` with versioned filenames
 2. Creates a GitHub Release with auto-generated notes and both zips as assets
 
-**To release**: `git tag v2.0.1 && git push origin v2.0.1`
+### Publish (`publish.yml`) — runs on `v*` tag push
+Auto-submits to the Chrome Web Store and Firefox Add-ons (AMO) if the relevant repo secrets are configured; skips gracefully (without failing) otherwise. See `DEPLOYMENT.md` for the secrets needed and first-submission steps for all three stores, including Safari/App Store (which has no CLI-only path).
+
+**To release**: `scripts/bump-version.sh 2.0.1 && git add -A && git commit -m "Bump version to 2.0.1" && git tag v2.0.1 && git push origin v2.0.1`
 
 ## Environment & Secrets
 
