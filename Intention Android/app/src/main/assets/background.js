@@ -159,7 +159,14 @@ async function handleMessage(message, sender) {
   const tabId = sender.tab?.id;
   switch (message.action) {
     case 'checkPageMatch': return checkPageMatch(message.host, tabId);
-    case 'getConfig': return getFullConfig();
+    case 'getConfig': {
+      const config = await getFullConfig();
+      // Only extension pages (options, coaching) may read the API key —
+      // never content scripts, which run inside arbitrary web pages.
+      const fromExtensionPage = !!sender.url && sender.url.startsWith(chrome.runtime.getURL(''));
+      if (!fromExtensionPage) config.apiKey = '';
+      return config;
+    }
     case 'saveSetup': return saveSetup(message.config);
     case 'saveSettings': return saveSettings(message.config);
     case 'getSession': {
