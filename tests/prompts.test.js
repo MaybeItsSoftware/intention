@@ -63,7 +63,7 @@ describe('renderQuestionsBlock', () => {
     });
     expect(out).toContain('Ship the app');
     expect(out).toContain('It scatters me');
-    expect(out).toContain('What other projects');
+    expect(out).toContain('Meaningful goals/activities');
   });
 
   it('falls back to legacy userContext blob', () => {
@@ -96,7 +96,7 @@ describe('buildGateSystemPrompt', () => {
   it('includes injected usage numbers and reasons', () => {
     const out = P.buildGateSystemPrompt(base);
     expect(out).toContain('Grants on twitter.com today: 1 of 3 allowed');
-    expect(out).toContain('12 of 30m daily limit');
+    expect(out).toContain('12 of 30m absolute max');
     expect(out).toContain('Minutes across all blocked sites today: 40');
     expect(out).toContain('Minutes across all blocked sites this week: 200');
     expect(out).toContain('"check DMs"; "reply to a friend"');
@@ -152,7 +152,7 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
     const out = P.buildSettingsGateSystemPrompt({
       ...base, changeType: 'increase_limit', currentValue: 30, newValue: 60
     });
-    expect(out).toContain('RAISE the daily time limit on reddit.com');
+    expect(out).toContain('RAISE the absolute max time limit on reddit.com');
     expect(out).toContain('from 30 minutes/day to 60 minutes/day');
   });
 

@@ -1,22 +1,26 @@
 const PROVIDERS = {
   anthropic: {
     label: 'Anthropic (Claude)',
-    defaultModel: 'claude-sonnet-4-6',
-    modelPlaceholder: 'claude-sonnet-4-6 / claude-opus-4-7 / claude-haiku-4-5'
+    defaultModel: 'claude-sonnet-5',
+    models: ['claude-sonnet-5', 'claude-fable-5', 'claude-opus-4-8', 'claude-haiku-4-5'],
+    modelPlaceholder: 'claude-sonnet-5 / claude-fable-5 / claude-opus-4-8'
   },
   openai: {
     label: 'OpenAI',
     defaultModel: 'gpt-4o',
+    models: ['gpt-4o', 'gpt-4o-mini', 'o1'],
     modelPlaceholder: 'gpt-4o / gpt-4o-mini / o1'
   },
   groq: {
     label: 'Groq',
     defaultModel: 'llama-3.3-70b-versatile',
+    models: ['llama-3.3-70b-versatile'],
     modelPlaceholder: 'llama-3.3-70b-versatile'
   },
   gemini: {
     label: 'Google Gemini',
     defaultModel: 'gemini-2.0-flash',
+    models: ['gemini-2.0-flash', 'gemini-1.5-pro'],
     modelPlaceholder: 'gemini-2.0-flash / gemini-1.5-pro'
   }
 };

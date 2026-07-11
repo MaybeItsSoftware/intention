@@ -58,7 +58,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "fonts/*.woff2"
+        "fonts/*.woff2",
+        "coaching.html"
       ],
       "matches": [
         "<all_urls>"

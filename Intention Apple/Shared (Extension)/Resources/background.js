@@ -401,7 +401,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
       const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
       
       if (grantsLimitReached || minutesLimitReached) {
-        const reasonStr = grantsLimitReached ? "daily grant cap reached" : `daily limit of ${limits.maxMinutes} minutes reached`;
+        const reasonStr = grantsLimitReached ? "daily grant cap reached" : `absolute max of ${limits.maxMinutes} minutes reached`;
         appendedNote = `\n\n_(Intention: ${reasonStr} — no more time can be granted today, but I'm still here to talk.)_`;
         continue;
       }
@@ -415,7 +415,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
       }
       
       if (minutes <= 0) {
-        appendedNote = `\n\n_(Intention: daily limit reached — no more time can be granted today.)_`;
+        appendedNote = `\n\n_(Intention: absolute max reached — no more time can be granted today.)_`;
         continue;
       }
       
@@ -473,7 +473,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
       acceptanceFallback = `Okay — you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
     } else if (settingApproved) {
       if (changeType === 'remove') acceptanceFallback = `Alright, I'm convinced — I've removed ${domain} from your blocklist.`;
-      else if (changeType === 'increase_limit') acceptanceFallback = `Okay, you've made your case — I've raised your daily limit on ${domain}.`;
+      else if (changeType === 'increase_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${domain}.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
