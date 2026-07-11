@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intention Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+
+
+    <main id="setup-view" hidden>
+      <div class="setup-header">
+        <h2>Use the internet with <em>Intention</em></h2>
+        <p class="subtitle">A few quick steps to set up your coach.</p>
+      </div>
+
+      <div class="setup-progress">
+        <div class="setup-progress-track">
+          <div id="setup-progress-fill" class="setup-progress-fill"></div>
+        </div>
+        <span id="setup-progress-label" class="setup-progress-label">Step 1 of 4</span>
+      </div>
+
+      <section class="card setup-step" id="setup-step-1">
+        <h3>Which websites pull you in?</h3>
+        <p class="subtitle">Tap the common ones, or add your own below. Each gets a 10 min/day absolute max you can adjust.</p>
+        <div id="setup-preset-chips" class="preset-chips"></div>
+        <label>Add another website & absolute max</label>
+        <div class="input-group">
+          <input type="text" id="setup-website-input" placeholder="e.g. news.ycombinator.com" style="flex: 2;">
+          <input type="number" id="setup-website-limit" placeholder="min" min="1" value="10" style="width: 80px;">
+          <button id="setup-add-website-btn" class="secondary" type="button">Add</button>
+        </div>
+        <ul id="setup-websites-list"></ul>
+      </section>
+
+      <section class="card setup-step" id="setup-step-2" hidden>
+        <h3>Your coach's context</h3>
+        <label for="setup-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
+        <div class="input-group">
+          <textarea id="setup-projects-input" rows="4" placeholder="e.g. Coding my side project, writing, reading, exercising, or being present with family..."></textarea>
+        </div>
+      </section>
+
+      <section class="card setup-step" id="setup-step-3" hidden>
+        <h3>Your coach's context</h3>
+        <label for="setup-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
+        <div class="input-group">
+          <textarea id="setup-reasons-input" rows="4" placeholder="e.g. They make me feel anxious and scattered, I scroll mindlessly to procrastinate on hard tasks, and I want to reclaim my focus..."></textarea>
+        </div>
+      </section>
+
+      <section class="card setup-step" id="setup-step-4" hidden>
+        <h3>Choose your LLM provider</h3>
+        <p class="subtitle">Intention uses the LLM you choose. You bring your own API key — nothing leaves your machine except calls to that provider.</p>
+        <label for="provider-select">Provider</label>
+        <div class="input-group">
+          <select id="provider-select"></select>
+        </div>
+
+        <label>Model</label>
+        <div id="setup-model-pills" class="model-pills"></div>
+        <div class="input-group" id="setup-custom-model-group" hidden>
+          <input type="text" id="model-input" placeholder="">
+        </div>
+
+        <label for="api-key-input">API key</label>
+        <div class="input-group">
+          <input type="password" id="api-key-input" placeholder="sk-...">
+        </div>
+      </section>
+
+      <div class="setup-nav">
+        <button id="setup-back-btn" class="secondary" type="button">Back</button>
+        <button id="setup-next-btn" class="primary" type="button">Next</button>
+        <button id="setup-save-btn" class="primary" type="button" hidden>Finish Setup & Start</button>
+      </div>
+      <div id="setup-status" class="status"></div>
+    </main>
+
+    <main id="settings-view" hidden>
+      <div class="settings-header">
+        <h1>Intention</h1>
+        <p class="muted">Your coach, your sites, your rules.</p>
+      </div>
+
+      <div class="settings-grid">
+        <div class="settings-column">
+          <section class="card">
+            <h2>Your coach's context</h2>
+            <p class="subtitle">The coach updates this only through conversation with you — so you can't silently rewrite the rules in a weak moment.</p>
+            <blockquote id="context-display"></blockquote>
+            <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
+          </section>
+
+          <section class="card">
+            <h2>Today</h2>
+            <div id="stats-display"></div>
+          </section>
+        </div>
+
+        <div class="settings-column">
+          <section class="card">
+            <h2>Blocked sites</h2>
+            <p class="subtitle">Add domains you want to be mindful about. Tap the common ones, or add your own below.</p>
+            <div id="settings-preset-chips" class="preset-chips"></div>
+            <div class="input-group">
+              <input type="text" id="domain-input" placeholder="e.g. twitter.com" style="flex: 2;">
+              <input type="number" id="domain-limit-input" placeholder="min" min="1" value="10" style="width: 80px;">
+              <button id="add-btn" class="secondary">Add</button>
+            </div>
+            <ul id="domain-list"></ul>
+            <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
+          </section>
+
+          <section class="card">
+            <h2>Provider</h2>
+            <label for="provider-select-2">Provider</label>
+            <div class="input-group">
+              <select id="provider-select-2"></select>
+            </div>
+            <label for="model-input-2">Model</label>
+            <div class="input-group">
+              <input type="text" id="model-input-2">
+            </div>
+            <label for="api-key-input-2">API key</label>
+            <div class="input-group">
+              <input type="password" id="api-key-input-2">
+            </div>
+            <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
+            <div id="provider-status" class="status"></div>
+          </section>
+        </div>
+      </div>
+
+      <details class="card advanced-card">
+        <summary>Coach instructions <span class="muted">(advanced)</span></summary>
+        <div class="advanced-card-body">
+          <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
+          <div class="input-group">
+            <textarea id="coach-instructions-input" rows="8"></textarea>
+          </div>
+          <label for="settings-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
+          <div class="input-group">
+            <textarea id="settings-projects-input" rows="3"></textarea>
+          </div>
+          <label for="settings-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
+          <div class="input-group">
+            <textarea id="settings-reasons-input" rows="3"></textarea>
+          </div>
+          <button id="save-prompt-btn" class="secondary" style="width: 100%;">Save coach instructions</button>
+          <button id="reset-prompt-btn" class="secondary" style="width: 100%; margin-top: 8px;">Reset to default</button>
+          <div id="prompt-status" class="status"></div>
+        </div>
+      </details>
+    </main>
+
+    <div id="coach-modal" hidden>
+      <div class="coach-box">
+        <div class="coach-header">
+          <h2>Talk to your coach</h2>
+          <button id="close-coach-btn" class="secondary">Close</button>
+        </div>
+        <div id="coach-messages"></div>
+        <div class="input-group">
+          <input type="text" id="coach-input" placeholder="Type a message...">
+          <button id="coach-send-btn" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="gate-modal" hidden>
+      <div class="coach-box">
+        <div class="coach-header">
+          <h2 id="gate-title">Convince your coach</h2>
+          <button id="gate-close-btn" class="secondary">Cancel</button>
+        </div>
+        <p class="subtitle" id="gate-subtitle"></p>
+        <div id="gate-messages"></div>
+        <div class="input-group">
+          <input type="text" id="gate-input" placeholder="Make your case...">
+          <button id="gate-send-btn" class="primary">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="providers.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

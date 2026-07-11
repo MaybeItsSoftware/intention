@@ -45,10 +45,9 @@ preflight() {
 
   info "Version: $VERSION"
 
-  # Verify manifest versions match across Chrome/Firefox
-  FIREFOX_VERSION=$(python3 -c "import json; print(json.load(open('$FIREFOX_DIR/manifest.json'))['version'])")
-  [[ "$VERSION" == "$FIREFOX_VERSION" ]] || fail "Version mismatch: Chrome=$VERSION Firefox=$FIREFOX_VERSION (run scripts/bump-version.sh)"
-  ok "Chrome/Firefox versions match ($VERSION)"
+  # Verify version sync across manifests (all generated from shared/manifest.base.json)
+  BASE_VERSION=$(python3 -c "import json; print(json.load(open('shared/manifest.base.json'))['version'])")
+  [[ "$VERSION" == "$BASE_VERSION" ]] || fail "Version mismatch: shared/manifest.base.json=$BASE_VERSION Chrome=$VERSION (run scripts/sync.sh)"
 
   # Verify Safari Xcode project version matches, if present
   APPLE_PBXPROJ="$APPLE_DIR/Intention Safari.xcodeproj/project.pbxproj"
@@ -61,30 +60,12 @@ preflight() {
     ok "Safari Xcode version matches ($VERSION)"
   fi
 
-  # Verify cross-platform sync (shared files must be identical)
-  SHARED_FILES=(
-    content.css content.js options.css options.html options.js
-    coaching.html coaching.js background.js prompts.js providers.js tracking.js
-  )
-
-  SYNC_OK=true
-  for f in "${SHARED_FILES[@]}"; do
-    if ! diff -q "$CHROME_DIR/$f" "$FIREFOX_DIR/$f" > /dev/null 2>&1; then
-      warn "Out of sync (Chrome ↔ Firefox): $f"
-      SYNC_OK=false
-    fi
-    if [[ -d "$APPLE_EXT_DIR" ]] && ! diff -q "$CHROME_DIR/$f" "$APPLE_EXT_DIR/$f" > /dev/null 2>&1; then
-      warn "Out of sync (Chrome ↔ Apple): $f"
-      SYNC_OK=false
-    fi
-  done
-
-  if ! $SYNC_OK; then
-    fail "Shared files are out of sync across platforms. Fix before building."
-  fi
+  # Verify every platform matches shared/ (single source of truth).
+  # On drift: edit shared/, run scripts/sync.sh, never hand-edit platform copies.
+  scripts/sync.sh --check || fail "Platforms out of sync with shared/ — run scripts/sync.sh"
   ok "Cross-platform sync verified"
 
-  # Validate manifests
+  # Validate generated manifests
   python3 -c "import json; json.load(open('$CHROME_DIR/manifest.json'))"  || fail "Invalid Chrome manifest.json"
   python3 -c "import json; json.load(open('$FIREFOX_DIR/manifest.json'))" || fail "Invalid Firefox manifest.json"
   ok "Manifests valid"
@@ -231,24 +212,13 @@ build_ios() {
 }
 
 # ---------------------------------------------------------------------------
-# Sync Android assets
+# Sync Android assets (delegates to the shared/ single source of truth)
 # ---------------------------------------------------------------------------
 
 build_android() {
-  local android_assets_dir="Intention Android/app/src/main/assets"
   if [[ -d "Intention Android" ]]; then
     info "Syncing assets to Intention Android..."
-    mkdir -p "$android_assets_dir"
-    
-    # Copy shared files
-    for f in "${SHARED_FILES[@]}"; do
-      cp "$CHROME_DIR/$f" "$android_assets_dir/"
-    done
-    
-    # Copy fonts
-    mkdir -p "$android_assets_dir/fonts"
-    cp -R "$CHROME_DIR/fonts/" "$android_assets_dir/fonts/"
-    
+    scripts/sync.sh > /dev/null
     ok "Android assets synced complete"
   else
     warn "Android project directory not found, skipping sync"

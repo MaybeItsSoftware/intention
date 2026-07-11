@@ -1,0 +1,12 @@
+{
+  "homepage_url": null,
+  "background": {
+    "scripts": [
+      "providers.js",
+      "prompts.js",
+      "tracking.js",
+      "background.js"
+    ],
+    "persistent": false
+  }
+}

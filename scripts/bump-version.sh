@@ -6,8 +6,8 @@
 #   scripts/bump-version.sh <version> [build_number]
 #
 # Updates:
-#   - Intention Chrome/manifest.json               "version"
-#   - Intention Firefox/manifest.json               "version"
+#   - shared/manifest.base.json                     "version" (single source of truth;
+#                                                    platform manifests regenerated via sync.sh)
 #   - Intention Apple/.../project.pbxproj           MARKETING_VERSION (all build configs)
 #                                                    CURRENT_PROJECT_VERSION (all configs, if build_number given)
 #   - Intention Android/app/build.gradle.kts        versionName (+ versionCode incremented)
@@ -38,18 +38,18 @@ if [[ ! "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
   exit 1
 fi
 
-CHROME_MANIFEST="Intention Chrome/manifest.json"
-FIREFOX_MANIFEST="Intention Firefox/manifest.json"
+BASE_MANIFEST="shared/manifest.base.json"
 PBXPROJ="Intention Apple/Intention Safari.xcodeproj/project.pbxproj"
 ANDROID_GRADLE="Intention Android/app/build.gradle.kts"
 
 echo "Bumping version to $VERSION${BUILD:+ (build $BUILD)}"
 
-sed -i.bak -E "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$CHROME_MANIFEST"
-sed -i.bak -E "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$FIREFOX_MANIFEST"
-rm -f "$CHROME_MANIFEST.bak" "$FIREFOX_MANIFEST.bak"
-echo "  ✓ $CHROME_MANIFEST"
-echo "  ✓ $FIREFOX_MANIFEST"
+sed -i.bak -E "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" "$BASE_MANIFEST"
+rm -f "$BASE_MANIFEST.bak"
+echo "  ✓ $BASE_MANIFEST"
+
+scripts/sync.sh > /dev/null
+echo "  ✓ platform manifests regenerated (scripts/sync.sh)"
 
 sed -i.bak -E "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" package.json
 rm -f package.json.bak

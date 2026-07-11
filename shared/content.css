@@ -1,0 +1,192 @@
+#intention-root {
+  all: initial;
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0f1115;
+  color: #e7e7ea;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
+}
+
+#intention-root * { box-sizing: border-box; }
+
+#intention-root .int-column {
+  max-width: 620px;
+  margin: 0 auto;
+  min-height: 100%;
+  padding: 14vh 24px 40px;
+  display: flex;
+  flex-direction: column;
+}
+
+#intention-root h1 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+#intention-root .int-subtitle {
+  margin: 0 0 30px;
+  font-size: 15px;
+  color: #8b8f99;
+}
+
+#intention-root .int-messages {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  margin-bottom: 26px;
+  overflow-y: auto;
+}
+
+#intention-root .int-messages::-webkit-scrollbar { width: 6px; }
+#intention-root .int-messages::-webkit-scrollbar-track { background: transparent; }
+#intention-root .int-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+#intention-root .int-messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+#intention-root .int-msg {
+  font-size: 19px;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  animation: int-fade-in 0.45s ease-out;
+}
+
+#intention-root .int-msg-assistant {
+  color: #f3f4f6;
+}
+
+#intention-root .int-msg-user {
+  color: #7c818c;
+}
+
+#intention-root .int-msg-user::before {
+  content: "You — ";
+  color: #4b5563;
+}
+
+#intention-root .int-thinking {
+  opacity: 0.5;
+}
+
+#intention-root .int-composer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  padding-bottom: 8px;
+}
+
+#intention-root .int-composer input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: #f3f4f6;
+  font-size: 18px;
+  outline: none;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+#intention-root .int-composer input::placeholder { color: #545863; }
+
+#intention-root .int-composer button {
+  border: none;
+  background: transparent;
+  color: #9aa0ac;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 4px 0;
+}
+
+#intention-root .int-composer button:hover { color: #f3f4f6; }
+
+#intention-root .int-close-row {
+  margin-top: 22px;
+}
+
+/* The setup-needed "Open settings" button reuses plain button styling. */
+#intention-root #int-open-options {
+  align-self: flex-start;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e7e7ea;
+  font-size: 15px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
+
+#intention-root button.int-secondary {
+  border: none;
+  background: transparent;
+  color: #545863;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}
+
+#intention-root button.int-secondary:hover { color: #9aa0ac; text-decoration: underline; }
+
+#intention-root .int-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 30px;
+  font-size: 13px;
+}
+
+#intention-root .int-stat { display: flex; gap: 5px; }
+#intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
+#intention-root .int-stat-label { color: #545863; }
+
+@keyframes int-fade-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+#intention-badge {
+  all: initial;
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 2147483647;
+  background: #11141a;
+  color: #e7e7ea;
+  padding: 7px 13px;
+  border-radius: 8px;
+  font-family: 'Arvo', Georgia, 'Times New Roman', serif;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  pointer-events: auto;
+}
+
+#intention-badge-finish {
+  all: unset;
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #0f1115;
+  background: #e7e7ea;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+#intention-badge-finish:hover { background: #ffffff; }
