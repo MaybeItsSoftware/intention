@@ -1,6 +1,6 @@
 # Deployment Guide
 
-How to ship Intention to the Chrome Web Store, Firefox Add-ons (AMO), and the Apple App Store (Safari, macOS + iOS). For local unpacked/temporary installs, see the [README](README.md#installation) instead — this doc is about store submission.
+How to ship Intention to the Chrome Web Store, Firefox Add-ons (AMO), the Apple App Store (Safari, macOS + iOS), and Google Play (Android). For local unpacked/temporary installs, see the [README](README.md#installation) instead — this doc is about store submission.
 
 ## One-time setup per store
 
@@ -9,6 +9,7 @@ How to ship Intention to the Chrome Web Store, Firefox Add-ons (AMO), and the Ap
 | Chrome Web Store | Google account | $5 one-time | [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole) |
 | Firefox Add-ons (AMO) | Firefox account | Free | [addons.mozilla.org/developers](https://addons.mozilla.org/developers/) |
 | Apple App Store | Apple Developer Program | $99/year | [developer.apple.com](https://developer.apple.com/programs/) |
+| Google Play | Google Play Console account | $25 one-time | [play.google.com/console](https://play.google.com/console) |
 
 Do these once, before the first submission of each platform.
 
@@ -26,7 +27,7 @@ Do these once, before the first submission of each platform.
    ```
 4. Pushing the tag triggers two workflows automatically:
    - **`release.yml`** — zips Chrome + Firefox and creates a GitHub Release with both as assets. Always runs, no setup required.
-   - **`publish.yml`** — uploads to the Chrome Web Store and submits to AMO, *if* the secrets below are configured. If not configured, it logs a warning and skips without failing — tagging always works.
+   - **`publish.yml`** — uploads to the Chrome Web Store, submits to AMO, and publishes a Google Play internal release, *if* the secrets below are configured for each. If not configured, each job logs a warning and skips without failing — tagging always works.
 5. Safari/App Store has no CLI-only path (Apple requires Xcode/Transporter for the first submission of a build). See [Safari / App Store](#safari--app-store-macos--ios) below.
 
 ## Chrome Web Store: automated publishing
@@ -57,11 +58,27 @@ Unlike Chrome, `web-ext sign --channel=listed` can handle the *first* submission
 No public API for first-time app submission — this stays manual, on a Mac with Xcode:
 
 1. Open `Intention Apple/Intention Safari.xcodeproj` in Xcode.
-2. Set your own Team under **Signing & Capabilities** for all four targets (App + Extension, macOS + iOS), and change `PRODUCT_BUNDLE_IDENTIFIER` from the placeholder `com.yourCompany.Intention-Safari...` to your own reverse-DNS identifier (Xcode → target → General → Bundle Identifier). `scripts/bump-version.sh` keeps `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in sync for you on every release; it does not touch bundle identifiers or signing.
+2. Set your own Team under **Signing & Capabilities** for all four targets (App + Extension, macOS + iOS). The bundle identifiers are already set to `uk.co.maybeitssoftware.intention...` (Xcode → target → General → Bundle Identifier) — change them if you're forking under a different identifier. `scripts/bump-version.sh` keeps `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in sync for you on every release; it does not touch bundle identifiers or signing.
 3. `Product → Archive` for the macOS scheme and the iOS scheme (or `./build.sh --safari` for the macOS build only — Xcode CLI tools required, macOS only).
 4. Use the Xcode Organizer (or Transporter) to upload each archive to App Store Connect.
 5. In [App Store Connect](https://appstoreconnect.apple.com), fill in the listing (see below) and submit for review.
 6. To regenerate the wrapper from the latest Chrome sources after a big change: `xcrun safari-web-extension-converter "./Intention Chrome" --project-location . --app-name "Intention Safari"`, then re-apply your Team/bundle ID settings.
+
+## Google Play: automated publishing
+
+`publish.yml`'s `android` job builds a signed `.aab` in CI and pushes it to the **internal** track (change the `track:` input in the workflow to `alpha`, `beta`, or `production` once you're past internal testing). It needs these repo secrets:
+
+| Secret | How to get it |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -i "Intention Android/keystore/upload-keystore.jks" \| pbcopy` — base64-encode your upload keystore. Never commit the raw `.jks` (already gitignored). |
+| `ANDROID_KEYSTORE_PASSWORD` | The store password from your local `keystore.properties`. |
+| `ANDROID_KEY_ALIAS` | The key alias from `keystore.properties` (`intention-upload`). |
+| `ANDROID_KEY_PASSWORD` | The key password from `keystore.properties`. |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Create a service account in [Google Cloud Console](https://console.cloud.google.com/iam-admin/serviceaccounts) for the same project linked to your Play Console, grant it access under **Play Console → Users and permissions** with "Release to production, exclude devices, and use Play App Signing" permission, then paste the full JSON key as the secret value. |
+
+The very first release to Google Play must be created manually (upload the `.aab` from `./gradlew bundleRelease`'s output, fill in the store listing, complete the content rating and data safety forms, submit for review) — Play Console requires the app to exist and pass initial review before the API can push subsequent builds. After that, `publish.yml` handles every later version.
+
+To build the signed bundle locally without CI: `cd "Intention Android" && ./gradlew bundleRelease` — output lands at `app/build/outputs/bundle/release/app-release.aab`, signed via the local `keystore.properties`.
 
 ## Store listing checklist (first submission, all stores)
 
@@ -86,4 +103,4 @@ No public API for first-time app submission — this stays manual, on a Mac with
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
 | `release.yml` | `v*` tag push | Zips Chrome + Firefox, creates a GitHub Release |
-| `publish.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store + AMO, if secrets are configured; skips gracefully otherwise |
+| `publish.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store + AMO + Google Play, if secrets are configured; skips gracefully otherwise |

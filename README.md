@@ -2,6 +2,12 @@
 
 **Intention** is a browser extension that puts an AI coach between you and the sites that pull you away from what you actually want to do. Instead of a hard block or a weak timer, every visit is a short conversation: why are you here, is there something you're avoiding, what would actually serve you right now? You bring your own LLM API key. Nothing leaves your machine except calls to that provider.
 
+## Get Intention
+
+* **Firefox**: [Download on the Firefox Add-on Store](https://addons.mozilla.org/en-US/firefox/addon/intentionai/)
+
+*(Chrome, Safari, and Android versions are currently built/run from source—see details below.)*
+
 ## How it works
 
 1. You add sites to a blocklist (e.g. `instagram.com`, `twitter.com`).
@@ -40,6 +46,10 @@ The `Intention Apple` folder contains a pre-generated Xcode project that wraps t
 > ```
 
 ### Firefox (Desktop + Android)
+
+You can install the official extension directly from the [Firefox Add-on Store](https://addons.mozilla.org/en-US/firefox/addon/intentionai/).
+
+For development or manual installation:
 
 **Desktop Firefox** (unsigned, temporary — for testing):
 1. Go to `about:debugging#/runtime/this-firefox`.

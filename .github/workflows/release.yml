@@ -63,5 +63,5 @@ jobs:
       #   with:
       #     api-key: ${{ secrets.AMO_JWT_ISSUER }}
       #     api-secret: ${{ secrets.AMO_JWT_SECRET }}
-      #     guid: 'intention@maybeitsadam'
+      #     guid: 'intention@maybeitssoftware.co.uk'
       #     xpi-path: build/intention-firefox-v${{ steps.version.outputs.VERSION }}.zip
