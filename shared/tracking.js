@@ -39,6 +39,7 @@ function setStorage(obj) {
 const CONFIG_KEYS = [
   'provider', 'apiKey', 'model', 'userContext', 'contextProjects',
   'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits',
+  'blockedApps', 'appLimits', 'appLabels',
   'setupComplete'
 ];
 const NATIVE_APP_ID = 'com.intention.app'; // ignored by Safari (single native host per app)

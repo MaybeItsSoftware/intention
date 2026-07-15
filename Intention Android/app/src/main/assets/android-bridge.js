@@ -62,4 +62,16 @@
       }
     }
   };
+
+  // App-blocking helpers, only available on Android. Shared JS feature-detects
+  // window.intentionApps to show the Apps UI and launch apps after a grant.
+  window.intentionApps = {
+    getInstalledApps: function(callback) {
+      const cbId = window.AndroidCallbacks.register(callback);
+      AndroidInterface.getInstalledApps(cbId);
+    },
+    launchApp: function(packageName) {
+      AndroidInterface.launchApp(packageName);
+    }
+  };
 })();

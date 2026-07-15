@@ -47,4 +47,23 @@
       lastError: null
     }
   };
+
+  // Native Screen Time app blocking (FamilyControls). The selection itself is
+  // opaque and stays native; the web layer only sees counts and status.
+  function screenTimeCall(action, extra, callback) {
+    const cbId = window.IntentionCallbacks.register(callback);
+    window.webkit.messageHandlers.intentionNative.postMessage(Object.assign({
+      type: 'screenTime',
+      action: action,
+      callbackId: cbId
+    }, extra || {}));
+  }
+
+  window.intentionScreenTime = {
+    status: function(callback) { screenTimeCall('status', null, callback); },
+    authorize: function(callback) { screenTimeCall('authorize', null, callback); },
+    pickApps: function(callback) { screenTimeCall('pickApps', null, callback); },
+    grantPass: function(minutes, callback) { screenTimeCall('grantPass', { minutes: minutes }, callback); },
+    clear: function(callback) { screenTimeCall('clear', null, callback); }
+  };
 })();

@@ -1,7 +1,7 @@
 {
   "browser_specific_settings": {
     "gecko": {
-      "id": "intention@maybeitsadam",
+      "id": "intention@maybeitssoftware.co.uk",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["browsingActivity", "personalCommunications"]

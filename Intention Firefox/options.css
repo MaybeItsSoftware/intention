@@ -116,6 +116,11 @@ input:focus, select:focus, textarea:focus {
 
 .input-group > button { flex-shrink: 0; }
 
+.input-group .input-domain { flex: 2; }
+
+/* Higher specificity than the global input[type="number"]{width:100%} rule */
+input[type="number"].input-minutes { width: 80px; }
+
 button {
   padding: 10px 16px;
   border-radius: 10px;
@@ -141,13 +146,17 @@ button.secondary:hover, button.delete-btn:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
-ul#domain-list, ul#setup-websites-list {
+ul#domain-list, ul#setup-websites-list,
+ul#app-list, ul#setup-apps-list,
+ul#app-search-results, ul#setup-app-results {
   list-style: none;
   padding: 0;
   margin: 10px 0 0;
 }
 
-ul#domain-list li, ul#setup-websites-list li {
+ul#domain-list li, ul#setup-websites-list li,
+ul#app-list li, ul#setup-apps-list li,
+ul#app-search-results li, ul#setup-app-results li {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -159,9 +168,18 @@ ul#domain-list li, ul#setup-websites-list li {
   font-size: 14px;
 }
 
-ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn {
+ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
+ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
   padding: 4px 10px;
   font-size: 12px;
+}
+
+.app-pkg {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 blockquote {
@@ -585,3 +603,66 @@ input[type="number"].inline-limit-input:focus {
   outline: none;
 }
 
+
+/* Compact layout for phones (Android/iOS WebView and narrow windows) */
+@media (max-width: 600px) {
+  .container {
+    padding: 16px 16px 32px;
+  }
+
+  .setup-header { margin-bottom: 10px; }
+
+  .setup-header h2 {
+    font-size: 19px;
+    margin-bottom: 4px;
+  }
+
+  .setup-header .subtitle {
+    font-size: 13px;
+    margin-bottom: 0;
+  }
+
+  .setup-progress {
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .setup-progress-label { font-size: 12px; }
+
+  .card {
+    padding: 16px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+  }
+
+  .setup-step h3 { font-size: 16px; }
+
+  .card .subtitle {
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+
+  .chip, .pill { padding: 6px 12px; }
+
+  .input-group { flex-wrap: wrap; }
+  .input-group .input-domain { flex: 1 1 100%; }
+  .input-group input[type="number"].input-minutes { flex: 1; }
+
+  .setup-nav {
+    position: sticky;
+    bottom: 0;
+    margin: 0 -16px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .setup-nav button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .settings-header h1 { font-size: 22px; }
+}

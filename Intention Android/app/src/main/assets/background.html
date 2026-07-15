@@ -40,7 +40,7 @@
           onInstalled: {
             addListener: function(listener) {
               // Trigger it immediately so rules are initialized
-              setTimeout(listener, 0);
+              setTimeout(function() { listener({ reason: 'install' }); }, 0);
             }
           },
           getURL: function(path) {

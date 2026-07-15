@@ -1,9 +1,16 @@
 const INT_LOG = '[Intention]';
 console.log(INT_LOG, 'coaching.js loaded');
 
-// Parse domain from query parameter
+// Parse domain from query parameter. On Android, the coaching overlay is also
+// used for blocked apps: `domain` carries the package name, app=1 marks it,
+// and `label` carries the human-readable app name.
 const urlParams = new URLSearchParams(window.location.search);
 const domain = urlParams.get('domain') || window.location.hostname;
+const isApp = urlParams.get('app') === '1';
+const appLabel = urlParams.get('label') || '';
+// On iOS the coach grants a pass across all shielded apps (the Screen Time
+// selection is opaque), so there is no per-app label — use a generic name.
+const displayName = isApp ? (appLabel || 'a blocked app') : domain;
 
 // Check for duplicate coaching tab for same domain
 chrome.runtime.sendMessage({ action: 'checkDuplicateCoaching', domain }, (resp) => {
@@ -13,7 +20,7 @@ chrome.runtime.sendMessage({ action: 'checkDuplicateCoaching', domain }, (resp) 
   }
 });
 
-document.getElementById('int-subtitle').textContent = `${domain} — let's check in before you go through`;
+document.getElementById('int-subtitle').textContent = `${displayName} — let's check in before you go through`;
 
 const messagesEl = document.getElementById('int-messages');
 const inputEl = document.getElementById('int-input');
@@ -21,7 +28,7 @@ const sendBtn = document.getElementById('int-send');
 const closeBtn = document.getElementById('int-close');
 
 // Show initial coaching prompt
-const seed = `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`;
+const seed = `Hey. I see you've opened ${displayName}. What's going on — what are you hoping to get out of it?`;
 addMessage(messagesEl, 'assistant', seed);
 
 // Fetch stats and render stats row
@@ -74,6 +81,8 @@ async function send() {
     action: 'chat',
     mode: 'gate',
     domain,
+    isApp,
+    appLabel: isApp ? appLabel : undefined,
     userMessage: text
   }, (resp) => {
     if (!resp) {
@@ -92,9 +101,19 @@ async function send() {
     typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
       sending = false;
       if (resp.grantedSession) {
-        // Redirect back to the target website once session is granted
         setTimeout(() => {
-          window.location.href = `https://${domain}`;
+          if (isApp && window.intentionApps) {
+            // Android: launch the granted app; the native bridge closes this overlay.
+            window.intentionApps.launchApp(domain);
+          } else if (isApp && window.intentionScreenTime) {
+            // iOS: lift the Screen Time shields for the granted window.
+            window.intentionScreenTime.grantPass(resp.grantedSession.intervalMinutes, () => {
+              window.location.href = 'options.html';
+            });
+          } else {
+            // Redirect back to the target website once session is granted
+            window.location.href = `https://${domain}`;
+          }
         }, 2200);
       }
     });
@@ -107,6 +126,11 @@ closeBtn.addEventListener('click', () => {
   // End session and close the current tab
   chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
   chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
+  if (isApp && !window.intentionApps) {
+    // iOS app WebView: window.close() is a no-op — go back to settings.
+    window.location.href = 'options.html';
+    return;
+  }
   window.close();
 });
 inputEl.focus();

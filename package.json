@@ -1,6 +1,6 @@
 {
   "name": "intention-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
   "type": "module",
@@ -14,13 +14,13 @@
     "dev:chrome:manual": "node -e \"console.log('\\nLoad the Chrome extension unpacked:\\n  1. Open chrome://extensions\\n  2. Enable Developer mode (top-right)\\n  3. Click \\\"Load unpacked\\\"\\n  4. Select the \\\"Intention Chrome\\\" folder in this repo\\n  5. Reload it from chrome://extensions after any source change\\n')\"",
     "dev:safari": "./build.sh --safari && open \"build/Intention Safari.app\"",
     "dev:ios": "./build.sh --ios",
-    "dev:android": "./build.sh --android && cd \"Intention Android\" && ./gradlew installDebug && adb shell am start -n com.maybeitsadam.intention/.MainActivity",
+    "dev:android": "scripts/dev-android.sh",
     "harness": "npx http-server tests/harness -p 8080 -c-1",
     "bump-version": "scripts/bump-version.sh",
-    "lint:firefox": "web-ext lint --source-dir=\"Intention Firefox\"",
+    "lint:firefox": "web-ext lint --source-dir=\"Intention Firefox\" --ignore-files env.txt",
     "build": "./build.sh",
-    "build:firefox": "web-ext build --source-dir=\"Intention Firefox\" --artifacts-dir=build --overwrite-dest",
-    "sign:firefox": "web-ext sign --source-dir=\"Intention Firefox\" --artifacts-dir=build --channel=unlisted"
+    "build:firefox": "web-ext build --source-dir=\"Intention Firefox\" --artifacts-dir=build --overwrite-dest --ignore-files env.txt",
+    "sign:firefox": "web-ext sign --source-dir=\"Intention Firefox\" --artifacts-dir=build --channel=unlisted --ignore-files env.txt"
   },
   "devDependencies": {
     "http-server": "^14.1.1",

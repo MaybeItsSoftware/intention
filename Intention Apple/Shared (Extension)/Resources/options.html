@@ -29,11 +29,23 @@
         <div id="setup-preset-chips" class="preset-chips"></div>
         <label>Add another website & absolute max</label>
         <div class="input-group">
-          <input type="text" id="setup-website-input" placeholder="e.g. news.ycombinator.com" style="flex: 2;">
-          <input type="number" id="setup-website-limit" placeholder="min" min="1" value="10" style="width: 80px;">
+          <input type="text" id="setup-website-input" class="input-domain" placeholder="e.g. news.ycombinator.com">
+          <input type="number" id="setup-website-limit" class="input-minutes" placeholder="min" min="1" value="10">
           <button id="setup-add-website-btn" class="secondary" type="button">Add</button>
         </div>
         <ul id="setup-websites-list"></ul>
+
+        <div id="setup-apps-section" hidden>
+          <h3>Which apps pull you in?</h3>
+          <p class="subtitle">Tap the common ones, or search your installed apps. Same 10 min/day absolute max.</p>
+          <div id="setup-app-chips" class="preset-chips"></div>
+          <label>Search installed apps</label>
+          <div class="input-group">
+            <input type="text" id="setup-app-search" placeholder="e.g. Instagram">
+          </div>
+          <ul id="setup-app-results" class="app-results" hidden></ul>
+          <ul id="setup-apps-list"></ul>
+        </div>
       </section>
 
       <section class="card setup-step" id="setup-step-2" hidden>
@@ -54,7 +66,7 @@
 
       <section class="card setup-step" id="setup-step-4" hidden>
         <h3>Choose your LLM provider</h3>
-        <p class="subtitle">Intention uses the LLM you choose. You bring your own API key — nothing leaves your machine except calls to that provider.</p>
+        <p class="subtitle">Intention uses the LLM you choose. You bring your own API key. Nothing leaves your machine except calls to that provider.</p>
         <label for="provider-select">Provider</label>
         <div class="input-group">
           <select id="provider-select"></select>
@@ -90,7 +102,7 @@
         <div class="settings-column">
           <section class="card">
             <h2>Your coach's context</h2>
-            <p class="subtitle">The coach updates this only through conversation with you — so you can't silently rewrite the rules in a weak moment.</p>
+            <p class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
             <blockquote id="context-display"></blockquote>
             <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
           </section>
@@ -107,12 +119,29 @@
             <p class="subtitle">Add domains you want to be mindful about. Tap the common ones, or add your own below.</p>
             <div id="settings-preset-chips" class="preset-chips"></div>
             <div class="input-group">
-              <input type="text" id="domain-input" placeholder="e.g. twitter.com" style="flex: 2;">
-              <input type="number" id="domain-limit-input" placeholder="min" min="1" value="10" style="width: 80px;">
+              <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
+              <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10">
               <button id="add-btn" class="secondary">Add</button>
             </div>
             <ul id="domain-list"></ul>
             <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
+          </section>
+
+          <section class="card" id="apps-card" hidden>
+            <h2>Blocked apps</h2>
+            <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device. Tap the common ones, or search your installed apps.</p>
+            <div id="settings-app-chips" class="preset-chips"></div>
+            <div class="input-group" id="app-search-group">
+              <input type="text" id="app-search-input" placeholder="Search installed apps">
+            </div>
+            <ul id="app-search-results" class="app-results" hidden></ul>
+            <ul id="app-list"></ul>
+            <div id="ios-apps-controls" hidden>
+              <p class="subtitle" id="ios-apps-status"></p>
+              <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
+              <button id="ios-pick-apps-btn" class="secondary" style="width: 100%;" hidden>Choose apps to block</button>
+              <button id="ios-request-time-btn" class="secondary" style="width: 100%; margin-top: 8px;" hidden>Ask your coach for time on a blocked app</button>
+            </div>
           </section>
 
           <section class="card">

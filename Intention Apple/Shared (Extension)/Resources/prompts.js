@@ -236,12 +236,15 @@ function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newVa
   let changeDesc;
   if (changeType === 'remove') {
     changeDesc = `REMOVE ${domain} from their blocklist entirely — meaning this site would no longer be blocked at all.`;
-  } else if (changeType === 'increase_limit') {
+  } else if (changeType === 'remove_app') {
+    changeDesc = `REMOVE ${domain} from their blocklist entirely — meaning this app would no longer be blocked at all.`;
+  } else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') {
     const fromStr = (currentValue && Number(currentValue) > 0) ? `${currentValue} minutes/day` : 'unlimited';
     const toStr = (newValue && Number(newValue) > 0) ? `${newValue} minutes/day` : 'unlimited (no limit)';
-    changeDesc = `RAISE the absolute max time limit on ${domain} from ${fromStr} to ${toStr} — giving themselves more time on a site they chose to limit.`;
+    const kind = changeType === 'increase_app_limit' ? 'an app' : 'a site';
+    changeDesc = `RAISE the absolute max time limit on ${domain} from ${fromStr} to ${toStr} — giving themselves more time on ${kind} they chose to limit.`;
   } else if (changeType === 'disable_all') {
-    changeDesc = `DISABLE all blocking — clearing their entire blocklist so NONE of their chosen sites are blocked anymore.`;
+    changeDesc = `DISABLE all blocking — clearing their entire blocklist so NONE of their chosen sites or apps are blocked anymore.`;
   } else {
     changeDesc = `loosen their blocking settings on ${domain}.`;
   }

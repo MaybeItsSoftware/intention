@@ -179,6 +179,8 @@ async function handleMessage(message, sender) {
         tabId,
         mode: message.mode,
         domain: message.domain,
+        isApp: message.isApp,
+        appLabel: message.appLabel,
         userMessage: message.userMessage,
         changeType: message.changeType,
         currentValue: message.currentValue,
@@ -243,10 +245,13 @@ async function checkPageMatch(host, tabId) {
 }
 
 async function getLimitsForDomain(domain) {
-  const { domainLimits = {} } = await getStorage(['domainLimits']);
+  // Apps and sites can't collide: appLimits is keyed by Android package name,
+  // domainLimits by hostname, so a single lookup across both is safe.
+  const { domainLimits = {}, appLimits = {} } = await getStorage(['domainLimits', 'appLimits']);
   const defaults = { maxGrants: 3, maxMinutes: -1 };
-  if (domain && domainLimits[domain]) {
-    const limits = domainLimits[domain];
+  const entry = domain ? (domainLimits[domain] || appLimits[domain]) : null;
+  if (entry) {
+    const limits = entry;
     const maxGrants = Number(limits.maxGrants);
     const maxMinutes = Number(limits.maxMinutes);
     return {
@@ -258,7 +263,7 @@ async function getLimitsForDomain(domain) {
 }
 
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'setupComplete'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete'];
   const stored = await getStorage(keys);
   return {
     setupComplete: !!stored.setupComplete,
@@ -272,11 +277,14 @@ async function getFullConfig() {
     defaultCoachInstructions: DEFAULT_COACH_INSTRUCTIONS,
     blockedDomains: stored.blockedDomains || [],
     domainLimits: stored.domainLimits || {},
+    blockedApps: stored.blockedApps || [],
+    appLimits: stored.appLimits || {},
+    appLabels: stored.appLabels || {},
     providers: PROVIDERS
   };
 }
 
-async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits }) {
+async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels }) {
   await setStorage({
     provider,
     apiKey,
@@ -286,6 +294,9 @@ async function saveSetup({ provider, apiKey, model, userContext, contextProjects
     contextReasons: contextReasons || '',
     blockedDomains: blockedDomains || [],
     domainLimits: domainLimits || {},
+    blockedApps: blockedApps || [],
+    appLimits: appLimits || {},
+    appLabels: appLabels || {},
     setupComplete: true
   });
   await syncBlockingRules();
@@ -300,9 +311,19 @@ async function saveSettings(partial) {
   return { ok: true };
 }
 
-async function handleChat({ tabId, mode, domain, userMessage, changeType, currentValue, newValue }) {
+async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue }) {
   const { provider, apiKey, model, userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
   if (!provider || !apiKey) return { error: 'No API key configured. Open settings to finish setup.' };
+
+  // For apps, `domain` is the storage/stats key (an Android package name, or
+  // the pseudo-target "apps" for the iOS Screen Time pass); prompts get a
+  // human-readable display name instead.
+  let displayName = domain;
+  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit') {
+    const { appLabels = {} } = await getStorage(['appLabels']);
+    const label = appLabel || appLabels[domain];
+    displayName = label ? `the ${label} app` : 'a blocked app';
+  }
 
   let historyKey;
   if (mode === 'context' || mode === 'setup') historyKey = mode;
@@ -319,7 +340,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
     const stats = await getStatsForDomain(domain);
     const limits = await getLimitsForDomain(domain);
     systemPrompt = buildGateSystemPrompt({
-      domain,
+      domain: displayName,
       userContext,
       contextProjects,
       contextReasons,
@@ -339,7 +360,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
     const stats = await getStatsForDomain(domain);
     const limits = await getLimitsForDomain(domain);
     systemPrompt = buildCheckinSystemPrompt({
-      domain,
+      domain: displayName,
       userContext,
       contextProjects,
       contextReasons,
@@ -356,7 +377,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
   } else if (mode === 'settings_gate') {
     const stats = await getStatsForDomain(domain);
     systemPrompt = buildSettingsGateSystemPrompt({
-      domain,
+      domain: displayName,
       changeType,
       currentValue,
       newValue,
@@ -432,7 +453,9 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
       activeSessions[tabId] = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
       await setStorage({ activeSessions });
       chrome.alarms.create(`checkin-${tabId}`, { delayInMinutes: minutes });
-      await registerSessionRule(tabId, domain, minutes);
+      // Apps have no network rules to allow — the Android accessibility
+      // service reads activeSessions directly to let the app through.
+      if (!isApp) await registerSessionRule(tabId, domain, minutes);
       grantedSession = activeSessions[tabId];
     } else if (tc.name === 'update_context' && mode === 'context') {
       const newContext = String(tc.input.new_context || '').slice(0, 5000).trim();
@@ -479,8 +502,8 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
       const r = grantedSession.reason ? ` for "${grantedSession.reason}"` : '';
       acceptanceFallback = `Okay — you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
     } else if (settingApproved) {
-      if (changeType === 'remove') acceptanceFallback = `Alright, I'm convinced — I've removed ${domain} from your blocklist.`;
-      else if (changeType === 'increase_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${domain}.`;
+      if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced — I've removed ${displayName} from your blocklist.`;
+      else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${displayName}.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
@@ -496,7 +519,7 @@ async function handleChat({ tabId, mode, domain, userMessage, changeType, curren
 // Perform the actual loosening mutation once the coach approves it, then
 // persist and re-sync the blocking rules. Returns the resulting state.
 async function applySettingChange({ domain, changeType, newValue }) {
-  const { blockedDomains = [], domainLimits = {} } = await getStorage(['blockedDomains', 'domainLimits']);
+  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {} } = await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels']);
 
   if (changeType === 'remove') {
     const domains = blockedDomains.filter(x => x !== domain);
@@ -518,10 +541,29 @@ async function applySettingChange({ domain, changeType, newValue }) {
     return { changeType, domain, domainLimits: limits, maxMinutes: limits[domain].maxMinutes };
   }
 
+  if (changeType === 'remove_app') {
+    const apps = blockedApps.filter(x => x !== domain);
+    const limits = { ...appLimits };
+    const labels = { ...appLabels };
+    delete limits[domain];
+    delete labels[domain];
+    await setStorage({ blockedApps: apps, appLimits: limits, appLabels: labels });
+    return { changeType, domain, blockedApps: apps, appLimits: limits };
+  }
+
+  if (changeType === 'increase_app_limit') {
+    const limits = { ...appLimits };
+    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
+    const parsed = Number(newValue);
+    limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
+    await setStorage({ appLimits: limits });
+    return { changeType, domain, appLimits: limits, maxMinutes: limits[domain].maxMinutes };
+  }
+
   if (changeType === 'disable_all') {
-    await setStorage({ blockedDomains: [] });
+    await setStorage({ blockedDomains: [], blockedApps: [], appLimits: {}, appLabels: {} });
     await syncBlockingRules();
-    return { changeType, blockedDomains: [] };
+    return { changeType, blockedDomains: [], blockedApps: [] };
   }
 
   return null;
