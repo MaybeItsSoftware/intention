@@ -1,25 +1,52 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
-    namespace = "com.maybeitsadam.intention"
-    compileSdk = 34
+    namespace = "uk.co.maybeitssoftware.intention"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.maybeitsadam.intention"
+        applicationId = "uk.co.maybeitssoftware.intention"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 3
-        versionName = "0.1.0"
+        targetSdk = 35
+        versionCode = 10
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            } else {
+                // CI path: decode ANDROID_KEYSTORE_BASE64 to a file and point ANDROID_KEYSTORE_PATH at it.
+                System.getenv("ANDROID_KEYSTORE_PATH")?.let { storeFile = file(it) }
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

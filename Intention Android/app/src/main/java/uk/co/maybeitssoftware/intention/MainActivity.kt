@@ -1,4 +1,4 @@
-package com.maybeitsadam.intention
+package uk.co.maybeitssoftware.intention
 
 import android.content.Context
 import android.content.Intent
@@ -6,12 +6,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
-import android.util.Log
 import android.view.View
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -19,12 +15,11 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var accessibilityAlert: View
-    private lateinit var enableServiceBtn: Button
+    private lateinit var accessibilityGate: View
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // Dynamic layouts are cleaner for extension wrappers
         val rootLayout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
@@ -35,32 +30,36 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.parseColor("#0f1115"))
         }
 
-        // Accessibility service warning bar
-        accessibilityAlert = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
+        // Full-screen gate shown until the accessibility service is enabled.
+        // The rest of the app (webview) is not reachable until this passes.
+        accessibilityGate = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(24, 24, 24, 24)
-            }
-            setBackgroundColor(android.graphics.Color.parseColor("#1f242e"))
-            setPadding(32, 32, 32, 32)
+                0,
+                1.0f
+            )
+            setPadding(64, 64, 64, 64)
             visibility = View.GONE
         }
 
-        val alertText = TextView(this).apply {
-            text = "Intention needs Accessibility permission to coach you on opening distracting apps."
+        val alertTitle = TextView(this).apply {
+            text = "Accessibility permission required"
             setTextColor(android.graphics.Color.parseColor("#e7e7ea"))
-            layoutParams = android.widget.LinearLayout.LayoutParams(
-                0,
-                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                1.0f
-            )
+            textSize = 20f
+            gravity = android.view.Gravity.CENTER
         }
 
-        enableServiceBtn = Button(this).apply {
-            text = "Enable"
+        val alertText = TextView(this).apply {
+            text = "Intention needs Accessibility permission to coach you when you open distracting apps. Enable it to continue."
+            setTextColor(android.graphics.Color.parseColor("#9a9aa5"))
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 24, 0, 48)
+        }
+
+        val enableServiceBtn = Button(this).apply {
+            text = "Open Accessibility Settings"
             setBackgroundColor(android.graphics.Color.parseColor("#e7e7ea"))
             setTextColor(android.graphics.Color.parseColor("#0f1115"))
             setOnClickListener {
@@ -69,10 +68,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        (accessibilityAlert as android.widget.LinearLayout).addView(alertText)
-        (accessibilityAlert as android.widget.LinearLayout).addView(enableServiceBtn)
+        (accessibilityGate as android.widget.LinearLayout).addView(alertTitle)
+        (accessibilityGate as android.widget.LinearLayout).addView(alertText)
+        (accessibilityGate as android.widget.LinearLayout).addView(enableServiceBtn)
 
-        // Options WebView
+        // Options WebView — the rest of the app, hidden until accessibility is enabled
         webView = WebView(this).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
@@ -82,33 +82,10 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
-            webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(
-                    view: WebView?,
-                    request: WebResourceRequest?
-                ): WebResourceResponse? {
-                    val url = request?.url?.toString() ?: return null
-                    if (url.startsWith("file:///android_asset/") && url.endsWith(".html")) {
-                        try {
-                            val assetPath = url.substring("file:///android_asset/".length).split("?")[0]
-                            val inputStream = view?.context?.assets?.open(assetPath) ?: return null
-                            val html = inputStream.bufferedReader().use { it.readText() }
-                            val modifiedHtml = html.replace("<head>", "<head><script src=\"android-bridge.js\"></script>")
-                            return WebResourceResponse(
-                                "text/html",
-                                "UTF-8",
-                                modifiedHtml.byteInputStream()
-                            )
-                        } catch (e: Exception) {
-                            Log.e("MainActivity", "Error intercepting request", e)
-                        }
-                    }
-                    return null
-                }
-            }
+            visibility = View.GONE
         }
 
-        rootLayout.addView(accessibilityAlert)
+        rootLayout.addView(accessibilityGate)
         rootLayout.addView(webView)
         setContentView(rootLayout)
 
@@ -120,16 +97,26 @@ class MainActivity : AppCompatActivity() {
             finish()
         }, "AndroidInterface")
 
-        // Load options
-        webView.loadUrl("file:///android_asset/options.html")
+        // Load options, with the native bridge script injected into <head>
+        val html = assets.open("options.html").bufferedReader().use { it.readText() }
+        val modifiedHtml = html.replace("<head>", "<head><script src=\"android-bridge.js\"></script>")
+        webView.loadDataWithBaseURL(
+            "file:///android_asset/",
+            modifiedHtml,
+            "text/html",
+            "UTF-8",
+            null
+        )
     }
 
     override fun onResume() {
         super.onResume()
         if (!isAccessibilityServiceEnabled()) {
-            accessibilityAlert.visibility = View.VISIBLE
+            accessibilityGate.visibility = View.VISIBLE
+            webView.visibility = View.GONE
         } else {
-            accessibilityAlert.visibility = View.GONE
+            accessibilityGate.visibility = View.GONE
+            webView.visibility = View.VISIBLE
         }
     }
 

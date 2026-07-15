@@ -1,4 +1,4 @@
-package com.maybeitsadam.intention
+package uk.co.maybeitssoftware.intention
 
 import android.content.Context
 import android.os.Handler
@@ -12,7 +12,9 @@ import org.json.JSONObject
 object BackgroundJsHelper {
     private const val TAG = "BackgroundJsHelper"
     private var webView: WebView? = null
+    private var isReady = false
     private val pendingCallbacks = mutableMapOf<String, (String?) -> Unit>()
+    private val pendingMessages = mutableListOf<() -> Unit>()
 
     fun init(context: Context) {
         if (webView != null) return
@@ -59,6 +61,13 @@ object BackgroundJsHelper {
             wv.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     Log.d(TAG, "Background scripts loaded in WebView")
+                    isReady = true
+                    val queued = synchronized(pendingMessages) {
+                        val copy = pendingMessages.toList()
+                        pendingMessages.clear()
+                        copy
+                    }
+                    queued.forEach { it() }
                 }
             }
             
@@ -76,11 +85,20 @@ object BackgroundJsHelper {
         synchronized(pendingCallbacks) {
             pendingCallbacks[callbackId] = callback
         }
-        Handler(Looper.getMainLooper()).post {
-            val senderJson = "{\"tab\":{\"id\":1}}" 
+        val dispatch = {
+            val senderJson = "{\"tab\":{\"id\":1}}"
             val escapedMessage = messageJson.replace("'", "\\'")
             val escapedSender = senderJson.replace("'", "\\'")
             wv.evaluateJavascript("window.triggerMessage('$escapedMessage', '$escapedSender', '$callbackId')", null)
+        }
+        Handler(Looper.getMainLooper()).post {
+            if (isReady) {
+                dispatch()
+            } else {
+                synchronized(pendingMessages) {
+                    pendingMessages.add(dispatch)
+                }
+            }
         }
     }
 

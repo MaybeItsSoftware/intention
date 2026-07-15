@@ -1,4 +1,4 @@
-package com.maybeitsadam.intention
+package uk.co.maybeitssoftware.intention
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
@@ -43,13 +43,12 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private fun isAppBlocked(packageName: String): Boolean {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val blockedDomainsStr = prefs.getString("blockedDomains", "[]")
+        val blockedAppsStr = prefs.getString("blockedApps", "[]")
         try {
-            // blockedDomains is stored as a JSON string of array: ["com.instagram.android", ...]
-            val array = org.json.JSONArray(blockedDomainsStr)
+            // blockedApps is stored as a JSON string of array: ["com.instagram.android", ...]
+            val array = org.json.JSONArray(blockedAppsStr)
             for (i in 0 until array.length()) {
-                val blocked = array.getString(i)
-                if (packageName == blocked || packageName.endsWith(".$blocked")) {
+                if (packageName == array.getString(i)) {
                     return true
                 }
             }
@@ -71,7 +70,7 @@ class IntentionAccessibilityService : AccessibilityService() {
                 val key = keys.next()
                 val session = json.getJSONObject(key)
                 val domain = session.optString("domain")
-                if (domain == packageName || packageName.endsWith(".$domain")) {
+                if (domain == packageName) {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val expirationTime = startTime + (intervalMinutes * 60 * 1000)
@@ -90,7 +89,17 @@ class IntentionAccessibilityService : AccessibilityService() {
         val intent = Intent(this, CoachingActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("domain", packageName)
+            putExtra("appLabel", getAppLabel(packageName))
         }
         startActivity(intent)
+    }
+
+    private fun getAppLabel(packageName: String): String {
+        return try {
+            val info = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        } catch (e: Exception) {
+            packageName
+        }
     }
 }

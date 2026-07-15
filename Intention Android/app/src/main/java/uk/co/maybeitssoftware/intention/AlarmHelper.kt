@@ -1,4 +1,4 @@
-package com.maybeitsadam.intention
+package uk.co.maybeitssoftware.intention
 
 import android.content.Context
 import android.util.Log

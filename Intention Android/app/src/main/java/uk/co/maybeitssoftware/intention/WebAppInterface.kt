@@ -1,10 +1,12 @@
-package com.maybeitsadam.intention
+package uk.co.maybeitssoftware.intention
 
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import org.json.JSONArray
 import org.json.JSONObject
 
 class WebAppInterface(
@@ -39,6 +41,42 @@ class WebAppInterface(
 
         BackgroundJsHelper.sendMessage(messageJson) { response ->
             runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(response ?: "")})")
+        }
+    }
+
+    @JavascriptInterface
+    fun getInstalledApps(callbackId: String) {
+        val pm = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(launcherIntent, 0)
+            .map { it.activityInfo.packageName }
+            .distinct()
+            .filter { it != context.packageName }
+            .mapNotNull { pkg ->
+                try {
+                    val info = pm.getApplicationInfo(pkg, 0)
+                    pkg to pm.getApplicationLabel(info).toString()
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            .sortedBy { it.second.lowercase() }
+        val array = JSONArray()
+        for ((pkg, label) in apps) {
+            array.put(JSONObject().put("packageName", pkg).put("label", label))
+        }
+        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(array.toString())})")
+    }
+
+    @JavascriptInterface
+    fun launchApp(packageName: String) {
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        Handler(Looper.getMainLooper()).post {
+            context.startActivity(launchIntent)
+            if (context is CoachingActivity) {
+                context.finish()
+            }
         }
     }
 
