@@ -67,6 +67,7 @@
 		D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		125A0D90AB57B28FE647ACAB /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
+		AB10C0DE000000000000BF01 /* AppBlockingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB10C0DE000000000000FE01 /* AppBlockingManager.swift */; };
 		CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
 		97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */; };
 		4EEBFA67CC1061C2552E484E /* background.html in Resources */ = {isa = PBXBuildFile; fileRef = F7AA81643104FBF47EF49C27 /* background.html */; };
@@ -163,6 +164,7 @@
 		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
 		1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupConfig.swift; sourceTree = "<group>"; };
 		EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
+		AB10C0DE000000000000FE01 /* AppBlockingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBlockingManager.swift; sourceTree = "<group>"; };
 		E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSBridgeCodec.swift; sourceTree = "<group>"; };
 		B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundJSHost.swift; sourceTree = "<group>"; };
 		F7AA81643104FBF47EF49C27 /* background.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = background.html; sourceTree = "<group>"; };
@@ -220,6 +222,7 @@
 		BF6CF1868EB926C9BE668207 /* Shared (iOS) */ = {
 			isa = PBXGroup;
 			children = (
+				AB10C0DE000000000000FE01 /* AppBlockingManager.swift */,
 				1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */,
 				EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */,
 				E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */,
@@ -564,6 +567,7 @@
 				C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */,
 				CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */,
 				97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */,
+				AB10C0DE000000000000BF01 /* AppBlockingManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -775,12 +779,12 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari.Extension";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Extension";
 				PRODUCT_NAME = "Intention Safari Extension";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -809,12 +813,12 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari.Extension";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Extension";
 				PRODUCT_NAME = "Intention Safari Extension";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -849,14 +853,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 					"-framework",
 					WebKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
 				PRODUCT_NAME = "Intention Safari";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -890,14 +894,14 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 					"-framework",
 					WebKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
 				PRODUCT_NAME = "Intention Safari";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -929,12 +933,12 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari.Extension";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Extension";
 				PRODUCT_NAME = "Intention Safari Extension";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
@@ -964,12 +968,12 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari.Extension";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Extension";
 				PRODUCT_NAME = "Intention Safari Extension";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
@@ -1002,14 +1006,14 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 					"-framework",
 					WebKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
 				PRODUCT_NAME = "Intention Safari";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
@@ -1043,14 +1047,14 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
 					"-framework",
 					WebKit,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "com.yourCompany.Intention-Safari";
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
 				PRODUCT_NAME = "Intention Safari";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;

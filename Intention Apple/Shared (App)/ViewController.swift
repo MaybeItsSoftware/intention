@@ -16,7 +16,7 @@ import SafariServices
 typealias PlatformViewController = NSViewController
 #endif
 
-let extensionBundleIdentifier = "com.yourCompany.Intention-Safari.Extension"
+let extensionBundleIdentifier = "uk.co.maybeitssoftware.intention.Extension"
 
 class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMessageHandler {
 
@@ -54,7 +54,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         setUpExtensionBanner()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(updateExtensionBanner),
+            selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
@@ -68,6 +68,17 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         updateExtensionBanner()
+    }
+
+    @objc private func appDidBecomeActive() {
+        updateExtensionBanner()
+        // Backup for the DeviceActivityMonitor extension: passes shorter than
+        // DeviceActivity's ~15-minute schedule floor are re-shielded here.
+#if canImport(FamilyControls)
+        if #available(iOS 16.0, *) {
+            AppBlockingManager.shared.reapplyIfPassExpired()
+        }
+#endif
     }
 
     deinit {
@@ -152,9 +163,58 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             BackgroundJSHost.shared.sendMessage(message) { [weak self] response in
                 self?.invokeBridgeCallback(callbackId, result: response)
             }
+        case "screenTime":
+            let action = dict["action"] as? String ?? ""
+            let callbackId = dict["callbackId"] as? String ?? ""
+            handleScreenTimeMessage(action: action, dict: dict, callbackId: callbackId)
         default:
             break
         }
+    }
+
+    // MARK: - Screen Time app blocking bridge
+    //
+    // The options page drives native app blocking through these messages.
+    // The FamilyActivitySelection is opaque and lives in the App Group
+    // (AppBlockingManager), never in the web config.
+
+    private func handleScreenTimeMessage(action: String, dict: [String: Any], callbackId: String) {
+#if canImport(FamilyControls)
+        guard #available(iOS 16.0, *) else {
+            invokeBridgeCallback(callbackId, result: ["available": false])
+            return
+        }
+        let manager = AppBlockingManager.shared
+        switch action {
+        case "status":
+            invokeBridgeCallback(callbackId, result: [
+                "available": true,
+                "authorized": manager.isAuthorized,
+                "selectionCount": manager.selectionCount,
+                "passEndsAt": manager.passEndsAt.map { $0.timeIntervalSince1970 * 1000 } as Any
+            ])
+        case "authorize":
+            Task { @MainActor in
+                let ok = await manager.requestAuthorization()
+                self.invokeBridgeCallback(callbackId, result: ["authorized": ok])
+            }
+        case "pickApps":
+            manager.presentPicker(from: self) { [weak self] count in
+                self?.invokeBridgeCallback(callbackId, result: ["selectionCount": count])
+            }
+        case "grantPass":
+            let minutes = dict["minutes"] as? Int ?? Int(dict["minutes"] as? Double ?? 0)
+            manager.grantPass(minutes: minutes)
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "clear":
+            manager.clearAllBlocking()
+            invokeBridgeCallback(callbackId, result: ["ok": true, "selectionCount": 0])
+        default:
+            invokeBridgeCallback(callbackId, result: ["error": "unknown screenTime action: \(action)"])
+        }
+#else
+        invokeBridgeCallback(callbackId, result: ["available": false])
+#endif
     }
 
     private func invokeBridgeCallback(_ callbackId: String, result: Any?) {
