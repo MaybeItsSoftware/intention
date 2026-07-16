@@ -1,0 +1,24 @@
+Say goodbye to rigid app blockers and easily bypassed screen time limits. Intention is a smart, AI-powered focus gate that places a supportive AI coach between you and the apps that pull you away from your real goals.
+
+Instead of a hard block or a simple timer, opening a distracting app begins a brief, mindful conversation. Your coach asks what you are trying to do, prompts you to reflect, and decides whether to grant you access based on your actual goals.
+
+HOW IT WORKS
+1. Choose your Apps: Add distracting social media, games, or feed-based apps to your blocklist.
+2. Mindful Interception: When you open a blocked app, Intention temporarily pauses it and opens a coaching chat.
+3. State Your Intention: Explain what you need to do (e.g., "Check directions for my meeting" or "Reply to an urgent message").
+4. Earn Your Minutes: If you have a specific, time-bounded purpose, your coach grants you a few minutes of access. If it's aimless scrolling, the coach gently reminds you of your goals and suggests better alternatives.
+5. No Easy Way Out: You can only update your goals and coach instructions by talking to the coach. No simple text settings toggle to bypass the rules in a weak moment!
+
+KEY FEATURES
+• Bring Your Own Key (BYOK): Set up your own API key to connect to leading AI models: Anthropic (Claude), OpenAI (GPT), Google (Gemini), or Groq. You pay only for what you use, directly to the provider.
+• Smart Access Gatekeeper: The AI coach uses secure tool-calls to grant access and update your profile, ensuring a structured, spoof-proof flow.
+• Goal-Oriented Profile: Your coach builds a profile of who you are, what you're working on, and what habits you want to break. This profile is shaped and updated only through your conversations.
+• Exponential Skepticism & Daily Cap: Earning extra screen time gets progressively harder throughout the day. Once you hit your daily grant limit, the coach offers motivational support, but no more screen time.
+• Mindful & Non-Judgmental: The coach is trained to be supportive, curious, and warm—never lecturing, but always helping you build self-awareness.
+• 100% Private: Your API keys and conversation histories are stored locally on your device. Only direct requests to your chosen AI provider are sent over the network.
+
+ACCESSIBILITY SERVICE DISCLOSURE
+Intention uses Android's Accessibility Service API. This permission is required to detect when you launch apps on your blocklist and to overlay the AI coaching interface. 
+• Intention only monitors the package name of the foreground app to check if it is blocked.
+• It does not read, capture, or transmit any on-screen text, keyboard inputs, or personal data.
+• You can revoke this permission at any time in your device settings.
