@@ -63,7 +63,19 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.parseColor("#e7e7ea"))
             setTextColor(android.graphics.Color.parseColor("#0f1115"))
             setOnClickListener {
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                val componentName = android.content.ComponentName(
+                    this@MainActivity,
+                    IntentionAccessibilityService::class.java
+                )
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                    putExtra(":settings:fragment_args_key", componentName.flattenToString())
+                    putExtra(
+                        ":settings:show_fragment_args",
+                        Bundle().apply {
+                            putString(":settings:fragment_args_key", componentName.flattenToString())
+                        }
+                    )
+                }
                 startActivity(intent)
             }
         }

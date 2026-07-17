@@ -30,10 +30,14 @@ async function getConfig() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   populateProviderDropdowns();
+  await renderCurrentView();
+});
+
+async function renderCurrentView() {
   const state = await getConfig();
   if (state?.setupComplete) showSettingsView(state);
   else showSetupView();
-});
+}
 
 function populateProviderDropdowns() {
   for (const id of ['provider-select', 'provider-select-2']) {
@@ -343,7 +347,7 @@ ${reasonsAns || '(not configured)'}`;
       }
     });
 
-    location.reload();
+    await renderCurrentView();
   };
 }
 
@@ -400,12 +404,16 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
   const render = async () => {
     const q = input.value.trim().toLowerCase();
     results.innerHTML = '';
-    if (!q) return;
+    if (!q) {
+      results.hidden = true;
+      return;
+    }
     const apps = await getInstalledApps();
     const matches = apps.filter(a =>
       !isSelected(a.packageName) &&
       (a.label.toLowerCase().includes(q) || a.packageName.toLowerCase().includes(q))
     ).slice(0, 8);
+    results.hidden = matches.length === 0;
     for (const app of matches) {
       const li = document.createElement('li');
 
@@ -428,6 +436,7 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
         onAdd(app);
         input.value = '';
         results.innerHTML = '';
+        results.hidden = true;
       });
       li.appendChild(btn);
       results.appendChild(li);

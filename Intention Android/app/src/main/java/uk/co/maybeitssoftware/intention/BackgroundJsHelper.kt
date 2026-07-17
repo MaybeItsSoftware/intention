@@ -87,9 +87,15 @@ object BackgroundJsHelper {
         }
         val dispatch = {
             val senderJson = "{\"tab\":{\"id\":1}}"
-            val escapedMessage = messageJson.replace("'", "\\'")
-            val escapedSender = senderJson.replace("'", "\\'")
-            wv.evaluateJavascript("window.triggerMessage('$escapedMessage', '$escapedSender', '$callbackId')", null)
+            // messageJson is already-escaped JSON text (e.g. multi-line userContext
+            // becomes literal "\n" sequences). Wrapping it in a hand-escaped single-quoted
+            // JS literal double-unescapes those sequences into raw control characters,
+            // which then fail JSON.parse inside triggerMessage. JSONObject.quote produces
+            // a JS-literal-safe string that round-trips correctly.
+            wv.evaluateJavascript(
+                "window.triggerMessage(${JSONObject.quote(messageJson)}, ${JSONObject.quote(senderJson)}, ${JSONObject.quote(callbackId)})",
+                null
+            )
         }
         Handler(Looper.getMainLooper()).post {
             if (isReady) {
