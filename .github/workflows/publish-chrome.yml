@@ -20,8 +20,13 @@ jobs:
 
       - name: Check secrets configured
         id: check
+        env:
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
         run: |
-          if [[ -n "${{ secrets.CHROME_EXTENSION_ID }}" && -n "${{ secrets.CHROME_CLIENT_ID }}" && -n "${{ secrets.CHROME_CLIENT_SECRET }}" && -n "${{ secrets.CHROME_REFRESH_TOKEN }}" ]]; then
+          if [[ -n "$CHROME_EXTENSION_ID" && -n "$CHROME_CLIENT_ID" && -n "$CHROME_CLIENT_SECRET" && -n "$CHROME_REFRESH_TOKEN" ]]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
