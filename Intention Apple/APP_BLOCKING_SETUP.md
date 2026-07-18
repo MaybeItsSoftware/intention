@@ -2,10 +2,10 @@
 
 The Swift sources, Info.plists, and entitlements for native app blocking are
 in the repo, but Xcode targets cannot be created from the command line, so
-three extension targets need to be added once in Xcode. Until then the app
+four extension targets need to be added once in Xcode. Until then the app
 still builds and runs; the options page simply drives the picker and shields
-from the main app, and only re-shielding-on-schedule and custom shield copy
-are missing.
+from the main app, and only re-shielding-on-schedule, custom shield copy, and
+the app-usage row in the options page's usage log are missing.
 
 ## What already works without this setup
 
@@ -25,7 +25,7 @@ are missing.
   (development builds on a physical device work without approval).
 - Screen Time APIs do not work in the Simulator — test on a device.
 
-## 2. Create the three extension targets
+## 2. Create the four extension targets
 
 For each one: File → New → Target → iOS, pick the template, then delete the
 template's generated source file and add the existing one from the repo
@@ -37,6 +37,15 @@ capabilities on every target (entitlements files are already in each folder).
 | Device Activity Monitor Extension | IntentionMonitor | `iOS (Monitor Extension)/DeviceActivityMonitorExtension.swift` + also add `Shared (iOS)/AppGroupConfig.swift` to this target |
 | Shield Configuration Extension | IntentionShield | `iOS (Shield Extension)/ShieldConfigurationExtension.swift` |
 | Shield Action Extension | IntentionShieldAction | `iOS (Shield Action Extension)/ShieldActionExtension.swift` |
+| Device Activity Report Extension | IntentionReport | `iOS (Report Extension)/ReportExtension.swift` + also add `Shared (iOS)/AppGroupConfig.swift` to this target |
+
+The Report Extension only computes an **aggregate** total-minutes-used number
+for the blocked selection, not a per-app breakdown — Family Controls doesn't
+expose app identity (bundle IDs/names) to third-party code outside Apple's
+own report-rendering UI, by design. This can't be exercised in the Simulator
+(no Screen Time data there), so test it on a physical device: block an app,
+use it briefly, then check that "Blocked apps (this device)" appears in the
+options page's usage log after a few minutes.
 
 Point each target's Info.plist / entitlements build settings at the files in
 the matching folder (or let Xcode's generated ones match the values there —
@@ -60,3 +69,9 @@ what matter).
 - Shield UI: `ShieldConfigurationExtension` renders the "blocked by
   Intention" copy; `ShieldActionExtension` closes the app (iOS offers no way
   to open Intention from a shield).
+- Usage log: options page → `intentionScreenTime.getAppUsageReport` →
+  `handleScreenTimeMessage` → `AppBlockingManager.requestUsageReport`, which
+  briefly presents an invisible `DeviceActivityReport` view (that's what
+  triggers `ReportExtension` to run), then polls the App Group for the
+  aggregate `{date: minutes}` map the extension wrote under
+  `iosAppUsageByDate`.

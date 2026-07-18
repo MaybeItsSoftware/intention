@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- To check current running tasks/foreground app on newer Android versions -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Special-access permission (Settings.ACTION_USAGE_ACCESS_SETTINGS), not a
+         runtime dialog — powers the per-app usage log for blocked apps. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
@@ -29,7 +34,8 @@
             android:launchMode="singleInstance"
             android:theme="@style/Theme.Intention.Fullscreen"
             android:excludeFromRecents="true"
-            android:noHistory="true" />
+            android:noHistory="true"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".IntentionAccessibilityService"

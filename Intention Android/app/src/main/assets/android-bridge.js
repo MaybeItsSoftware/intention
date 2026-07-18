@@ -72,6 +72,16 @@
     },
     launchApp: function(packageName) {
       AndroidInterface.launchApp(packageName);
+    },
+    hasUsageAccess: function() {
+      return AndroidInterface.hasUsageAccess();
+    },
+    requestUsageAccess: function() {
+      AndroidInterface.openUsageAccessSettings();
+    },
+    getAppUsageStats: function(days, callback) {
+      const cbId = window.AndroidCallbacks.register(callback);
+      AndroidInterface.getAppUsageStats(days, cbId);
     }
   };
 })();

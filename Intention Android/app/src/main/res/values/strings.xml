@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">Intention</string>
     <string name="accessibility_service_label">Intention App Blocker</string>
-    <string name="accessibility_service_description">Monitors app launches to block distracting apps and help you practice mindfulness via the Intention AI Coach.</string>
+    <string name="accessibility_service_description">Monitors app launches and, in supported browsers, the address bar to block distracting apps and websites, helping you practice mindfulness via the Intention AI Coach.</string>
 </resources>

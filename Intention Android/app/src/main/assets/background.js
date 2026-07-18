@@ -194,6 +194,8 @@ async function handleMessage(message, sender) {
       return getStatsForDomain(message.domain);
     case 'getStatsSummary':
       return getStatsSummary();
+    case 'getUsageLog':
+      return getUsageLog(message.days);
     case 'openOptions': {
       const optionsUrl = chrome.runtime.getURL('options.html');
       await focusOrCreateTab(optionsUrl, () => chrome.runtime.openOptionsPage());

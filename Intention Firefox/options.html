@@ -20,10 +20,12 @@
 
       <section class="card setup-step" id="setup-step-apps" hidden>
         <h3>Which apps pull you in?</h3>
-        <p class="subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
+        <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
         <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
         <ul id="setup-apps-list"></ul>
+        <p class="subtitle" id="setup-ios-apps-status" hidden></p>
+        <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Enable Screen Time access</button>
       </section>
 
       <section class="card setup-step" id="setup-step-sites">
@@ -99,6 +101,13 @@
             <h2>Today</h2>
             <div id="stats-display"></div>
           </section>
+
+          <section class="card" id="usage-log-card">
+            <h2>Usage log</h2>
+            <p class="subtitle">Time spent on blocked sites and apps, by day.</p>
+            <div id="usage-log-access" hidden></div>
+            <ul id="usage-log-list"></ul>
+          </section>
         </div>
 
         <div class="settings-column">
@@ -111,7 +120,6 @@
             <h2>Blocked sites</h2>
             <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below.</p>
             <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
-            <div id="sites-recommend-grid" class="recommend-grid"></div>
             <ul id="domain-list"></ul>
             <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
@@ -120,7 +128,6 @@
             <h2>Blocked apps</h2>
             <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device, or tap a suggestion below.</p>
             <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
-            <div id="apps-recommend-grid" class="recommend-grid"></div>
             <ul id="app-list"></ul>
             <div id="ios-apps-controls" hidden>
               <p class="subtitle" id="ios-apps-status"></p>

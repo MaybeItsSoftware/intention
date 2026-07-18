@@ -63,6 +63,9 @@
 		66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
 		66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
 		66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
+		AA10C0DE000000000000FE01 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
+		AA10C0DE000000000000FE02 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
+		AA10C0DE000000000000FE03 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
 		0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
@@ -162,6 +165,7 @@
 		66B8D0FE2FE985EF00BC0D7F /* env.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = env.txt; path = "../../Intention Chrome/env.txt"; sourceTree = "<group>"; };
 		66B8D1012FE985EF00BC0D7F /* coaching.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = coaching.html; path = "../../Intention Chrome/coaching.html"; sourceTree = "<group>"; };
 		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
+		66B8D1072FE985EF00BC0D7F /* fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fonts; path = "../../Intention Chrome/fonts"; sourceTree = "<group>"; };
 		1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupConfig.swift; sourceTree = "<group>"; };
 		EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
 		AB10C0DE000000000000FE01 /* AppBlockingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppBlockingManager.swift; sourceTree = "<group>"; };
@@ -334,6 +338,7 @@
 				66B8D0FE2FE985EF00BC0D7F /* env.txt */,
 				66B8D1012FE985EF00BC0D7F /* coaching.html */,
 				66B8D1042FE985EF00BC0D7F /* coaching.js */,
+				66B8D1072FE985EF00BC0D7F /* fonts */,
 			);
 			name = Resources;
 			path = "Shared (Extension)";
@@ -489,6 +494,7 @@
 				1EDF5969600008746A5F0B50 /* prompts.js in Resources */,
 				863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */,
 				79E816C9538AF8290B28BE79 /* background.js in Resources */,
+				AA10C0DE000000000000FE01 /* fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -526,6 +532,7 @@
 				66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */,
 				66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */,
 				66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */,
+				AA10C0DE000000000000FE02 /* fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -550,6 +557,7 @@
 				66B8D1002FE985EF00BC0D7F /* env.txt in Resources */,
 				66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */,
 				66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */,
+				AA10C0DE000000000000FE03 /* fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -780,7 +788,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -815,7 +823,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -856,7 +864,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -898,7 +906,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -938,7 +946,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -974,7 +982,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1013,7 +1021,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1055,7 +1063,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,

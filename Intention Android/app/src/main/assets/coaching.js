@@ -20,15 +20,42 @@ chrome.runtime.sendMessage({ action: 'checkDuplicateCoaching', domain }, (resp) 
   }
 });
 
-document.getElementById('int-subtitle').textContent = `${displayName} — let's check in before you go through`;
-
 const messagesEl = document.getElementById('int-messages');
 const inputEl = document.getElementById('int-input');
 const sendBtn = document.getElementById('int-send');
 const closeBtn = document.getElementById('int-close');
+const bottomBar = document.getElementById('int-bottom-bar');
+
+closeBtn.textContent = isApp ? 'Close app' : 'Close tab';
+
+// Keep .int-column's bottom padding in sync with the bar's real rendered
+// height (font swap, text wrap, and safe-area insets can all change it).
+function updateBarHeightVar() {
+  document.documentElement.style.setProperty('--int-bar-height', `${bottomBar.offsetHeight}px`);
+}
+if (window.ResizeObserver) {
+  new ResizeObserver(updateBarHeightVar).observe(bottomBar);
+} else {
+  window.addEventListener('resize', updateBarHeightVar);
+}
+updateBarHeightVar();
+
+// Keyboard avoidance: reposition the fixed bottom bar above the on-screen
+// keyboard using the visualViewport API. No-op fallback: if unavailable,
+// the bar simply stays at its CSS-default bottom: 0.
+function updateBottomBarOffset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  bottomBar.style.bottom = `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`;
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', updateBottomBarOffset);
+  window.visualViewport.addEventListener('scroll', updateBottomBarOffset);
+  updateBottomBarOffset();
+}
 
 // Show initial coaching prompt
-const seed = `Hey. I see you've opened ${displayName}. What's going on — what are you hoping to get out of it?`;
+const seed = `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
 addMessage(messagesEl, 'assistant', seed);
 
 // Fetch stats and render stats row
@@ -87,7 +114,7 @@ async function send() {
   }, (resp) => {
     if (!resp) {
       thinking.remove();
-      addMessage(messagesEl, 'assistant', '[no response — background worker may be offline]');
+      addMessage(messagesEl, 'assistant', '[no response: background worker may be offline]');
       sending = false;
       return;
     }

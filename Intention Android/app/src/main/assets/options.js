@@ -219,17 +219,19 @@ function showSetupView() {
     syncEnvFields();
   });
 
-  // Apps get their own step, ahead of websites, wherever the native bridge exists.
-  setupStepOrder = HAS_APP_BLOCKING
+  // Apps get their own step, ahead of websites, wherever a native bridge exists.
+  setupStepOrder = (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING)
     ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider']
     : ['setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider'];
 
   // ---- Step: websites ----
   renderSetupDomains();
 
-  // ---- Step: apps (only where the native bridge exists) ----
+  // ---- Step: apps (only where a native bridge exists) ----
   if (HAS_APP_BLOCKING) {
     renderSetupApps();
+  } else if (HAS_IOS_APP_BLOCKING) {
+    renderSetupIOSApps();
   }
 
   wireAddModals();
@@ -370,7 +372,7 @@ function renderSiteRecommendations(containerId, blockedDomains) {
   container.hidden = pool.length === 0;
 }
 
-function renderAppRecommendations(containerId, blockedApps) {
+function renderAppRecommendations(containerId, blockedApps, onIOSPicked = refreshIOSAppsCard) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
   if (HAS_IOS_APP_BLOCKING) {
@@ -378,7 +380,7 @@ function renderAppRecommendations(containerId, blockedApps) {
     for (const app of pool) {
       const meta = SITE_META[APP_ICON_SITE[app.packageName]];
       container.appendChild(buildRecommendCard(meta, app.label, app.label, () => {
-        window.intentionScreenTime.pickApps(() => refreshIOSAppsCard());
+        window.intentionScreenTime.pickApps(() => onIOSPicked());
       }));
     }
     container.hidden = pool.length === 0;
@@ -605,6 +607,38 @@ function renderSetupApps() {
   }
 }
 
+// iOS app blocking is opaque (Screen Time's FamilyActivitySelection, not a
+// package list), so the setup step swaps the Android add-button/list for a
+// status line + "Choose apps to block" button, mirroring wireIOSAppsCard.
+function renderSetupIOSApps() {
+  document.getElementById('setup-apps-subtitle').textContent =
+    'Tap a suggestion below, or "Choose apps to block" to open Screen Time\'s picker.';
+  document.getElementById('setup-open-add-app-btn').textContent = 'Choose apps to block';
+  document.getElementById('setup-apps-list').hidden = true;
+  document.getElementById('setup-ios-apps-status').hidden = false;
+  renderAppRecommendations('setup-apps-recommend-grid', [], refreshSetupIOSApps);
+  refreshSetupIOSApps();
+}
+
+async function refreshSetupIOSApps() {
+  const statusEl = document.getElementById('setup-ios-apps-status');
+  const authorizeBtn = document.getElementById('setup-ios-authorize-btn');
+  const st = await iosScreenTimeStatus();
+
+  if (!st || !st.available) {
+    statusEl.textContent = 'App blocking needs iOS 16 or later.';
+    authorizeBtn.hidden = true;
+    return;
+  }
+  if (!st.authorized) {
+    statusEl.textContent = 'Allow Intention to use Screen Time so it can shield the apps you choose.';
+    authorizeBtn.hidden = false;
+    return;
+  }
+  authorizeBtn.hidden = true;
+  const n = st.selectionCount || 0;
+  statusEl.textContent = n === 0 ? 'No apps blocked yet.' : `${n} app${n === 1 ? '' : 's or categories'} blocked.`;
+}
 
 // ---- Mobile Apps/Websites tab toggle ----
 
@@ -672,6 +706,13 @@ function wireAddModals() {
       pkg => (document.getElementById('setup-view').hidden ? settingsBlockedApps : setupBlockedApps).includes(pkg),
       app => { addApp(app); closeAddModal('add-app-modal'); }
     );
+  } else if (HAS_IOS_APP_BLOCKING) {
+    document.getElementById('setup-open-add-app-btn')?.addEventListener('click', () => {
+      window.intentionScreenTime.pickApps(() => refreshSetupIOSApps());
+    });
+    document.getElementById('setup-ios-authorize-btn')?.addEventListener('click', () => {
+      window.intentionScreenTime.authorize(() => refreshSetupIOSApps());
+    });
   }
 }
 
@@ -793,6 +834,7 @@ async function showSettingsView(state) {
 
   const summary = await sendBg({ action: 'getStatsSummary' });
   renderStats(summary);
+  await refreshUsageLog(state);
 
   document.getElementById('open-coach-btn').addEventListener('click', openCoachModal);
   document.getElementById('close-coach-btn').addEventListener('click', closeCoachModal);
@@ -852,7 +894,6 @@ function wireIOSAppsCard() {
     window.location.href = 'coaching.html?domain=apps&app=1';
   });
 
-  renderAppRecommendations('apps-recommend-grid', []);
   refreshIOSAppsCard();
 }
 
@@ -943,7 +984,6 @@ function removeDomain(d) {
 }
 
 function renderDomains(domains, limits = {}) {
-  renderSiteRecommendations('sites-recommend-grid', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   for (const d of domains) {
@@ -1061,7 +1101,6 @@ function removeApp(pkg, label) {
 
 function renderApps(apps, limits = {}, labels = {}) {
   settingsBlockedApps = apps;
-  renderAppRecommendations('apps-recommend-grid', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   for (const pkg of apps) {
@@ -1153,6 +1192,104 @@ function renderStats(summary) {
     <p class="muted">${perSite}</p>
     <p class="muted">Past 7 days: <strong>${summary.minutesWeek} min</strong>.</p>
   `;
+}
+
+function formatLogDate(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((startOfToday - date) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// entries: [{ date: 'YYYY-MM-DD', domain, minutes, label? }], already sorted
+// by date desc then minutes desc (see getUsageLog in tracking.js and any
+// native app-usage merges added alongside it).
+function renderUsageLog(entries) {
+  const list = document.getElementById('usage-log-list');
+  list.innerHTML = '';
+  if (!entries || !entries.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = 'No usage recorded yet.';
+    list.appendChild(li);
+    return;
+  }
+
+  let lastDate = null;
+  for (const entry of entries) {
+    if (entry.date !== lastDate) {
+      lastDate = entry.date;
+      const heading = document.createElement('li');
+      heading.className = 'log-date-heading';
+      heading.textContent = formatLogDate(entry.date);
+      list.appendChild(heading);
+    }
+
+    const li = document.createElement('li');
+    const infoContainer = document.createElement('div');
+    infoContainer.className = 'domain-info';
+
+    const span = document.createElement('span');
+    span.textContent = entry.label || entry.domain;
+    span.className = 'domain-name';
+    infoContainer.appendChild(span);
+
+    const minSpan = document.createElement('span');
+    minSpan.className = 'domain-limit-badge';
+    minSpan.textContent = `${entry.minutes} min`;
+    infoContainer.appendChild(minSpan);
+
+    li.appendChild(infoContainer);
+    list.appendChild(li);
+  }
+}
+
+// Merges website usage (always available) with native per-app usage (Android
+// via UsageStatsManager, iOS via the DeviceActivityReport bridge) when the
+// native layer exposes it. Both native sources are optional/feature-detected
+// since most builds (Chrome/Firefox/Safari extension pages) have neither.
+async function refreshUsageLog(state) {
+  const days = 30;
+  const entries = await sendBg({ action: 'getUsageLog', days });
+
+  const accessEl = document.getElementById('usage-log-access');
+  accessEl.hidden = true;
+  accessEl.innerHTML = '';
+
+  if (HAS_APP_BLOCKING && window.intentionApps.getAppUsageStats) {
+    const hasAccess = window.intentionApps.hasUsageAccess ? window.intentionApps.hasUsageAccess() : true;
+    if (!hasAccess) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'secondary';
+      btn.style.width = '100%';
+      btn.textContent = 'Grant usage access to log app time';
+      btn.addEventListener('click', () => window.intentionApps.requestUsageAccess());
+      accessEl.appendChild(btn);
+      accessEl.hidden = false;
+    } else {
+      const labels = state.appLabels || {};
+      const appEntries = await new Promise(resolve => window.intentionApps.getAppUsageStats(days, resolve));
+      for (const e of (appEntries || [])) {
+        entries.push({ date: e.date, domain: e.packageName, minutes: e.minutes, label: labels[e.packageName] || e.packageName });
+      }
+    }
+  }
+
+  if (HAS_IOS_APP_BLOCKING && window.intentionScreenTime.getAppUsageReport) {
+    const report = await new Promise(resolve => window.intentionScreenTime.getAppUsageReport(resolve));
+    for (const [date, minutes] of Object.entries((report && report.minutesByDate) || {})) {
+      const m = Math.round(minutes);
+      if (m > 0) entries.push({ date, domain: 'ios-apps', minutes: m, label: 'Blocked apps (this device)' });
+    }
+  }
+
+  entries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.minutes - a.minutes));
+  renderUsageLog(entries);
 }
 
 let coachSending = false;

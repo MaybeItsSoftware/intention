@@ -64,6 +64,9 @@
     authorize: function(callback) { screenTimeCall('authorize', null, callback); },
     pickApps: function(callback) { screenTimeCall('pickApps', null, callback); },
     grantPass: function(minutes, callback) { screenTimeCall('grantPass', { minutes: minutes }, callback); },
-    clear: function(callback) { screenTimeCall('clear', null, callback); }
+    clear: function(callback) { screenTimeCall('clear', null, callback); },
+    // Aggregate-only (no per-app breakdown -- Family Controls keeps app
+    // identity opaque outside Apple's own UI). Resolves { minutesByDate }.
+    getAppUsageReport: function(callback) { screenTimeCall('getAppUsageReport', null, callback); }
   };
 })();

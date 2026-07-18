@@ -209,6 +209,11 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         case "clear":
             manager.clearAllBlocking()
             invokeBridgeCallback(callbackId, result: ["ok": true, "selectionCount": 0])
+        case "getAppUsageReport":
+            let days = (dict["days"] as? Int) ?? Int(dict["days"] as? Double ?? 30)
+            manager.requestUsageReport(from: self, days: days > 0 ? days : 30) { [weak self] minutesByDate in
+                self?.invokeBridgeCallback(callbackId, result: ["minutesByDate": minutesByDate])
+            }
         default:
             invokeBridgeCallback(callbackId, result: ["error": "unknown screenTime action: \(action)"])
         }

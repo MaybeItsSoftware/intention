@@ -189,6 +189,24 @@ async function getStatsForDomain(domain) {
   };
 }
 
+async function getUsageLog(days = 30) {
+  const { dailyStats = {} } = await getStorage(['dailyStats']);
+  const keys = daysAgoKeys(days);
+  const entries = [];
+
+  for (const k of keys) {
+    const dayEntries = dailyStats[k];
+    if (!dayEntries) continue;
+    for (const [domain, site] of Object.entries(dayEntries)) {
+      const minutes = Math.round(site.minutes || 0);
+      if (minutes > 0) entries.push({ date: k, domain, minutes });
+    }
+  }
+
+  entries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.minutes - a.minutes));
+  return entries;
+}
+
 async function getStatsSummary() {
   const { dailyStats = {} } = await getStorage(['dailyStats']);
   const todayKey = dateKey();

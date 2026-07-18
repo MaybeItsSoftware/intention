@@ -2,7 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Intention — Let's check in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Intention: Let's check in</title>
   <style>
     @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
     @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
@@ -19,33 +20,32 @@
       font-family: 'Arvo', Georgia, 'Times New Roman', serif;
       -webkit-font-smoothing: antialiased;
     }
-    
+
     * {
       box-sizing: border-box;
+    }
+
+    :root {
+      --int-bar-height: 96px;
     }
 
     .int-column {
       max-width: 620px;
       margin: 0 auto;
       min-height: 100vh;
-      padding: 14vh 24px 40px;
+      padding: 14vh 24px calc(var(--int-bar-height) + 24px);
       display: flex;
       flex-direction: column;
     }
 
-    h1 {
-      margin: 0 0 4px;
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: #6b7280;
-    }
-
-    .int-subtitle {
+    h1.int-heading {
       margin: 0 0 30px;
-      font-size: 15px;
-      color: #8b8f99;
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.3;
+      letter-spacing: normal;
+      text-transform: none;
+      color: #f3f4f6;
     }
 
     .int-stats-row {
@@ -75,7 +75,6 @@
       display: flex;
       flex-direction: column;
       gap: 22px;
-      margin-bottom: 26px;
       overflow-y: auto;
     }
 
@@ -100,12 +99,33 @@
     }
 
     .int-msg-user::before {
-      content: "You — ";
+      content: "You: ";
       color: #4b5563;
     }
 
     .int-thinking {
       opacity: 0.5;
+    }
+
+    .int-bottom-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      background: rgba(15, 17, 21, 0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    .int-bottom-bar-inner {
+      max-width: 620px;
+      margin: 0 auto;
+      padding: 12px 24px 16px;
+      display: flex;
+      flex-direction: column;
     }
 
     .int-composer {
@@ -147,7 +167,7 @@
     }
 
     .int-close-row {
-      margin-top: 22px;
+      margin-top: 10px;
     }
 
     button.int-secondary {
@@ -173,18 +193,23 @@
 </head>
 <body>
   <div class="int-column">
-    <h1>Intention</h1>
-    <p class="int-subtitle" id="int-subtitle">Checking in...</p>
+    <h1 class="int-heading">Why are you here?</h1>
     <div class="int-stats-row" id="int-stats-row"></div>
     <div class="int-messages" id="int-messages"></div>
-    <div class="int-composer">
-      <input type="text" id="int-input" placeholder="Type your reply…" autocomplete="off">
-      <button id="int-send">Send</button>
-    </div>
-    <div class="int-close-row">
-      <button id="int-close" class="int-secondary">Close tab</button>
+  </div>
+
+  <div class="int-bottom-bar" id="int-bottom-bar">
+    <div class="int-bottom-bar-inner">
+      <div class="int-composer">
+        <input type="text" id="int-input" placeholder="Type your reply…" autocomplete="off">
+        <button id="int-send">Send</button>
+      </div>
+      <div class="int-close-row">
+        <button id="int-close" class="int-secondary">Close tab</button>
+      </div>
     </div>
   </div>
+
   <script src="coaching.js"></script>
 </body>
 </html>

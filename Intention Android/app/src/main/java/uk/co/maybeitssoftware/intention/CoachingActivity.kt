@@ -10,11 +10,13 @@ class CoachingActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var domain: String = ""
+    private var isApp: Boolean = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         domain = intent.getStringExtra("domain") ?: ""
+        isApp = intent.getBooleanExtra("isApp", true)
         val appLabel = intent.getStringExtra("appLabel") ?: domain
 
         webView = WebView(this).apply {
@@ -42,8 +44,9 @@ class CoachingActivity : AppCompatActivity() {
         val modifiedHtml = html.replace("<head>", "<head><script src=\"android-bridge.js\"></script>")
         val encodedDomain = android.net.Uri.encode(domain)
         val encodedLabel = android.net.Uri.encode(appLabel)
+        val appParam = if (isApp) "1" else "0"
         webView.loadDataWithBaseURL(
-            "file:///android_asset/coaching.html?domain=$encodedDomain&app=1&label=$encodedLabel",
+            "file:///android_asset/coaching.html?domain=$encodedDomain&app=$appParam&label=$encodedLabel",
             modifiedHtml,
             "text/html",
             "UTF-8",

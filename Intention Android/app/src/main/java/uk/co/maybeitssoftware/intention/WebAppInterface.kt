@@ -1,18 +1,28 @@
 package uk.co.maybeitssoftware.intention
 
+import android.app.AppOpsManager
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Process
+import android.provider.Settings
 import android.util.Base64
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class WebAppInterface(
     private val context: Context,
@@ -99,6 +109,78 @@ class WebAppInterface(
                 context.finish()
             }
         }
+    }
+
+    // Usage Access is a special-access permission (no runtime dialog) — the
+    // user grants it via Settings, mirrored to shared/options.js the same way
+    // as the Accessibility gate in MainActivity.
+    @JavascriptInterface
+    fun hasUsageAccess(): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    @JavascriptInterface
+    fun openUsageAccessSettings() {
+        val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }
+
+    // Returns [{date: "YYYY-MM-DD", packageName, minutes}] for the last `days`
+    // days, restricted to currently-blocked apps. The OS already aggregates
+    // per-app foreground time for its own Digital Wellbeing feature, so this
+    // is an on-demand read, not a continuous background poll.
+    @JavascriptInterface
+    fun getAppUsageStats(days: Int, callbackId: String) {
+        val result = JSONArray()
+        try {
+            val blockedApps = mutableSetOf<String>()
+            val storage = JSONObject(BackgroundJsHelper.getSharedStorage(context, "[\"blockedApps\"]"))
+            if (storage.has("blockedApps")) {
+                val arr = storage.getJSONArray("blockedApps")
+                for (i in 0 until arr.length()) blockedApps.add(arr.getString(i))
+            }
+
+            if (blockedApps.isNotEmpty() && hasUsageAccess()) {
+                val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val cal = Calendar.getInstance()
+                for (i in 0 until days) {
+                    cal.time = Date()
+                    cal.add(Calendar.DAY_OF_YEAR, -i)
+                    cal.set(Calendar.HOUR_OF_DAY, 0)
+                    cal.set(Calendar.MINUTE, 0)
+                    cal.set(Calendar.SECOND, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+                    val dayStart = cal.timeInMillis
+                    val dayEnd = dayStart + 24L * 60 * 60 * 1000
+                    val dateKey = fmt.format(Date(dayStart))
+
+                    val totals = mutableMapOf<String, Long>()
+                    for (stat in usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, dayStart, dayEnd)) {
+                        if (stat.packageName in blockedApps) {
+                            totals[stat.packageName] = (totals[stat.packageName] ?: 0L) + stat.totalTimeInForeground
+                        }
+                    }
+                    for ((pkg, ms) in totals) {
+                        val minutes = Math.round(ms / 60000.0)
+                        if (minutes > 0) {
+                            result.put(JSONObject().put("date", dateKey).put("packageName", pkg).put("minutes", minutes))
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("WebAppInterface", "Error in getAppUsageStats: ", e)
+        }
+        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(result.toString())})")
     }
 
     private fun runOnJs(script: String) {

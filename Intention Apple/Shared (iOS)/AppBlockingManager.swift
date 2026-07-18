@@ -161,6 +161,88 @@ final class AppBlockingManager {
         guard passEndsAt == nil else { return }
         applyShields()
     }
+
+    // MARK: - Aggregate app-usage report (DeviceActivityReport)
+    //
+    // Per-app identity is intentionally never exposed by Family Controls
+    // outside Apple's own rendering (ApplicationToken has no name/bundle-id
+    // accessor), so this only surfaces one aggregate minutes-per-day number
+    // across the blocked selection -- see the Report Extension target
+    // (iOS (Report Extension)/ReportExtension.swift, not yet wired into
+    // Xcode -- see APP_BLOCKING_SETUP.md), which does the actual aggregation
+    // and writes the result into the App Group.
+    //
+    // Presenting the (invisible, zero-size) DeviceActivityReport view is what
+    // triggers the OS to run the report extension; since the extension runs
+    // in a separate process, the result comes back via the App Group rather
+    // than a return value. This polls briefly for a freshly-written result
+    // instead of wiring up CFNotificationCenter Darwin notifications, which
+    // would cut the latency but needs real cross-process C-callback plumbing
+    // -- worth revisiting once this is verified on-device (Screen Time report
+    // extensions do not run in the Simulator, so none of this can be
+    // exercised until the extension target exists and is tested on a
+    // physical device).
+    private static let usageDateKey = "iosAppUsageByDate"
+    private static let usageWrittenAtKey = "iosAppUsageWrittenAt"
+    private static let usageReportContext = DeviceActivityReport.Context(rawValue: "intentionTotalMinutes")
+
+    func requestUsageReport(from presenter: UIViewController, days: Int = 30, completion: @escaping ([String: Double]) -> Void) {
+        guard let selection = Self.loadSelection(),
+              !(selection.applicationTokens.isEmpty && selection.categoryTokens.isEmpty) else {
+            completion([:])
+            return
+        }
+
+        let end = Date()
+        guard let start = Calendar.current.date(byAdding: .day, value: -days, to: end) else {
+            completion([:])
+            return
+        }
+
+        let requestedAt = Date()
+        let filter = DeviceActivityFilter(
+            segment: .daily(during: DateInterval(start: start, end: end)),
+            users: .all,
+            devices: .init([.iPhone, .iPad]),
+            applications: selection.applicationTokens,
+            categories: selection.categoryTokens
+        )
+
+        let hosting = UIHostingController(rootView: DeviceActivityReport(Self.usageReportContext, filter: filter))
+        hosting.view.frame = .zero
+        hosting.view.isHidden = true
+        presenter.addChild(hosting)
+        presenter.view.insertSubview(hosting.view, at: 0)
+        hosting.didMove(toParent: presenter)
+
+        Self.pollForFreshUsage(after: requestedAt, attemptsLeft: 15) { result in
+            hosting.willMove(toParent: nil)
+            hosting.view.removeFromSuperview()
+            hosting.removeFromParent()
+            completion(result)
+        }
+    }
+
+    private static func pollForFreshUsage(after requestedAt: Date, attemptsLeft: Int, completion: @escaping ([String: Double]) -> Void) {
+        guard let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) else {
+            completion([:])
+            return
+        }
+        let writtenAt = defaults.double(forKey: usageWrittenAtKey)
+        if writtenAt > requestedAt.timeIntervalSince1970,
+           let data = defaults.data(forKey: usageDateKey),
+           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
+            completion(decoded)
+            return
+        }
+        guard attemptsLeft > 0 else {
+            completion([:])
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            pollForFreshUsage(after: requestedAt, attemptsLeft: attemptsLeft - 1, completion: completion)
+        }
+    }
 }
 
 @available(iOS 16.0, *)
