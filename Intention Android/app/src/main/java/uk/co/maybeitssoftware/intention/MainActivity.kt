@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.View
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.TextView
@@ -94,6 +95,7 @@ class MainActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
             visibility = View.GONE
         }
 

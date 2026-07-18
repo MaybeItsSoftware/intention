@@ -2,12 +2,17 @@ package uk.co.maybeitssoftware.intention
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 
 class WebAppInterface(
     private val context: Context,
@@ -55,17 +60,33 @@ class WebAppInterface(
             .mapNotNull { pkg ->
                 try {
                     val info = pm.getApplicationInfo(pkg, 0)
-                    pkg to pm.getApplicationLabel(info).toString()
+                    val icon = try {
+                        drawableToBase64Png(pm.getApplicationIcon(info))
+                    } catch (e: Exception) {
+                        ""
+                    }
+                    Triple(pkg, pm.getApplicationLabel(info).toString(), icon)
                 } catch (e: Exception) {
                     null
                 }
             }
             .sortedBy { it.second.lowercase() }
         val array = JSONArray()
-        for ((pkg, label) in apps) {
-            array.put(JSONObject().put("packageName", pkg).put("label", label))
+        for ((pkg, label, icon) in apps) {
+            array.put(JSONObject().put("packageName", pkg).put("label", label).put("icon", icon))
         }
         runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(array.toString())})")
+    }
+
+    private fun drawableToBase64Png(drawable: Drawable, size: Int = 64): String {
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, size, size)
+        drawable.draw(canvas)
+        val stream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        bitmap.recycle()
+        return "data:image/png;base64," + Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
     }
 
     @JavascriptInterface

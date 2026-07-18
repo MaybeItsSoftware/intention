@@ -87,6 +87,11 @@ const COMMON_APPS = [
   { packageName: 'com.linkedin.android', label: 'LinkedIn' },
 ];
 
+// Utility/messaging apps to never suggest as recommendations, even if added
+// to COMMON_APPS later.
+const RECOMMEND_IGNORE_APPS = ['com.whatsapp', 'com.whatsapp.w4b'];
+const RECOMMEND_IGNORE_SITES = [];
+
 // Reuse the site brand icons for the app chips where they overlap.
 const APP_ICON_SITE = {
   'com.instagram.android': 'instagram.com',
@@ -106,14 +111,13 @@ const HAS_APP_BLOCKING = !!window.intentionApps;
 // sees counts and drives the native picker.
 const HAS_IOS_APP_BLOCKING = !HAS_APP_BLOCKING && !!window.intentionScreenTime;
 
-const SETUP_TOTAL_STEPS = 4;
-
 let setupBlockedDomains = [];
 let setupDomainLimits = {};
 let setupBlockedApps = [];
 let setupAppLimits = {};
 let setupAppLabels = {};
 let setupStep = 1;
+let setupStepOrder = []; // computed per-render — apps step only exists where the native bridge does
 let setupSelectedModel = null; // null = custom (use #model-input)
 
 let installedAppsCache = null;
@@ -215,47 +219,20 @@ function showSetupView() {
     syncEnvFields();
   });
 
-  // ---- Step 1: websites ----
-  renderSetupPresetChips();
+  // Apps get their own step, ahead of websites, wherever the native bridge exists.
+  setupStepOrder = HAS_APP_BLOCKING
+    ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider']
+    : ['setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider'];
 
-  // ---- Step 1: apps (only where the native bridge exists) ----
+  // ---- Step: websites ----
+  renderSetupDomains();
+
+  // ---- Step: apps (only where the native bridge exists) ----
   if (HAS_APP_BLOCKING) {
-    document.getElementById('setup-apps-section').hidden = false;
-    renderSetupAppChips();
-    wireAppSearch(
-      'setup-app-search',
-      'setup-app-results',
-      pkg => setupBlockedApps.includes(pkg),
-      app => addSetupApp(app)
-    );
+    renderSetupApps();
   }
 
-  const addBtn = document.getElementById('setup-add-website-btn');
-  const webInput = document.getElementById('setup-website-input');
-  const limitInput = document.getElementById('setup-website-limit');
-
-  const addDomain = () => {
-    const raw = webInput.value.trim().toLowerCase();
-    if (!raw) return;
-    const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-    const limitVal = parseInt(limitInput.value, 10);
-    const limit = isNaN(limitVal) ? 10 : limitVal;
-
-    if (domain && !setupBlockedDomains.includes(domain)) {
-      setupBlockedDomains.push(domain);
-      setupDomainLimits[domain] = {
-        maxGrants: 3,
-        maxMinutes: limit
-      };
-      renderSetupDomains();
-      webInput.value = '';
-      limitInput.value = '10';
-    }
-  };
-
-  addBtn.onclick = addDomain;
-  webInput.onkeydown = e => { if (e.key === 'Enter') addDomain(); };
-  limitInput.onkeydown = e => { if (e.key === 'Enter') addDomain(); };
+  wireAddModals();
 
   // ---- Wizard navigation ----
   const backBtn = document.getElementById('setup-back-btn');
@@ -264,18 +241,19 @@ function showSetupView() {
 
   const showStep = (n) => {
     setupStep = n;
-    for (let i = 1; i <= SETUP_TOTAL_STEPS; i++) {
-      document.getElementById(`setup-step-${i}`).hidden = i !== n;
-    }
-    document.getElementById('setup-progress-fill').style.width = `${(n / SETUP_TOTAL_STEPS) * 100}%`;
-    document.getElementById('setup-progress-label').textContent = `Step ${n} of ${SETUP_TOTAL_STEPS}`;
+    const total = setupStepOrder.length;
+    setupStepOrder.forEach((id, i) => {
+      document.getElementById(id).hidden = i !== n - 1;
+    });
+    document.getElementById('setup-progress-fill').style.width = `${(n / total) * 100}%`;
+    document.getElementById('setup-progress-label').textContent = `Step ${n} of ${total}`;
     backBtn.disabled = n === 1;
-    nextBtn.hidden = n === SETUP_TOTAL_STEPS;
-    saveBtn.hidden = n !== SETUP_TOTAL_STEPS;
+    nextBtn.hidden = n === total;
+    saveBtn.hidden = n !== total;
   };
 
   backBtn.onclick = () => { if (setupStep > 1) showStep(setupStep - 1); };
-  nextBtn.onclick = () => { if (setupStep < SETUP_TOTAL_STEPS) showStep(setupStep + 1); };
+  nextBtn.onclick = () => { if (setupStep < setupStepOrder.length) showStep(setupStep + 1); };
 
   // Enter advances the single-textarea steps (Shift+Enter for a newline).
   for (const id of ['setup-projects-input', 'setup-reasons-input']) {
@@ -351,10 +329,11 @@ ${reasonsAns || '(not configured)'}`;
   };
 }
 
-function buildChip(meta, label, title, selected) {
-  const chip = document.createElement('button');
-  chip.type = 'button';
-  chip.className = 'chip' + (selected ? ' selected' : '');
+function buildRecommendCard(meta, label, title, onAdd) {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'recommend-card';
+  card.title = title;
   if (meta) {
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
@@ -365,35 +344,64 @@ function buildChip(meta, label, title, selected) {
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('d', meta.icon);
     svg.appendChild(path);
-    chip.appendChild(svg);
-    chip.appendChild(document.createTextNode(label));
-  } else {
-    chip.textContent = label;
+    card.appendChild(svg);
   }
-  chip.title = title;
-  return chip;
+  const name = document.createElement('span');
+  name.className = 'recommend-card-name';
+  name.textContent = label;
+  card.appendChild(name);
+  const addIcon = document.createElement('span');
+  addIcon.className = 'recommend-card-add';
+  addIcon.textContent = '+';
+  addIcon.setAttribute('aria-hidden', 'true');
+  card.appendChild(addIcon);
+  card.addEventListener('click', onAdd);
+  return card;
 }
 
-function renderPresetChips(containerId, isSelected, onToggle) {
+function renderSiteRecommendations(containerId, blockedDomains) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  for (const site of COMMON_SITES) {
+  const pool = COMMON_SITES.filter(s => !blockedDomains.includes(s) && !RECOMMEND_IGNORE_SITES.includes(s));
+  for (const site of pool) {
     const meta = SITE_META[site];
-    const chip = buildChip(meta, meta ? meta.name : site, site, isSelected(site));
-    chip.addEventListener('click', () => onToggle(site));
-    container.appendChild(chip);
+    container.appendChild(buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, 10)));
   }
+  container.hidden = pool.length === 0;
 }
 
-function renderAppPresetChips(containerId, isSelected, onToggle) {
+function renderAppRecommendations(containerId, blockedApps) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  for (const app of COMMON_APPS) {
-    const meta = SITE_META[APP_ICON_SITE[app.packageName]];
-    const chip = buildChip(meta, app.label, app.packageName, isSelected(app.packageName));
-    chip.addEventListener('click', () => onToggle(app));
-    container.appendChild(chip);
+  if (HAS_IOS_APP_BLOCKING) {
+    const pool = COMMON_APPS.filter(a => !RECOMMEND_IGNORE_APPS.includes(a.packageName));
+    for (const app of pool) {
+      const meta = SITE_META[APP_ICON_SITE[app.packageName]];
+      container.appendChild(buildRecommendCard(meta, app.label, app.label, () => {
+        window.intentionScreenTime.pickApps(() => refreshIOSAppsCard());
+      }));
+    }
+    container.hidden = pool.length === 0;
+    return;
   }
+  if (!HAS_APP_BLOCKING) {
+    container.hidden = true;
+    return;
+  }
+  getInstalledApps().then(installed => {
+    const installedPkgs = new Set(installed.map(a => a.packageName));
+    const pool = COMMON_APPS.filter(a =>
+      installedPkgs.has(a.packageName) &&
+      !blockedApps.includes(a.packageName) &&
+      !RECOMMEND_IGNORE_APPS.includes(a.packageName)
+    );
+    container.innerHTML = '';
+    for (const app of pool) {
+      const meta = SITE_META[APP_ICON_SITE[app.packageName]];
+      container.appendChild(buildRecommendCard(meta, app.label, app.packageName, () => addApp(app)));
+    }
+    container.hidden = pool.length === 0;
+  });
 }
 
 // Wires a search input to the installed-apps list from the native bridge.
@@ -401,6 +409,22 @@ function renderAppPresetChips(containerId, isSelected, onToggle) {
 function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
   const input = document.getElementById(inputId);
   const results = document.getElementById(resultsId);
+  // Detach the results list to <body> so it renders as a floating popup,
+  // fixed-positioned under the input, instead of being trapped inside the
+  // stacking context of ancestors like .card (which use backdrop-filter).
+  document.body.appendChild(results);
+  const positionResults = () => {
+    const rect = input.getBoundingClientRect();
+    results.style.left = rect.left + 'px';
+    results.style.top = (rect.bottom + 6) + 'px';
+    results.style.width = rect.width + 'px';
+  };
+  window.addEventListener('scroll', () => {
+    if (!results.hidden) positionResults();
+  }, true);
+  window.addEventListener('resize', () => {
+    if (!results.hidden) positionResults();
+  });
   const render = async () => {
     const q = input.value.trim().toLowerCase();
     results.innerHTML = '';
@@ -408,6 +432,7 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
       results.hidden = true;
       return;
     }
+    positionResults();
     const apps = await getInstalledApps();
     const matches = apps.filter(a =>
       !isSelected(a.packageName) &&
@@ -416,6 +441,14 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
     results.hidden = matches.length === 0;
     for (const app of matches) {
       const li = document.createElement('li');
+
+      if (app.icon) {
+        const icon = document.createElement('img');
+        icon.className = 'app-icon';
+        icon.src = app.icon;
+        icon.alt = '';
+        li.appendChild(icon);
+      }
 
       const infoContainer = document.createElement('div');
       infoContainer.className = 'domain-info';
@@ -443,27 +476,18 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
     }
   };
   input.addEventListener('input', render);
-}
-
-function renderSetupPresetChips() {
-  renderPresetChips(
-    'setup-preset-chips',
-    site => setupBlockedDomains.includes(site),
-    site => {
-      if (setupBlockedDomains.includes(site)) {
-        setupBlockedDomains = setupBlockedDomains.filter(x => x !== site);
-        delete setupDomainLimits[site];
-      } else {
-        setupBlockedDomains.push(site);
-        setupDomainLimits[site] = { maxGrants: 3, maxMinutes: 10 };
-      }
-      renderSetupDomains();
+  input.addEventListener('focus', () => {
+    if (input.value.trim()) render();
+  });
+  document.addEventListener('click', (e) => {
+    if (!results.hidden && e.target !== input && !results.contains(e.target)) {
+      results.hidden = true;
     }
-  );
+  });
 }
 
 function renderSetupDomains() {
-  renderSetupPresetChips();
+  renderSiteRecommendations('setup-sites-recommend-grid', setupBlockedDomains);
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
@@ -525,25 +549,8 @@ function addSetupApp(app) {
   renderSetupApps();
 }
 
-function renderSetupAppChips() {
-  renderAppPresetChips(
-    'setup-app-chips',
-    pkg => setupBlockedApps.includes(pkg),
-    app => {
-      if (setupBlockedApps.includes(app.packageName)) {
-        setupBlockedApps = setupBlockedApps.filter(x => x !== app.packageName);
-        delete setupAppLimits[app.packageName];
-        delete setupAppLabels[app.packageName];
-        renderSetupApps();
-      } else {
-        addSetupApp(app);
-      }
-    }
-  );
-}
-
 function renderSetupApps() {
-  renderSetupAppChips();
+  renderAppRecommendations('setup-apps-recommend-grid', setupBlockedApps);
   const list = document.getElementById('setup-apps-list');
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
@@ -599,12 +606,110 @@ function renderSetupApps() {
 }
 
 
+// ---- Mobile Apps/Websites tab toggle ----
+
+let activeSettingsTab = 'apps'; // apps shown first, per spec
+
+function initSettingsTabs() {
+  const tabsEl = document.getElementById('settings-tabs');
+  const showTabs = HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING;
+  tabsEl.hidden = !showTabs;
+  if (!showTabs) return;
+  document.getElementById('tab-apps-btn').addEventListener('click', () => setSettingsTab('apps'));
+  document.getElementById('tab-websites-btn').addEventListener('click', () => setSettingsTab('websites'));
+  applySettingsTab();
+}
+
+function setSettingsTab(tab) {
+  activeSettingsTab = tab;
+  applySettingsTab();
+}
+
+function applySettingsTab() {
+  document.getElementById('tab-apps-btn').classList.toggle('selected', activeSettingsTab === 'apps');
+  document.getElementById('tab-websites-btn').classList.toggle('selected', activeSettingsTab === 'websites');
+  document.getElementById('apps-card').classList.toggle('tab-hidden', activeSettingsTab !== 'apps');
+  document.getElementById('websites-card').classList.toggle('tab-hidden', activeSettingsTab !== 'websites');
+}
+
+// ---- Add-item popup modals ----
+
+function openAddModal(modalId, focusInputId) {
+  document.getElementById(modalId).hidden = false;
+  document.getElementById(focusInputId)?.focus();
+}
+
+function closeAddModal(modalId) {
+  document.getElementById(modalId).hidden = true;
+}
+
+// The "+ Add website"/"+ Add app" modals are shared singletons used by both
+// the setup wizard and the settings view, so they're wired once; addDomain()
+// and addApp() branch on which view is currently active.
+let addModalsWired = false;
+function wireAddModals() {
+  if (addModalsWired) return;
+  addModalsWired = true;
+
+  document.getElementById('open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
+  document.getElementById('setup-open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
+  document.getElementById('close-add-site-btn').addEventListener('click', () => closeAddModal('add-site-modal'));
+  document.getElementById('add-btn').addEventListener('click', async () => { await addDomain(); closeAddModal('add-site-modal'); });
+  document.getElementById('domain-input').addEventListener('keydown', async e => {
+    if (e.key === 'Enter') { await addDomain(); closeAddModal('add-site-modal'); }
+  });
+  document.getElementById('domain-limit-input').addEventListener('keydown', async e => {
+    if (e.key === 'Enter') { await addDomain(); closeAddModal('add-site-modal'); }
+  });
+
+  if (HAS_APP_BLOCKING) {
+    document.getElementById('open-add-app-btn')?.addEventListener('click', () => openAddModal('add-app-modal', 'app-search-input'));
+    document.getElementById('setup-open-add-app-btn')?.addEventListener('click', () => openAddModal('add-app-modal', 'app-search-input'));
+    document.getElementById('close-add-app-btn').addEventListener('click', () => closeAddModal('add-app-modal'));
+    wireAppSearch(
+      'app-search-input',
+      'app-search-results',
+      pkg => (document.getElementById('setup-view').hidden ? settingsBlockedApps : setupBlockedApps).includes(pkg),
+      app => { addApp(app); closeAddModal('add-app-modal'); }
+    );
+  }
+}
+
+// Once context exists, it's chat-only by design (see subtitle copy) — but
+// there's no "weak moment" to guard against before it exists in the first
+// place, so the very first write can happen directly.
+function renderContextCard(userContext) {
+  const contextDisplay = document.getElementById('context-display');
+  const contextEditInput = document.getElementById('context-edit-input');
+  const contextSubtitle = document.getElementById('context-subtitle');
+  const saveContextBtn = document.getElementById('save-context-btn');
+  const hasContext = !!(userContext && userContext.trim());
+  contextDisplay.hidden = !hasContext;
+  contextEditInput.hidden = hasContext;
+  saveContextBtn.hidden = hasContext;
+  contextSubtitle.textContent = hasContext
+    ? "The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment."
+    : "Nothing set yet. Write it yourself, or talk it through with your coach.";
+  if (hasContext) {
+    contextDisplay.textContent = userContext;
+  } else {
+    contextEditInput.value = '';
+  }
+}
+
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
 
-  document.getElementById('context-display').textContent =
-    state.userContext || '(no context yet - talk to your coach to create one)';
+  renderContextCard(state.userContext);
+
+  document.getElementById('save-context-btn').addEventListener('click', async () => {
+    const contextEditInput = document.getElementById('context-edit-input');
+    const value = contextEditInput.value.trim();
+    if (!value) return;
+    await sendBg({ action: 'saveSettings', config: { userContext: value } });
+    renderContextCard(value);
+  });
 
   // Configurable coach instructions (system prompt) + the two settings questions.
   const instructionsInput = document.getElementById('coach-instructions-input');
@@ -675,26 +780,16 @@ async function showSettingsView(state) {
   });
 
   renderDomains(state.blockedDomains || [], state.domainLimits || {});
-  document.getElementById('add-btn').addEventListener('click', addDomain);
-  document.getElementById('domain-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addDomain();
-  });
-  document.getElementById('domain-limit-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addDomain();
-  });
+  wireAddModals();
 
   if (HAS_APP_BLOCKING) {
     document.getElementById('apps-card').hidden = false;
     renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {});
-    wireAppSearch(
-      'app-search-input',
-      'app-search-results',
-      pkg => settingsBlockedApps.includes(pkg),
-      app => addApp(app)
-    );
   } else if (HAS_IOS_APP_BLOCKING) {
     wireIOSAppsCard();
   }
+
+  initSettingsTabs();
 
   const summary = await sendBg({ action: 'getStatsSummary' });
   renderStats(summary);
@@ -738,51 +833,48 @@ function iosScreenTimeStatus() {
 
 function wireIOSAppsCard() {
   document.getElementById('apps-card').hidden = false;
-  // Hide the Android package-list UI; iOS drives the native picker instead.
-  document.getElementById('settings-app-chips').hidden = true;
-  document.getElementById('app-search-group').hidden = true;
   document.getElementById('apps-card-subtitle').textContent =
-    'Block distracting apps on this device with Screen Time. Blocked apps show a shield; your coach can grant you time here.';
+    'Block distracting apps on this device with Screen Time. Tap a suggestion or "Choose apps to block" to open Screen Time\'s picker; your coach can grant you time here.';
   document.getElementById('ios-apps-controls').hidden = false;
 
-  document.getElementById('ios-authorize-btn').addEventListener('click', () => {
-    window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
-  });
-  document.getElementById('ios-pick-apps-btn').addEventListener('click', () => {
+  const openAppBtn = document.getElementById('open-add-app-btn');
+  openAppBtn.textContent = 'Choose apps to block';
+  openAppBtn.addEventListener('click', () => {
     // Adding apps only ever tightens the rules, so no coach gate here;
     // clearing them goes through the gated "Disable all blocking" flow.
     window.intentionScreenTime.pickApps(() => refreshIOSAppsCard());
+  });
+
+  document.getElementById('ios-authorize-btn').addEventListener('click', () => {
+    window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
   });
   document.getElementById('ios-request-time-btn').addEventListener('click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
   });
 
+  renderAppRecommendations('apps-recommend-grid', []);
   refreshIOSAppsCard();
 }
 
 async function refreshIOSAppsCard() {
   const statusEl = document.getElementById('ios-apps-status');
   const authorizeBtn = document.getElementById('ios-authorize-btn');
-  const pickBtn = document.getElementById('ios-pick-apps-btn');
   const requestBtn = document.getElementById('ios-request-time-btn');
   const st = await iosScreenTimeStatus();
 
   if (!st || !st.available) {
     statusEl.textContent = 'App blocking needs iOS 16 or later.';
     authorizeBtn.hidden = true;
-    pickBtn.hidden = true;
     requestBtn.hidden = true;
     return;
   }
   if (!st.authorized) {
     statusEl.textContent = 'Allow Intention to use Screen Time so it can shield the apps you choose.';
     authorizeBtn.hidden = false;
-    pickBtn.hidden = true;
     requestBtn.hidden = true;
     return;
   }
   authorizeBtn.hidden = true;
-  pickBtn.hidden = false;
   const n = st.selectionCount || 0;
   if (n === 0) {
     statusEl.textContent = 'No apps blocked yet.';
@@ -796,16 +888,18 @@ async function refreshIOSAppsCard() {
   }
 }
 
-async function addDomain() {
-  const input = document.getElementById('domain-input');
-  const limitInput = document.getElementById('domain-limit-input');
-  const raw = input.value.trim().toLowerCase();
-  if (!raw) return;
-  
-  const limitVal = parseInt(limitInput.value, 10);
-  const limit = isNaN(limitVal) ? 10 : limitVal;
-  
-  const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+// Adding tightens the rules, so it's applied immediately: during setup that
+// means the local setup accumulator, otherwise it saves straight to the
+// background config.
+async function addDomainToBlocklist(domain, limit) {
+  if (!document.getElementById('setup-view').hidden) {
+    if (!setupBlockedDomains.includes(domain)) {
+      setupBlockedDomains.push(domain);
+      setupDomainLimits[domain] = { maxGrants: 3, maxMinutes: limit };
+      renderSetupDomains();
+    }
+    return;
+  }
   const state = await getConfig();
   const domains = state.blockedDomains || [];
   const limits = state.domainLimits || {};
@@ -814,6 +908,21 @@ async function addDomain() {
     limits[domain] = { maxGrants: 3, maxMinutes: limit };
     await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
     renderDomains(domains, limits);
+  }
+}
+
+async function addDomain() {
+  const input = document.getElementById('domain-input');
+  const limitInput = document.getElementById('domain-limit-input');
+  const raw = input.value.trim().toLowerCase();
+  if (!raw) return;
+
+  const limitVal = parseInt(limitInput.value, 10);
+  const limit = isNaN(limitVal) ? 10 : limitVal;
+
+  const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  if (domain) {
+    await addDomainToBlocklist(domain, limit);
     input.value = '';
     limitInput.value = '10';
   }
@@ -833,33 +942,8 @@ function removeDomain(d) {
   });
 }
 
-// Same suggested-site chips as onboarding, kept in sync with the blocklist.
-// Selecting adds the site immediately; deselecting loosens the rules, so it
-// goes through the coach gate like any other removal.
-function renderSettingsPresetChips(domains) {
-  renderPresetChips(
-    'settings-preset-chips',
-    site => domains.includes(site),
-    async site => {
-      if (domains.includes(site)) {
-        removeDomain(site);
-        return;
-      }
-      const state = await getConfig();
-      const current = state.blockedDomains || [];
-      const limits = state.domainLimits || {};
-      if (!current.includes(site)) {
-        current.push(site);
-        limits[site] = { maxGrants: 3, maxMinutes: 10 };
-        await sendBg({ action: 'saveSettings', config: { blockedDomains: current, domainLimits: limits } });
-      }
-      renderDomains(current, limits);
-    }
-  );
-}
-
 function renderDomains(domains, limits = {}) {
-  renderSettingsPresetChips(domains);
+  renderSiteRecommendations('sites-recommend-grid', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   for (const d of domains) {
@@ -944,6 +1028,10 @@ function renderDomains(domains, limits = {}) {
 let settingsBlockedApps = [];
 
 async function addApp(app) {
+  if (!document.getElementById('setup-view').hidden) {
+    addSetupApp(app);
+    return;
+  }
   const state = await getConfig();
   const apps = state.blockedApps || [];
   const limits = state.appLimits || {};
@@ -971,23 +1059,9 @@ function removeApp(pkg, label) {
   });
 }
 
-function renderSettingsAppChips(apps, labels) {
-  renderAppPresetChips(
-    'settings-app-chips',
-    pkg => apps.includes(pkg),
-    async app => {
-      if (apps.includes(app.packageName)) {
-        removeApp(app.packageName, labels[app.packageName] || app.label);
-        return;
-      }
-      await addApp(app);
-    }
-  );
-}
-
 function renderApps(apps, limits = {}, labels = {}) {
   settingsBlockedApps = apps;
-  renderSettingsAppChips(apps, labels);
+  renderAppRecommendations('apps-recommend-grid', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   for (const pkg of apps) {
@@ -1119,7 +1193,7 @@ async function openCoachModal() {
     if (resp.contextUpdated) {
       addCoachMsg('assistant', `(context saved - ${resp.contextUpdated.diff_summary || 'updated'})`, false, true);
       const state = await getConfig();
-      document.getElementById('context-display').textContent = state.userContext || '';
+      renderContextCard(state.userContext);
     }
   };
   send.onclick = onSend;

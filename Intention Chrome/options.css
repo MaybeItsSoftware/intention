@@ -85,6 +85,9 @@ input[type="number"] {
 
 textarea { resize: vertical; }
 
+#context-edit-input { margin-bottom: 14px; }
+#save-context-btn { margin-bottom: 10px; }
+
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -147,8 +150,7 @@ button.secondary:hover, button.delete-btn:hover {
 }
 
 ul#domain-list, ul#setup-websites-list,
-ul#app-list, ul#setup-apps-list,
-ul#app-search-results, ul#setup-app-results {
+ul#app-list, ul#setup-apps-list {
   list-style: none;
   padding: 0;
   margin: 10px 0 0;
@@ -156,7 +158,7 @@ ul#app-search-results, ul#setup-app-results {
 
 ul#domain-list li, ul#setup-websites-list li,
 ul#app-list li, ul#setup-apps-list li,
-ul#app-search-results li, ul#setup-app-results li {
+ul.app-results li {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -172,6 +174,47 @@ ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
 ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
   padding: 4px 10px;
   font-size: 12px;
+}
+
+/* Search-results dropdown: a popup detached to <body> and fixed-positioned
+   under the search input via JS (see wireAppSearch), so it floats above
+   everything — including ancestors like .card/.setup-nav that create their
+   own stacking context via backdrop-filter — instead of pushing the rest of
+   the form down or getting clipped/covered by them. */
+ul.app-results {
+  list-style: none;
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  padding: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #1c2333;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+ul.app-results li {
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+ul.app-results li:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+ul.app-results li:last-child {
+  margin-bottom: 0;
+}
+
+.app-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  object-fit: cover;
 }
 
 .app-pkg {
@@ -197,7 +240,7 @@ blockquote {
 .status { margin-top: 10px; font-size: 13px; color: #94a3b8; min-height: 18px; }
 .status.success { color: #22c55e; }
 
-#coach-modal, #gate-modal {
+#coach-modal, #gate-modal, #add-site-modal, #add-app-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.72);
@@ -208,9 +251,12 @@ blockquote {
   padding: 20px;
 }
 
-#coach-modal[hidden], #gate-modal[hidden] {
+#coach-modal[hidden], #gate-modal[hidden], #add-site-modal[hidden], #add-app-modal[hidden] {
   display: none;
 }
+
+.add-modal-box { width: min(420px, 100%); max-height: none; }
+.add-row-btn { width: 100%; margin-bottom: 14px; }
 
 .coach-box {
   background: #1e293b;
@@ -329,7 +375,7 @@ blockquote {
 .domain-name {
   font-weight: 600;
   color: #f1f5f9;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -349,17 +395,6 @@ blockquote {
 #setup-view {
   max-width: 680px;
   margin: 0 auto;
-}
-
-.setup-header {
-  margin-bottom: 24px;
-}
-
-.setup-header h2 {
-  font-weight: 400;
-  font-size: 24px;
-  margin: 0 0 8px;
-  color: #f1f5f9;
 }
 
 .setup-progress {
@@ -398,40 +433,57 @@ blockquote {
   color: #f1f5f9;
 }
 
-.preset-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 4px 0 18px;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 400;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #cbd5e1;
-}
-
 .chip-icon {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
 }
 
-.chip:hover {
-  background: rgba(255, 255, 255, 0.1);
+.recommend-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 4px 0 14px;
 }
 
-.chip.selected {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: rgba(59, 130, 246, 0.65);
+.recommend-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.recommend-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.recommend-card-name {
+  flex: 1;
+  font-size: 14px;
   color: #f1f5f9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recommend-card-add {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(59, 130, 246, 0.22);
+  color: #f1f5f9;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .model-pills {
@@ -510,6 +562,26 @@ blockquote {
   .settings-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.settings-tabs { display: none; gap: 8px; margin-bottom: 4px; }
+.settings-tabs .tab-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+  font-weight: 600;
+}
+.settings-tabs .tab-btn.selected {
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.65);
+  color: #f1f5f9;
+}
+@media (max-width: 760px) {
+  #settings-tabs:not([hidden]) { display: flex; }
+  .settings-column .card.tab-hidden { display: none; }
 }
 
 .settings-column {
@@ -610,17 +682,6 @@ input[type="number"].inline-limit-input:focus {
     padding: 16px 16px 32px;
   }
 
-  .setup-header { margin-bottom: 10px; }
-
-  .setup-header h2 {
-    font-size: 19px;
-    margin-bottom: 4px;
-  }
-
-  .setup-header .subtitle {
-    font-size: 13px;
-    margin-bottom: 0;
-  }
 
   .setup-progress {
     gap: 10px;
@@ -642,7 +703,11 @@ input[type="number"].inline-limit-input:focus {
     margin-bottom: 10px;
   }
 
-  .chip, .pill { padding: 6px 12px; }
+  .pill { padding: 6px 12px; }
+
+  .recommend-grid { grid-template-columns: 1fr; }
+  .recommend-card { padding: 10px 12px; gap: 10px; }
+  .recommend-card-name { font-size: 13px; }
 
   .input-group { flex-wrap: wrap; }
   .input-group .input-domain { flex: 1 1 100%; }
@@ -665,4 +730,31 @@ input[type="number"].inline-limit-input:focus {
   }
 
   .settings-header h1 { font-size: 22px; }
+
+  /* The name/limit-badge/remove-button row is too wide to fit on one line at
+     phone widths: the badge (flex-shrink:0) refuses to shrink, so the name
+     (the only shrinkable item) gets squeezed to nothing and the row overflows
+     its card — which is also what makes the WebView zoom the whole page out
+     and render it blurry. Stack it across three lines (name / limit / remove)
+     instead, each given the full row width, so the name always shows and
+     nothing overflows. */
+  ul#domain-list li, ul#setup-websites-list li,
+  ul#app-list li, ul#setup-apps-list li {
+    flex-wrap: wrap;
+  }
+
+  .domain-info {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .domain-limit-badge {
+    flex-basis: 100%;
+  }
+
+  ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
+  ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
+    margin-left: auto;
+  }
 }

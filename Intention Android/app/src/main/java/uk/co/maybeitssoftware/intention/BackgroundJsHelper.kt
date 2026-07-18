@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONObject
@@ -23,6 +24,7 @@ object BackgroundJsHelper {
             val wv = WebView(context.applicationContext)
             wv.settings.javaScriptEnabled = true
             wv.settings.allowFileAccess = true
+            wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             
             wv.addJavascriptInterface(object {
                 @JavascriptInterface

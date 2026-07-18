@@ -2,6 +2,7 @@ package uk.co.maybeitssoftware.intention
 
 import android.content.Intent
 import android.os.Bundle
+import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 
@@ -24,6 +25,7 @@ class CoachingActivity : AppCompatActivity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
+            settings.cacheMode = WebSettings.LOAD_NO_CACHE
         }
         setContentView(webView)
 

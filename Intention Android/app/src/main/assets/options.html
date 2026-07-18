@@ -11,11 +11,6 @@
 
 
     <main id="setup-view" hidden>
-      <div class="setup-header">
-        <h2>Use the internet with <em>Intention</em></h2>
-        <p class="subtitle">A few quick steps to set up your coach.</p>
-      </div>
-
       <div class="setup-progress">
         <div class="setup-progress-track">
           <div id="setup-progress-fill" class="setup-progress-fill"></div>
@@ -23,32 +18,23 @@
         <span id="setup-progress-label" class="setup-progress-label">Step 1 of 4</span>
       </div>
 
-      <section class="card setup-step" id="setup-step-1">
-        <h3>Which websites pull you in?</h3>
-        <p class="subtitle">Tap the common ones, or add your own below. Each gets a 10 min/day absolute max you can adjust.</p>
-        <div id="setup-preset-chips" class="preset-chips"></div>
-        <label>Add another website & absolute max</label>
-        <div class="input-group">
-          <input type="text" id="setup-website-input" class="input-domain" placeholder="e.g. news.ycombinator.com">
-          <input type="number" id="setup-website-limit" class="input-minutes" placeholder="min" min="1" value="10">
-          <button id="setup-add-website-btn" class="secondary" type="button">Add</button>
-        </div>
-        <ul id="setup-websites-list"></ul>
-
-        <div id="setup-apps-section" hidden>
-          <h3>Which apps pull you in?</h3>
-          <p class="subtitle">Tap the common ones, or search your installed apps. Same 10 min/day absolute max.</p>
-          <div id="setup-app-chips" class="preset-chips"></div>
-          <label>Search installed apps</label>
-          <div class="input-group">
-            <input type="text" id="setup-app-search" placeholder="e.g. Instagram">
-          </div>
-          <ul id="setup-app-results" class="app-results" hidden></ul>
-          <ul id="setup-apps-list"></ul>
-        </div>
+      <section class="card setup-step" id="setup-step-apps" hidden>
+        <h3>Which apps pull you in?</h3>
+        <p class="subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
+        <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+        <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
+        <ul id="setup-apps-list"></ul>
       </section>
 
-      <section class="card setup-step" id="setup-step-2" hidden>
+      <section class="card setup-step" id="setup-step-sites">
+        <h3>Which websites pull you in?</h3>
+        <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 10 min/day absolute max you can adjust.</p>
+        <button type="button" id="setup-open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+        <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
+        <ul id="setup-websites-list"></ul>
+      </section>
+
+      <section class="card setup-step" id="setup-step-projects" hidden>
         <h3>Your coach's context</h3>
         <label for="setup-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
         <div class="input-group">
@@ -56,7 +42,7 @@
         </div>
       </section>
 
-      <section class="card setup-step" id="setup-step-3" hidden>
+      <section class="card setup-step" id="setup-step-reasons" hidden>
         <h3>Your coach's context</h3>
         <label for="setup-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
         <div class="input-group">
@@ -64,7 +50,7 @@
         </div>
       </section>
 
-      <section class="card setup-step" id="setup-step-4" hidden>
+      <section class="card setup-step" id="setup-step-provider" hidden>
         <h3>Choose your LLM provider</h3>
         <p class="subtitle">Intention uses the LLM you choose. You bring your own API key. Nothing leaves your machine except calls to that provider.</p>
         <label for="provider-select">Provider</label>
@@ -102,8 +88,10 @@
         <div class="settings-column">
           <section class="card">
             <h2>Your coach's context</h2>
-            <p class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
+            <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
             <blockquote id="context-display"></blockquote>
+            <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
+            <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
             <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
           </section>
 
@@ -114,32 +102,29 @@
         </div>
 
         <div class="settings-column">
-          <section class="card">
+          <div id="settings-tabs" class="settings-tabs" hidden>
+            <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
+            <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
+          </div>
+
+          <section class="card" id="websites-card">
             <h2>Blocked sites</h2>
-            <p class="subtitle">Add domains you want to be mindful about. Tap the common ones, or add your own below.</p>
-            <div id="settings-preset-chips" class="preset-chips"></div>
-            <div class="input-group">
-              <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
-              <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10">
-              <button id="add-btn" class="secondary">Add</button>
-            </div>
+            <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below.</p>
+            <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+            <div id="sites-recommend-grid" class="recommend-grid"></div>
             <ul id="domain-list"></ul>
             <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
 
           <section class="card" id="apps-card" hidden>
             <h2>Blocked apps</h2>
-            <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device. Tap the common ones, or search your installed apps.</p>
-            <div id="settings-app-chips" class="preset-chips"></div>
-            <div class="input-group" id="app-search-group">
-              <input type="text" id="app-search-input" placeholder="Search installed apps">
-            </div>
-            <ul id="app-search-results" class="app-results" hidden></ul>
+            <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device, or tap a suggestion below.</p>
+            <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+            <div id="apps-recommend-grid" class="recommend-grid"></div>
             <ul id="app-list"></ul>
             <div id="ios-apps-controls" hidden>
               <p class="subtitle" id="ios-apps-status"></p>
               <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
-              <button id="ios-pick-apps-btn" class="secondary" style="width: 100%;" hidden>Choose apps to block</button>
               <button id="ios-request-time-btn" class="secondary" style="width: 100%; margin-top: 8px;" hidden>Ask your coach for time on a blocked app</button>
             </div>
           </section>
@@ -212,6 +197,33 @@
           <input type="text" id="gate-input" placeholder="Make your case...">
           <button id="gate-send-btn" class="primary">Send</button>
         </div>
+      </div>
+    </div>
+
+    <div id="add-site-modal" class="add-modal" hidden>
+      <div class="coach-box add-modal-box">
+        <div class="coach-header">
+          <h2>Add a website</h2>
+          <button type="button" id="close-add-site-btn" class="secondary">Close</button>
+        </div>
+        <div class="input-group">
+          <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
+          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10">
+          <button id="add-btn" class="primary">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="add-app-modal" class="add-modal" hidden>
+      <div class="coach-box add-modal-box">
+        <div class="coach-header">
+          <h2>Add an app</h2>
+          <button type="button" id="close-add-app-btn" class="secondary">Close</button>
+        </div>
+        <div class="input-group" id="app-search-group">
+          <input type="text" id="app-search-input" placeholder="Search installed apps">
+        </div>
+        <ul id="app-search-results" class="app-results" hidden></ul>
       </div>
     </div>
   </div>
