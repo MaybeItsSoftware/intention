@@ -25,14 +25,18 @@ Do these once, before the first submission of each platform.
    git add -A && git commit -m "Bump version to 2.1"
    git tag v2.1 && git push origin v2.1
    ```
-4. Pushing the tag triggers two workflows automatically:
+4. Pushing the tag triggers four workflows automatically:
    - **`release.yml`** — zips Chrome + Firefox and creates a GitHub Release with both as assets. Always runs, no setup required.
-   - **`publish.yml`** — uploads to the Chrome Web Store, submits to AMO, and publishes a Google Play internal release, *if* the secrets below are configured for each. If not configured, each job logs a warning and skips without failing — tagging always works.
+   - **`publish-chrome.yml`** — uploads to the Chrome Web Store, *if* the secrets below are configured. If not configured, it logs a warning and skips without failing — tagging always works.
+   - **`publish-firefox.yml`** — submits to AMO, *if* configured. Same skip-gracefully behavior.
+   - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured. Same skip-gracefully behavior.
+
+   Each store's workflow is independent — you can also run any one of them by hand from the Actions tab (or `gh workflow run publish-android.yml`) without triggering the others, which is useful when only one store needs a retry.
 5. Safari/App Store has no CLI-only path (Apple requires Xcode/Transporter for the first submission of a build). See [Safari / App Store](#safari--app-store-macos--ios) below.
 
 ## Chrome Web Store: automated publishing
 
-`publish.yml`'s `chrome` job needs these repo secrets (**Settings → Secrets and variables → Actions**):
+`publish-chrome.yml` needs these repo secrets (**Settings → Secrets and variables → Actions**):
 
 | Secret | How to get it |
 |---|---|
@@ -40,11 +44,11 @@ Do these once, before the first submission of each platform.
 | `CHROME_CLIENT_ID` / `CHROME_CLIENT_SECRET` | Create an OAuth 2.0 Client ID (type "Desktop app") in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), with the Chrome Web Store API enabled on that project. |
 | `CHROME_REFRESH_TOKEN` | Generate once via the OAuth consent flow using the client ID/secret above and scope `https://www.googleapis.com/auth/chromewebstore` (see the [chrome-extension-upload README](https://github.com/mnao305/chrome-extension-upload) for the exact `curl`/browser flow). |
 
-The very first submission must be done manually (upload a zip from `./build.sh`'s `build/` output, fill in the store listing, submit for review) — Google requires the extension to exist before the API can update it. After that, `publish.yml` handles every subsequent version.
+The very first submission must be done manually (upload a zip from `./build.sh`'s `build/` output, fill in the store listing, submit for review) — Google requires the extension to exist before the API can update it. After that, `publish-chrome.yml` handles every subsequent version.
 
 ## Firefox Add-ons (AMO): automated publishing
 
-`publish.yml`'s `firefox` job needs:
+`publish-firefox.yml` needs:
 
 | Secret | How to get it |
 |---|---|
@@ -66,7 +70,7 @@ No public API for first-time app submission — this stays manual, on a Mac with
 
 ## Google Play: automated publishing
 
-`publish.yml`'s `android` job builds a signed `.aab` in CI and pushes it to the **internal** track (change the `track:` input in the workflow to `alpha`, `beta`, or `production` once you're past internal testing). It needs these repo secrets:
+`publish-android.yml` builds a signed `.aab` in CI and pushes it to the **internal** track (change the `track:` input in the workflow to `alpha`, `beta`, or `production` once you're past internal testing). It needs these repo secrets:
 
 | Secret | How to get it |
 |---|---|
@@ -76,7 +80,7 @@ No public API for first-time app submission — this stays manual, on a Mac with
 | `ANDROID_KEY_PASSWORD` | The key password from `keystore.properties`. |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Create a service account in [Google Cloud Console](https://console.cloud.google.com/iam-admin/serviceaccounts) for the same project linked to your Play Console, grant it access under **Play Console → Users and permissions** with "Release to production, exclude devices, and use Play App Signing" permission, then paste the full JSON key as the secret value. |
 
-The very first release to Google Play must be created manually (upload the `.aab` from `./gradlew bundleRelease`'s output, fill in the store listing, complete the content rating and data safety forms, submit for review) — Play Console requires the app to exist and pass initial review before the API can push subsequent builds. After that, `publish.yml` handles every later version.
+The very first release to Google Play must be created manually (upload the `.aab` from `./gradlew bundleRelease`'s output, fill in the store listing, complete the content rating and data safety forms, submit for review) — Play Console requires the app to exist and pass initial review before the API can push subsequent builds. After that, `publish-android.yml` handles every later version.
 
 To build the signed bundle locally without CI: `cd "Intention Android" && ./gradlew bundleRelease` — output lands at `app/build/outputs/bundle/release/app-release.aab`, signed via the local `keystore.properties`.
 
@@ -103,4 +107,6 @@ To build the signed bundle locally without CI: `cd "Intention Android" && ./grad
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
 | `release.yml` | `v*` tag push | Zips Chrome + Firefox, creates a GitHub Release |
-| `publish.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store + AMO + Google Play, if secrets are configured; skips gracefully otherwise |
+| `publish-chrome.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store, if secrets are configured; skips gracefully otherwise |
+| `publish-firefox.yml` | `v*` tag push (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
+| `publish-android.yml` | `v*` tag push (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |

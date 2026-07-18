@@ -106,8 +106,8 @@ Run `npm install` once to get `web-ext` for Firefox linting (`npm run lint:firef
 1. Zips `Intention Chrome/` and `Intention Firefox/` with versioned filenames
 2. Creates a GitHub Release with auto-generated notes and both zips as assets
 
-### Publish (`publish.yml`) — runs on `v*` tag push
-Auto-submits to the Chrome Web Store and Firefox Add-ons (AMO) if the relevant repo secrets are configured; skips gracefully (without failing) otherwise. See `DEPLOYMENT.md` for the secrets needed and first-submission steps for all three stores, including Safari/App Store (which has no CLI-only path).
+### Publish (`publish-chrome.yml`, `publish-firefox.yml`, `publish-android.yml`) — each runs independently on `v*` tag push or manual dispatch
+Auto-submits to the Chrome Web Store, Firefox Add-ons (AMO), and Google Play (internal track) respectively, if the relevant repo secrets are configured; each skips gracefully (without failing) otherwise. Being separate workflows, any one store can be retried via `gh workflow run publish-<store>.yml` without re-triggering the others. See `DEPLOYMENT.md` for the secrets needed and first-submission steps for all four stores, including Safari/App Store (which has no CLI-only path).
 
 **To release**: `scripts/bump-version.sh 2.0.1 && git add -A && git commit -m "Bump version to 2.0.1" && git tag v2.0.1 && git push origin v2.0.1`
 

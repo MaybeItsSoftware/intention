@@ -1,0 +1,50 @@
+name: Publish to Firefox Add-ons (AMO)
+
+# Auto-submits to AMO on every vX.Y tag push, provided AMO_* secrets are
+# configured (see DEPLOYMENT.md). Skips gracefully — without failing the
+# run — if secrets are missing.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  firefox:
+    name: Publish to Firefox Add-ons (AMO)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check secrets configured
+        id: check
+        run: |
+          if [[ -n "${{ secrets.AMO_JWT_ISSUER }}" && -n "${{ secrets.AMO_JWT_SECRET }}" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::AMO secrets not configured — skipping publish. See DEPLOYMENT.md."
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install deploy tooling
+        if: steps.check.outputs.configured == 'true'
+        run: npm install
+
+      - name: Lint, sign, and submit to AMO
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          npx web-ext sign \
+            --source-dir="Intention Firefox" \
+            --artifacts-dir=build \
+            --channel=listed \
+            --ignore-files env.txt \
+            --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
+            --api-secret="${{ secrets.AMO_JWT_SECRET }}"
