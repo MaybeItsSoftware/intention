@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
 
 class IntentionAccessibilityService : AccessibilityService() {
@@ -77,20 +78,20 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
 
         val urlBarIds = BROWSER_URL_BAR_IDS[packageName] ?: return
-        checkWebsiteBlock(packageName, urlBarIds)
+        checkWebsiteBlock(event, packageName, urlBarIds)
     }
 
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility Service Interrupted")
     }
 
-    private fun checkWebsiteBlock(packageName: String, urlBarIds: List<String>) {
+    private fun checkWebsiteBlock(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>) {
         val now = System.currentTimeMillis()
         val lastCheck = lastContentCheckAt[packageName] ?: 0L
         if (now - lastCheck < CONTENT_CHECK_THROTTLE_MS) return
         lastContentCheckAt[packageName] = now
 
-        val host = findBrowserHost(packageName, urlBarIds) ?: return
+        val host = findBrowserHost(event, packageName, urlBarIds) ?: return
         if (lastSeenHost[packageName] == host) return
         lastSeenHost[packageName] = host
 
@@ -104,8 +105,8 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun findBrowserHost(packageName: String, urlBarIds: List<String>): String? {
-        val root = rootInActiveWindow ?: return null
+    private fun findBrowserHost(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>): String? {
+        val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return null
         for (idName in urlBarIds) {
             val nodes = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")
             val text = nodes?.firstOrNull()?.text?.toString()
@@ -114,6 +115,16 @@ class IntentionAccessibilityService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    private fun getRootFromEvent(event: AccessibilityEvent): AccessibilityNodeInfo? {
+        var node = event.source ?: return null
+        var parent = node.parent
+        while (parent != null) {
+            node = parent
+            parent = node.parent
+        }
+        return node
     }
 
     private fun extractHost(raw: String): String? {
@@ -129,7 +140,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private fun findBlockedDomain(host: String): String? {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val blockedDomainsStr = prefs.getString("blockedDomains", "[]")
+        val blockedDomainsStr = prefs.getString("blockedDomains", "[]") ?: "[]"
         try {
             // blockedDomains is stored as a JSON string of array: ["instagram.com", ...]
             val array = org.json.JSONArray(blockedDomainsStr)
@@ -145,7 +156,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private fun isAppBlocked(packageName: String): Boolean {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val blockedAppsStr = prefs.getString("blockedApps", "[]")
+        val blockedAppsStr = prefs.getString("blockedApps", "[]") ?: "[]"
         try {
             // blockedApps is stored as a JSON string of array: ["com.instagram.android", ...]
             val array = org.json.JSONArray(blockedAppsStr)
@@ -162,7 +173,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private fun isSessionActive(key: String): Boolean {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val activeSessionsStr = prefs.getString("activeSessions", "{}")
+        val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         try {
             // activeSessions is stored as a JSON object: {"tabId": {"domain": "com.instagram.android", "startTime": 12345, "intervalMinutes": 10}}
             val json = JSONObject(activeSessionsStr)
