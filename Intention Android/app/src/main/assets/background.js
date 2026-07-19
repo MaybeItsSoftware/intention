@@ -410,7 +410,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   try {
     llmResponse = await callLLM({ provider, apiKey, model, system: systemPrompt, messages: history, tools });
   } catch (e) {
-    return { error: e.message };
+    return { error: e.message, networkError: isNetworkError(e) };
   }
 
   let grantedSession = null;

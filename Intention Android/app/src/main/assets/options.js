@@ -1335,6 +1335,24 @@ async function refreshUsageLog(state) {
   renderUsageLog(entries);
 }
 
+// Shared by the coach and settings-gate modals below.
+function addRetryButton(container, onRetry) {
+  const row = document.createElement('div');
+  row.className = 'int-retry-row';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'secondary';
+  btn.textContent = 'Try again';
+  btn.addEventListener('click', () => {
+    row.remove();
+    onRetry();
+  });
+  row.appendChild(btn);
+  container.appendChild(row);
+  container.scrollTop = container.scrollHeight;
+  return row;
+}
+
 let coachSending = false;
 
 async function openCoachModal() {
@@ -1352,32 +1370,53 @@ async function openCoachModal() {
   const onSend = async () => {
     const text = input.value.trim();
     if (!text || coachSending) return;
-    coachSending = true;
     addCoachMsg('user', text);
     input.value = '';
-    const thinking = addCoachMsg('assistant', '…', true);
-    const resp = await sendBg({ action: 'chat', mode: 'context', userMessage: text });
-    coachSending = false;
-    if (!resp) {
-      thinking.remove();
-      addCoachMsg('assistant', '[no response - background worker may be offline]');
-      return;
-    }
-    if (resp.error) {
-      thinking.remove();
-      addCoachMsg('assistant', `[error: ${resp.error}]`);
-      return;
-    }
-    thinking.classList.remove('int-thinking');
-    typeCoachMsg(thinking, resp.assistantText || '(no reply)');
-    if (resp.contextUpdated) {
-      addCoachMsg('assistant', `(context saved - ${resp.contextUpdated.diff_summary || 'updated'})`, false, true);
-      const state = await getConfig();
-      renderContextCard(state.userContext);
-    }
+    attemptCoachSend(text, messagesEl);
   };
   send.onclick = onSend;
   input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
+}
+
+async function attemptCoachSend(text, messagesEl) {
+  coachSending = true;
+  const thinking = addCoachMsg('assistant', '…', true);
+  let resp;
+  try {
+    resp = await sendBg({ action: 'chat', mode: 'context', userMessage: text });
+  } catch (e) {
+    coachSending = false;
+    thinking.remove();
+    showCoachRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    return;
+  }
+  coachSending = false;
+  if (!resp) {
+    thinking.remove();
+    showCoachRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    return;
+  }
+  if (resp.error) {
+    thinking.remove();
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
+    showCoachRetryableError(messagesEl, message, text);
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeCoachMsg(thinking, resp.assistantText || '(no reply)');
+  if (resp.contextUpdated) {
+    addCoachMsg('assistant', `(context saved - ${resp.contextUpdated.diff_summary || 'updated'})`, false, true);
+    const state = await getConfig();
+    renderContextCard(state.userContext);
+  }
+}
+
+function showCoachRetryableError(messagesEl, message, text) {
+  const errorEl = addCoachMsg('assistant', message);
+  addRetryButton(messagesEl, () => {
+    errorEl.remove();
+    attemptCoachSend(text, messagesEl);
+  });
 }
 
 async function closeCoachModal() {
@@ -1444,11 +1483,21 @@ function openGateModal({ changeType, domain, currentValue, newValue, title, subt
   const onSend = async () => {
     const text = input.value.trim();
     if (!text || gateSending) return;
-    gateSending = true;
     addGateMsg('user', text);
     input.value = '';
-    const thinking = addGateMsg('assistant', '…', true);
-    const resp = await sendBg({
+    attemptGateSend(text, messagesEl);
+  };
+  send.onclick = onSend;
+  input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
+  document.getElementById('gate-close-btn').onclick = closeGateModal;
+}
+
+async function attemptGateSend(text, messagesEl) {
+  gateSending = true;
+  const thinking = addGateMsg('assistant', '…', true);
+  let resp;
+  try {
+    resp = await sendBg({
       action: 'chat',
       mode: 'settings_gate',
       domain: gateChange.domain,
@@ -1457,31 +1506,42 @@ function openGateModal({ changeType, domain, currentValue, newValue, title, subt
       newValue: gateChange.newValue,
       userMessage: text
     });
+  } catch (e) {
     gateSending = false;
-    if (!resp) {
-      thinking.remove();
-      addGateMsg('assistant', '[no response - background worker may be offline]');
-      return;
-    }
-    if (resp.error) {
-      thinking.remove();
-      addGateMsg('assistant', `[error: ${resp.error}]`);
-      return;
-    }
-    thinking.classList.remove('int-thinking');
-    typeGateMsg(thinking, resp.assistantText || '(no reply)');
-    if (resp.approved) {
-      addGateMsg('assistant', '(approved - applying your change)', false, true);
-      const cb = gateChange.onApproved;
-      setTimeout(async () => {
-        if (cb) await cb();
-        closeGateModal();
-      }, 900);
-    }
-  };
-  send.onclick = onSend;
-  input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
-  document.getElementById('gate-close-btn').onclick = closeGateModal;
+    thinking.remove();
+    showGateRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    return;
+  }
+  gateSending = false;
+  if (!resp) {
+    thinking.remove();
+    showGateRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    return;
+  }
+  if (resp.error) {
+    thinking.remove();
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
+    showGateRetryableError(messagesEl, message, text);
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeGateMsg(thinking, resp.assistantText || '(no reply)');
+  if (resp.approved) {
+    addGateMsg('assistant', '(approved - applying your change)', false, true);
+    const cb = gateChange.onApproved;
+    setTimeout(async () => {
+      if (cb) await cb();
+      closeGateModal();
+    }, 900);
+  }
+}
+
+function showGateRetryableError(messagesEl, message, text) {
+  const errorEl = addGateMsg('assistant', message);
+  addRetryButton(messagesEl, () => {
+    errorEl.remove();
+    attemptGateSend(text, messagesEl);
+  });
 }
 
 async function closeGateModal() {

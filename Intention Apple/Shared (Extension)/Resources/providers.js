@@ -25,6 +25,17 @@ const PROVIDERS = {
   }
 };
 
+// fetch() rejects with TypeError for network-layer failures (offline, DNS,
+// connection refused) consistently across Chromium/Firefox/WebKit; HTTP
+// error responses are thrown as plain Error with a status code baked in
+// (see callAnthropic/callOpenAICompatible/callGemini below), so the two are
+// cleanly distinguishable without inspecting message text in most cases.
+function isNetworkError(e) {
+  if (!e) return false;
+  if (e instanceof TypeError) return true;
+  return /failed to fetch|networkerror|load failed|network request failed|internet connection/i.test(e.message || '');
+}
+
 async function callLLM({ provider, apiKey, model, system, messages, tools }) {
   if (!provider) throw new Error('No provider configured');
   if (!apiKey) throw new Error('No API key configured');

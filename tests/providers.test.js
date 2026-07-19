@@ -187,3 +187,31 @@ describe('callLLM dispatch', () => {
     expect(ctx.PROVIDERS.anthropic.defaultModel).toBeTruthy();
   });
 });
+
+describe('isNetworkError', () => {
+  it('treats fetch TypeErrors and known browser network-failure messages as network errors', () => {
+    const { ctx } = loadProviders();
+    expect(ctx.isNetworkError(new TypeError('Failed to fetch'))).toBe(true);
+    expect(ctx.isNetworkError(new Error('NetworkError when attempting to fetch resource.'))).toBe(true);
+    expect(ctx.isNetworkError(new Error('Load failed'))).toBe(true);
+  });
+
+  it('does not treat HTTP error responses as network errors', () => {
+    const { ctx } = loadProviders();
+    expect(ctx.isNetworkError(new Error('Anthropic 401: {"error":"invalid api key"}'))).toBe(false);
+    expect(ctx.isNetworkError(new Error('No API key configured'))).toBe(false);
+  });
+
+  it('marks a callLLM rejection caused by an offline fetch as a network error', async () => {
+    const fetch = async () => { throw new TypeError('Failed to fetch'); };
+    const { ctx } = loadProviders({ fetch });
+    let caught;
+    try {
+      await ctx.callLLM({ provider: 'anthropic', apiKey: 'k', messages: MESSAGES });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeDefined();
+    expect(ctx.isNetworkError(caught)).toBe(true);
+  });
+});

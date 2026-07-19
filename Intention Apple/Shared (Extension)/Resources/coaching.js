@@ -100,52 +100,92 @@ let sending = false;
 async function send() {
   const text = inputEl.value.trim();
   if (!text || sending) return;
-  sending = true;
   addMessage(messagesEl, 'user', text);
   inputEl.value = '';
+  attemptSend(text);
+}
+
+async function attemptSend(text) {
+  sending = true;
   const thinking = addMessage(messagesEl, 'assistant', '…', true);
 
-  chrome.runtime.sendMessage({
-    action: 'chat',
-    mode: 'gate',
-    domain,
-    isApp,
-    appLabel: isApp ? appLabel : undefined,
-    userMessage: text
-  }, (resp) => {
-    if (!resp) {
-      thinking.remove();
-      addMessage(messagesEl, 'assistant', '[no response: background worker may be offline]');
-      sending = false;
-      return;
-    }
-    if (resp.error) {
-      thinking.remove();
-      addMessage(messagesEl, 'assistant', `[error: ${resp.error}]`);
-      sending = false;
-      return;
-    }
-    thinking.classList.remove('int-thinking');
-    typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
-      sending = false;
-      if (resp.grantedSession) {
-        setTimeout(() => {
-          if (isApp && window.intentionApps) {
-            // Android: launch the granted app; the native bridge closes this overlay.
-            window.intentionApps.launchApp(domain);
-          } else if (isApp && window.intentionScreenTime) {
-            // iOS: lift the Screen Time shields for the granted window.
-            window.intentionScreenTime.grantPass(resp.grantedSession.intervalMinutes, () => {
-              window.location.href = 'options.html';
-            });
-          } else {
-            // Redirect back to the target website once session is granted
-            window.location.href = `https://${domain}`;
-          }
-        }, 2200);
-      }
+  let resp;
+  try {
+    resp = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        action: 'chat',
+        mode: 'gate',
+        domain,
+        isApp,
+        appLabel: isApp ? appLabel : undefined,
+        userMessage: text
+      }, resolve);
     });
+  } catch (e) {
+    thinking.remove();
+    sending = false;
+    showRetryableError(messagesEl, '[no response: background worker may be offline]', text);
+    return;
+  }
+
+  if (!resp) {
+    thinking.remove();
+    sending = false;
+    showRetryableError(messagesEl, '[no response: background worker may be offline]', text);
+    return;
+  }
+  if (resp.error) {
+    thinking.remove();
+    sending = false;
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
+    showRetryableError(messagesEl, message, text);
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
+    sending = false;
+    if (resp.grantedSession) {
+      setTimeout(() => {
+        if (isApp && window.intentionApps) {
+          // Android: launch the granted app; the native bridge closes this overlay.
+          window.intentionApps.launchApp(domain);
+        } else if (isApp && window.intentionScreenTime) {
+          // iOS: lift the Screen Time shields for the granted window.
+          window.intentionScreenTime.grantPass(resp.grantedSession.intervalMinutes, () => {
+            window.location.href = 'options.html';
+          });
+        } else {
+          // Redirect back to the target website once session is granted
+          window.location.href = `https://${domain}`;
+        }
+      }, 2200);
+    }
   });
+}
+
+function showRetryableError(container, message, text) {
+  const errorEl = addMessage(container, 'assistant', message);
+  addRetryButton(container, () => {
+    errorEl.remove();
+    attemptSend(text);
+  });
+}
+
+function addRetryButton(container, onRetry) {
+  const row = document.createElement('div');
+  row.className = 'int-retry-row';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'int-retry-btn';
+  btn.textContent = 'Try again';
+  btn.addEventListener('click', () => {
+    row.remove();
+    onRetry();
+  });
+  row.appendChild(btn);
+  container.appendChild(row);
+  container.scrollTop = container.scrollHeight;
+  return row;
 }
 
 sendBtn.addEventListener('click', send);

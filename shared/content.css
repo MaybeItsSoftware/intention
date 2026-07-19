@@ -129,6 +129,21 @@
 
 #intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
 
+#intention-root .int-retry-row { margin-top: 4px; }
+
+#intention-root .int-retry-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e7e7ea;
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root .int-retry-btn:hover { background: rgba(255, 255, 255, 0.06); }
+
 #intention-root button.int-secondary {
   border: none;
   background: transparent;
