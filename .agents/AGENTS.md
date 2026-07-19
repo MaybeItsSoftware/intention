@@ -107,7 +107,7 @@ Run `npm install` once to get `web-ext` for Firefox linting (`npm run lint:firef
 2. Bumps version strings across files (using `scripts/bump-version.sh`), builds, and packages Chrome + Firefox extension zips.
 3. Creates/pushes the Git tag (e.g., `v2.0.1`) and publishes a GitHub Release with both zips and `CHANGELOG.md` as assets.
 
-### Publish (`publish-chrome.yml`, `publish-firefox.yml`, `publish-android.yml`) — each runs independently on `v*` tag push or manual dispatch
+### Publish (`publish-chrome.yml`, `publish-firefox.yml`, `publish-android.yml`) — each runs automatically on Automated Release completion or manual dispatch
 Auto-submits to the Chrome Web Store, Firefox Add-ons (AMO), and Google Play (internal track) respectively, if the relevant repo secrets are configured; each skips gracefully (without failing) otherwise. Being separate workflows, any one store can be retried via `gh workflow run publish-<store>.yml` without re-triggering the others. See `DEPLOYMENT.md` for the secrets needed and first-submission steps for all four stores, including Safari/App Store (which has no CLI-only path).
 
 **To release**: Commit your changes using Conventional Commits and merge/push to the `main` branch. The automated release pipeline will calculate the version bump, tag the commit, update the changelog, and draft the release.

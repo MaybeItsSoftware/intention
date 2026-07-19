@@ -6,18 +6,47 @@ name: Publish to Google Play
 # are missing.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["Automated Release"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:
+  check-release:
+    name: Check a release happened
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.check.outputs.released }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Was the commit Release just left on main tagged as a release?
+        id: check
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
   android:
     name: Publish to Google Play
+    needs: check-release
+    if: needs.check-release.outputs.released == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-release.outputs.sha }}
 
       - name: Check secrets configured
         id: check
