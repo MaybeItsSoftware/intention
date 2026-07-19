@@ -86,9 +86,17 @@
         <p class="muted">Your coach, your sites, your rules.</p>
       </div>
 
+      <div id="section-tabs" class="settings-tabs section-tabs">
+        <button type="button" class="tab-btn" data-section-tab="blocking">Blocking</button>
+        <button type="button" class="tab-btn" data-section-tab="activity">Activity</button>
+        <button type="button" class="tab-btn" data-section-tab="coach">Coach</button>
+        <button type="button" class="tab-btn" data-section-tab="unlock" id="section-tab-unlock" hidden>Unlock</button>
+        <button type="button" class="tab-btn" data-section-tab="settings">Settings</button>
+      </div>
+
       <div class="settings-grid">
         <div class="settings-column">
-          <section class="card">
+          <section class="card" data-section="coach">
             <h2>Your coach's context</h2>
             <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
             <blockquote id="context-display"></blockquote>
@@ -97,12 +105,12 @@
             <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
           </section>
 
-          <section class="card">
+          <section class="card" data-section="activity">
             <h2>Today</h2>
             <div id="stats-display"></div>
           </section>
 
-          <section class="card" id="usage-log-card">
+          <section class="card" id="usage-log-card" data-section="activity">
             <h2>Usage log</h2>
             <p class="subtitle">Time spent on blocked sites and apps, by day.</p>
             <div id="usage-log-access" hidden></div>
@@ -111,12 +119,12 @@
         </div>
 
         <div class="settings-column">
-          <div id="settings-tabs" class="settings-tabs" hidden>
+          <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
             <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
             <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
           </div>
 
-          <section class="card" id="websites-card">
+          <section class="card" id="websites-card" data-section="blocking">
             <h2>Blocked sites</h2>
             <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below.</p>
             <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
@@ -124,7 +132,7 @@
             <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
 
-          <section class="card" id="apps-card" hidden>
+          <section class="card" id="apps-card" data-section="blocking" hidden>
             <h2>Blocked apps</h2>
             <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device, or tap a suggestion below.</p>
             <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
@@ -132,11 +140,17 @@
             <div id="ios-apps-controls" hidden>
               <p class="subtitle" id="ios-apps-status"></p>
               <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
-              <button id="ios-request-time-btn" class="secondary" style="width: 100%; margin-top: 8px;" hidden>Ask your coach for time on a blocked app</button>
             </div>
           </section>
 
-          <section class="card">
+          <section class="card" id="unlock-card" data-section="unlock" hidden>
+            <h2>Ask for time</h2>
+            <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
+            <p class="subtitle" id="unlock-status"></p>
+            <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
+          </section>
+
+          <section class="card" data-section="settings">
             <h2>Provider</h2>
             <label for="provider-select-2">Provider</label>
             <div class="input-group">
@@ -156,7 +170,7 @@
         </div>
       </div>
 
-      <details class="card advanced-card">
+      <details class="card advanced-card" data-section="coach">
         <summary>Coach instructions <span class="muted">(advanced)</span></summary>
         <div class="advanced-card-body">
           <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>

@@ -110,6 +110,22 @@ object BackgroundJsHelper {
         }
     }
 
+    // Fires the chrome.alarms.onAlarm listener registered by the shared
+    // background.js (exposed as window.alarmListener by background.html).
+    fun dispatchAlarm(name: String) {
+        val script = "window.alarmListener && window.alarmListener({name: ${JSONObject.quote(name)}})"
+        Handler(Looper.getMainLooper()).post {
+            val wv = webView ?: return@post
+            if (isReady) {
+                wv.evaluateJavascript(script, null)
+            } else {
+                synchronized(pendingMessages) {
+                    pendingMessages.add { wv.evaluateJavascript(script, null) }
+                }
+            }
+        }
+    }
+
     private fun runOnJs(wv: WebView, script: String) {
         Handler(Looper.getMainLooper()).post {
             wv.evaluateJavascript(script, null)

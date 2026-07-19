@@ -596,6 +596,17 @@ blockquote {
   .settings-column .card.tab-hidden { display: none; }
 }
 
+/* ---- Mobile section tabs (Blocking / Activity / Coach / Unlock (iOS) / Settings) ---- */
+.section-tabs .tab-btn {
+  padding: 10px 6px; /* all tabs must fit a 320px viewport */
+  font-size: 13px;
+}
+@media (max-width: 760px) {
+  .section-tabs { display: flex; flex-wrap: wrap; }
+  #settings-view .section-hidden { display: none; }
+  .advanced-card { margin-top: 0; }
+}
+
 .settings-column {
   display: flex;
   flex-direction: column;

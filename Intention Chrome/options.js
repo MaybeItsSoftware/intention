@@ -372,20 +372,9 @@ function renderSiteRecommendations(containerId, blockedDomains) {
   container.hidden = pool.length === 0;
 }
 
-function renderAppRecommendations(containerId, blockedApps, onIOSPicked = refreshIOSAppsCard) {
+function renderAppRecommendations(containerId, blockedApps) {
   const container = document.getElementById(containerId);
   container.innerHTML = '';
-  if (HAS_IOS_APP_BLOCKING) {
-    const pool = COMMON_APPS.filter(a => !RECOMMEND_IGNORE_APPS.includes(a.packageName));
-    for (const app of pool) {
-      const meta = SITE_META[APP_ICON_SITE[app.packageName]];
-      container.appendChild(buildRecommendCard(meta, app.label, app.label, () => {
-        window.intentionScreenTime.pickApps(() => onIOSPicked());
-      }));
-    }
-    container.hidden = pool.length === 0;
-    return;
-  }
   if (!HAS_APP_BLOCKING) {
     container.hidden = true;
     return;
@@ -608,15 +597,18 @@ function renderSetupApps() {
 }
 
 // iOS app blocking is opaque (Screen Time's FamilyActivitySelection, not a
-// package list), so the setup step swaps the Android add-button/list for a
-// status line + "Choose apps to block" button, mirroring wireIOSAppsCard.
+// package list) — Apple's picker can't be pre-filtered to a specific app, so
+// per-app tiles would all just open the same blank picker. Instead: name
+// popular picks as plain text and drive everything through the one real
+// "Choose apps to block" button, mirroring wireIOSAppsCard.
 function renderSetupIOSApps() {
   document.getElementById('setup-apps-subtitle').textContent =
-    'Tap a suggestion below, or "Choose apps to block" to open Screen Time\'s picker.';
+    `Popular picks: ${COMMON_APPS.map(a => a.label).join(', ')}. Tap "Choose apps to block" to pick with Screen Time.`;
   document.getElementById('setup-open-add-app-btn').textContent = 'Choose apps to block';
+  document.getElementById('setup-apps-recommend-grid').hidden = true;
+  document.getElementById('setup-apps-recommend-grid').innerHTML = '';
   document.getElementById('setup-apps-list').hidden = true;
   document.getElementById('setup-ios-apps-status').hidden = false;
-  renderAppRecommendations('setup-apps-recommend-grid', [], refreshSetupIOSApps);
   refreshSetupIOSApps();
 }
 
@@ -674,6 +666,38 @@ function applySettingsTab() {
   document.getElementById('tab-websites-btn').classList.toggle('selected', activeSettingsTab === 'websites');
   document.getElementById('apps-card').classList.toggle('tab-hidden', activeSettingsTab !== 'apps');
   document.getElementById('websites-card').classList.toggle('tab-hidden', activeSettingsTab !== 'websites');
+}
+
+// ---- Mobile section tabs (Blocking / Activity / Coach / Unlock / Settings) ----
+
+const SETTINGS_SECTIONS = ['blocking', 'activity', 'coach', 'unlock', 'settings'];
+let activeSettingsSection = (() => {
+  try {
+    const saved = localStorage.getItem('activeSettingsSection');
+    return SETTINGS_SECTIONS.includes(saved) ? saved : 'blocking';
+  } catch (e) { return 'blocking'; }
+})();
+
+function initSectionTabs() {
+  document.querySelectorAll('#section-tabs [data-section-tab]').forEach(btn => {
+    btn.addEventListener('click', () => setSettingsSection(btn.dataset.sectionTab));
+  });
+  applySettingsSection();
+}
+
+function setSettingsSection(section) {
+  activeSettingsSection = section;
+  try { localStorage.setItem('activeSettingsSection', section); } catch (e) {}
+  applySettingsSection();
+}
+
+function applySettingsSection() {
+  document.querySelectorAll('#section-tabs [data-section-tab]').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.sectionTab === activeSettingsSection);
+  });
+  document.querySelectorAll('#settings-view [data-section]').forEach(el => {
+    el.classList.toggle('section-hidden', el.dataset.section !== activeSettingsSection);
+  });
 }
 
 // ---- Add-item popup modals ----
@@ -841,6 +865,7 @@ async function showSettingsView(state) {
   }
 
   initSettingsTabs();
+  initSectionTabs();
 
   const summary = await sendBg({ action: 'getStatsSummary' });
   renderStats(summary);
@@ -886,7 +911,7 @@ function iosScreenTimeStatus() {
 function wireIOSAppsCard() {
   document.getElementById('apps-card').hidden = false;
   document.getElementById('apps-card-subtitle').textContent =
-    'Block distracting apps on this device with Screen Time. Tap a suggestion or "Choose apps to block" to open Screen Time\'s picker; your coach can grant you time here.';
+    'Block distracting apps on this device with Screen Time. Tap "Choose apps to block" to open Screen Time\'s picker; your coach can grant you time here.';
   document.getElementById('ios-apps-controls').hidden = false;
 
   const openAppBtn = document.getElementById('open-add-app-btn');
@@ -900,6 +925,9 @@ function wireIOSAppsCard() {
   document.getElementById('ios-authorize-btn').addEventListener('click', () => {
     window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
   });
+
+  document.getElementById('section-tab-unlock').hidden = false;
+  document.getElementById('unlock-card').hidden = false;
   document.getElementById('ios-request-time-btn').addEventListener('click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
   });
@@ -910,18 +938,21 @@ function wireIOSAppsCard() {
 async function refreshIOSAppsCard() {
   const statusEl = document.getElementById('ios-apps-status');
   const authorizeBtn = document.getElementById('ios-authorize-btn');
+  const unlockStatusEl = document.getElementById('unlock-status');
   const requestBtn = document.getElementById('ios-request-time-btn');
   const st = await iosScreenTimeStatus();
 
   if (!st || !st.available) {
     statusEl.textContent = 'App blocking needs iOS 16 or later.';
     authorizeBtn.hidden = true;
+    unlockStatusEl.textContent = 'App blocking needs iOS 16 or later.';
     requestBtn.hidden = true;
     return;
   }
   if (!st.authorized) {
     statusEl.textContent = iosAuthGuidance(st);
     authorizeBtn.hidden = false;
+    unlockStatusEl.textContent = 'Enable Screen Time access in the Blocking tab first.';
     requestBtn.hidden = true;
     return;
   }
@@ -929,12 +960,14 @@ async function refreshIOSAppsCard() {
   const n = st.selectionCount || 0;
   if (n === 0) {
     statusEl.textContent = 'No apps blocked yet.';
+    unlockStatusEl.textContent = 'No apps blocked yet — choose some in the Blocking tab first.';
     requestBtn.hidden = true;
   } else {
     const passNote = st.passEndsAt
       ? ` A pass is active until ${new Date(st.passEndsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
       : '';
     statusEl.textContent = `${n} app${n === 1 ? '' : 's or categories'} blocked.${passNote}`;
+    unlockStatusEl.textContent = `${n} app${n === 1 ? '' : 's or categories'} blocked.${passNote}`;
     requestBtn.hidden = false;
   }
 }

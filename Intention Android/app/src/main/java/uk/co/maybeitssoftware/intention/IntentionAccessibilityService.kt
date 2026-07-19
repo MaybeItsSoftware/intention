@@ -3,6 +3,8 @@ package uk.co.maybeitssoftware.intention
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -13,6 +15,13 @@ class IntentionAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "IntentionAccessService"
         private const val CONTENT_CHECK_THROTTLE_MS = 400L
+        // Fire the re-check just after the session's expiration timestamp so
+        // the timestamp comparison in sessionExpiresAt sees it as expired.
+        private const val EXPIRY_RECHECK_BUFFER_MS = 250L
+
+        @Volatile
+        var instance: IntentionAccessibilityService? = null
+            private set
 
         // Best-effort address-bar view IDs for popular Android browsers. These are
         // internal view IDs, not a public API, so a browser update can rename them
@@ -49,6 +58,21 @@ class IntentionAccessibilityService : AccessibilityService() {
     private val lastContentCheckAt = mutableMapOf<String, Long>()
     private val lastSeenHost = mutableMapOf<String, String>()
 
+    private val handler = Handler(Looper.getMainLooper())
+    private val expiryRecheck = Runnable { recheckForeground() }
+    private var lastForegroundPackage: String? = null
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+    }
+
+    override fun onDestroy() {
+        if (instance == this) instance = null
+        handler.removeCallbacks(expiryRecheck)
+        super.onDestroy()
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -65,14 +89,17 @@ class IntentionAccessibilityService : AccessibilityService() {
 
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             Log.d(TAG, "Foreground app changed to: $packageName")
+            lastForegroundPackage = packageName
 
             if (isAppBlocked(packageName)) {
                 Log.d(TAG, "App is blocked: $packageName. Checking for active session...")
-                if (!isSessionActive(packageName)) {
+                val expiresAt = sessionExpiresAt(packageName)
+                if (expiresAt == null) {
                     Log.d(TAG, "No active session for $packageName. Blocking and launching Coach!")
                     launchCoachingOverlay(packageName, isApp = true, label = getAppLabel(packageName))
                 } else {
-                    Log.d(TAG, "Active session exists for $packageName. Allowing access.")
+                    Log.d(TAG, "Active session exists for $packageName. Allowing access until $expiresAt.")
+                    scheduleExpiryRecheck(expiresAt)
                 }
             }
         }
@@ -91,22 +118,68 @@ class IntentionAccessibilityService : AccessibilityService() {
         if (now - lastCheck < CONTENT_CHECK_THROTTLE_MS) return
         lastContentCheckAt[packageName] = now
 
-        val host = findBrowserHost(event, packageName, urlBarIds) ?: return
-        if (lastSeenHost[packageName] == host) return
+        val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return
+        val host = findBrowserHost(root, packageName, urlBarIds) ?: return
+        val hostChanged = lastSeenHost[packageName] != host
         lastSeenHost[packageName] = host
 
         val matchedDomain = findBlockedDomain(host) ?: return
-        Log.d(TAG, "Website is blocked: $host (matched $matchedDomain). Checking for active session...")
-        if (!isSessionActive(matchedDomain)) {
-            Log.d(TAG, "No active session for $matchedDomain. Blocking and launching Coach!")
+        val expiresAt = sessionExpiresAt(matchedDomain)
+        if (expiresAt != null) {
+            // Keep an expiry re-check armed while the user stays on the site,
+            // since no further host change will trigger a check.
+            scheduleExpiryRecheck(expiresAt)
+        } else if (hostChanged) {
+            Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
             launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain)
-        } else {
-            Log.d(TAG, "Active session exists for $matchedDomain. Allowing access.")
         }
     }
 
-    private fun findBrowserHost(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>): String? {
-        val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return null
+    // Re-evaluates whatever is currently in the foreground, independent of
+    // accessibility events. Called when a session expiry timer or the native
+    // check-in alarm fires, so the user is cut off mid-use instead of only on
+    // the next app switch or navigation.
+    fun recheckForeground() {
+        handler.removeCallbacks(expiryRecheck)
+        // Hosts were deduped against lastSeenHost while the session was
+        // active; clear so the next content event re-evaluates them.
+        lastSeenHost.clear()
+
+        val root = rootInActiveWindow
+        val packageName = root?.packageName?.toString() ?: lastForegroundPackage ?: return
+        if (packageName == this.packageName) return
+
+        if (isAppBlocked(packageName)) {
+            val expiresAt = sessionExpiresAt(packageName)
+            if (expiresAt == null) {
+                Log.d(TAG, "Session expired while $packageName in foreground. Launching Coach!")
+                launchCoachingOverlay(packageName, isApp = true, label = getAppLabel(packageName))
+            } else {
+                scheduleExpiryRecheck(expiresAt)
+            }
+            return
+        }
+
+        val urlBarIds = BROWSER_URL_BAR_IDS[packageName] ?: return
+        val host = findBrowserHost(root ?: return, packageName, urlBarIds) ?: return
+        lastSeenHost[packageName] = host
+        val matchedDomain = findBlockedDomain(host) ?: return
+        val expiresAt = sessionExpiresAt(matchedDomain)
+        if (expiresAt == null) {
+            Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
+            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain)
+        } else {
+            scheduleExpiryRecheck(expiresAt)
+        }
+    }
+
+    private fun scheduleExpiryRecheck(expiresAt: Long) {
+        val delay = (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L) + EXPIRY_RECHECK_BUFFER_MS
+        handler.removeCallbacks(expiryRecheck)
+        handler.postDelayed(expiryRecheck, delay)
+    }
+
+    private fun findBrowserHost(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
         for (idName in urlBarIds) {
             val nodes = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")
             val text = nodes?.firstOrNull()?.text?.toString()
@@ -171,9 +244,12 @@ class IntentionAccessibilityService : AccessibilityService() {
         return false
     }
 
-    private fun isSessionActive(key: String): Boolean {
+    // Returns the latest future expiration time of any active session for
+    // this app/domain, or null if there is no unexpired session.
+    private fun sessionExpiresAt(key: String): Long? {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
         val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
+        var latest: Long? = null
         try {
             // activeSessions is stored as a JSON object: {"tabId": {"domain": "com.instagram.android", "startTime": 12345, "intervalMinutes": 10}}
             val json = JSONObject(activeSessionsStr)
@@ -187,15 +263,15 @@ class IntentionAccessibilityService : AccessibilityService() {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val expirationTime = startTime + (intervalMinutes * 60 * 1000)
-                    if (now < expirationTime) {
-                        return true
+                    if (now < expirationTime && expirationTime > (latest ?: 0L)) {
+                        latest = expirationTime
                     }
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error checking active sessions: ", e)
         }
-        return false
+        return latest
     }
 
     private fun launchCoachingOverlay(key: String, isApp: Boolean, label: String) {

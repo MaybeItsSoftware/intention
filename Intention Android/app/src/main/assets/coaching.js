@@ -27,6 +27,7 @@ const closeBtn = document.getElementById('int-close');
 const bottomBar = document.getElementById('int-bottom-bar');
 
 closeBtn.textContent = isApp ? 'Close app' : 'Close tab';
+if (isApp) closeBtn.classList.add('int-block');
 
 // Keep .int-column's bottom padding in sync with the bar's real rendered
 // height (font swap, text wrap, and safe-area insets can all change it).
