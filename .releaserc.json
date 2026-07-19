@@ -25,8 +25,8 @@
     }],
     ["@semantic-release/github", {
       "assets": [
-        {"path": "build/intention-chrome-v${nextRelease.version}.zip", "label": "Intention Chrome Extension (v${nextRelease.version})"},
-        {"path": "build/intention-firefox-v${nextRelease.version}.zip", "label": "Intention Firefox Extension (v${nextRelease.version})"},
+        {"path": "build/intention-chrome-v*.zip", "label": "Intention Chrome Extension (v${nextRelease.version})"},
+        {"path": "build/intention-firefox-v*.zip", "label": "Intention Firefox Extension (v${nextRelease.version})"},
         {"path": "CHANGELOG.md", "label": "Changelog"}
       ]
     }]

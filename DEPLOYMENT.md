@@ -29,6 +29,11 @@ Do these once, before the first submission of each platform.
    - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured.
    
    If secrets are missing, these workflows log warnings and skip gracefully. You can run any store workflow by hand via the Actions tab.
+
+   > [!NOTE]
+   > **Downstream Workflow Triggers in CI:**
+   > When the automated release workflow runs on GitHub and pushes a tag using the default `GITHUB_TOKEN`, GitHub's built-in security policies prevent it from triggering subsequent workflows (such as the store publishing workflows).
+   > To enable automatic publishing to the stores on every automated tag push, create a **Personal Access Token (PAT)** or GitHub App token with `repo` and `workflow` permissions, and save it in your repository secrets as **`RELEASE_TOKEN`**. The release workflow will use this token to push tags, which successfully triggers downstream workflows.
 5. Safari/App Store has no CLI-only path (Apple requires Xcode/Transporter for the first submission of a build). See [Safari / App Store](#safari--app-store-macos--ios) below.
 
 ## Chrome Web Store: automated publishing
