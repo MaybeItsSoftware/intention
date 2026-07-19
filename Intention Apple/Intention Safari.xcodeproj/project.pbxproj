@@ -82,6 +82,16 @@
 		1EDF5969600008746A5F0B50 /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
 		863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
 		79E816C9538AF8290B28BE79 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
+		AC10C0DE00000000000000B1 /* DeviceActivityMonitorExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC10C0DE00000000000000A1 /* DeviceActivityMonitorExtension.swift */; };
+		AC10C0DE00000000000000B2 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		AC10C0DE00000000000000B3 /* Intention Monitor Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AC10C0DE00000000000000AF /* Intention Monitor Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AD10C0DE00000000000000B1 /* ShieldConfigurationExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD10C0DE00000000000000A1 /* ShieldConfigurationExtension.swift */; };
+		AD10C0DE00000000000000B3 /* Intention Shield Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AD10C0DE00000000000000AF /* Intention Shield Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AE10C0DE00000000000000B1 /* ShieldActionExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE10C0DE00000000000000A1 /* ShieldActionExtension.swift */; };
+		AE10C0DE00000000000000B3 /* Intention Shield Action Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AE10C0DE00000000000000AF /* Intention Shield Action Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		AF10C0DE00000000000000B1 /* ReportExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF10C0DE00000000000000A1 /* ReportExtension.swift */; };
+		AF10C0DE00000000000000B2 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		AF10C0DE00000000000000B3 /* Intention Report Extension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = AF10C0DE00000000000000AF /* Intention Report Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -99,6 +109,34 @@
 			remoteGlobalIDString = 66B8D0452FE985EF00BC0D7F;
 			remoteInfo = "Intention Safari Extension (macOS)";
 		};
+		AC10C0DE00000000000000E1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AC10C0DE00000000000000D0;
+			remoteInfo = "Intention Monitor Extension";
+		};
+		AD10C0DE00000000000000E1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AD10C0DE00000000000000D0;
+			remoteInfo = "Intention Shield Extension";
+		};
+		AE10C0DE00000000000000E1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AE10C0DE00000000000000D0;
+			remoteInfo = "Intention Shield Action Extension";
+		};
+		AF10C0DE00000000000000E1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AF10C0DE00000000000000D0;
+			remoteInfo = "Intention Report Extension";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -109,8 +147,22 @@
 			dstSubfolderSpec = 13;
 			files = (
 				66B8D03D2FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */,
+				AC10C0DE00000000000000B3 /* Intention Monitor Extension.appex in Embed Foundation Extensions */,
+				AD10C0DE00000000000000B3 /* Intention Shield Extension.appex in Embed Foundation Extensions */,
+				AE10C0DE00000000000000B3 /* Intention Shield Action Extension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF10C0DE00000000000000F9 /* Embed ExtensionKit Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
+			dstSubfolderSpec = 16;
+			files = (
+				AF10C0DE00000000000000B3 /* Intention Report Extension.appex in Embed ExtensionKit Extensions */,
+			);
+			name = "Embed ExtensionKit Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		66B8D0662FE985EF00BC0D7F /* Embed Foundation Extensions */ = {
@@ -175,6 +227,22 @@
 		8B14A43335CF347D3C27E481 /* ios-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "ios-bridge.js"; sourceTree = "<group>"; };
 		2BE36CEA3FB8DD72FFBE228A /* iOS (App).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS (App).entitlements"; sourceTree = "<group>"; };
 		68A62FDB51C54FAF28354D17 /* iOS (Extension).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS (Extension).entitlements"; sourceTree = "<group>"; };
+		AC10C0DE00000000000000A1 /* DeviceActivityMonitorExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceActivityMonitorExtension.swift; sourceTree = "<group>"; };
+		AC10C0DE00000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AC10C0DE00000000000000A3 /* Monitor Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Monitor Extension.entitlements"; sourceTree = "<group>"; };
+		AC10C0DE00000000000000AF /* Intention Monitor Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Monitor Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD10C0DE00000000000000A1 /* ShieldConfigurationExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldConfigurationExtension.swift; sourceTree = "<group>"; };
+		AD10C0DE00000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AD10C0DE00000000000000A3 /* Shield Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Shield Extension.entitlements"; sourceTree = "<group>"; };
+		AD10C0DE00000000000000AF /* Intention Shield Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Shield Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AE10C0DE00000000000000A1 /* ShieldActionExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShieldActionExtension.swift; sourceTree = "<group>"; };
+		AE10C0DE00000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AE10C0DE00000000000000A3 /* Shield Action Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Shield Action Extension.entitlements"; sourceTree = "<group>"; };
+		AE10C0DE00000000000000AF /* Intention Shield Action Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Shield Action Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF10C0DE00000000000000A1 /* ReportExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportExtension.swift; sourceTree = "<group>"; };
+		AF10C0DE00000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AF10C0DE00000000000000A3 /* Report Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Report Extension.entitlements"; sourceTree = "<group>"; };
+		AF10C0DE00000000000000AF /* Intention Report Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = "Intention Report Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -206,6 +274,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AC10C0DE00000000000000C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD10C0DE00000000000000C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AE10C0DE00000000000000C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF10C0DE00000000000000C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -218,9 +314,53 @@
 				66B8D0202FE985EE00BC0D7F /* iOS (App) */,
 				66B8D0312FE985EF00BC0D7F /* macOS (App) */,
 				66B8D0402FE985EF00BC0D7F /* iOS (Extension) */,
+				AC10C0DE00000000000000A0 /* iOS (Monitor Extension) */,
+				AD10C0DE00000000000000A0 /* iOS (Shield Extension) */,
+				AE10C0DE00000000000000A0 /* iOS (Shield Action Extension) */,
+				AF10C0DE00000000000000A0 /* iOS (Report Extension) */,
 				66B8D04A2FE985EF00BC0D7F /* macOS (Extension) */,
 				66B8D01F2FE985EE00BC0D7F /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		AC10C0DE00000000000000A0 /* iOS (Monitor Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				AC10C0DE00000000000000A1 /* DeviceActivityMonitorExtension.swift */,
+				AC10C0DE00000000000000A2 /* Info.plist */,
+				AC10C0DE00000000000000A3 /* Monitor Extension.entitlements */,
+			);
+			path = "iOS (Monitor Extension)";
+			sourceTree = "<group>";
+		};
+		AD10C0DE00000000000000A0 /* iOS (Shield Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				AD10C0DE00000000000000A1 /* ShieldConfigurationExtension.swift */,
+				AD10C0DE00000000000000A2 /* Info.plist */,
+				AD10C0DE00000000000000A3 /* Shield Extension.entitlements */,
+			);
+			path = "iOS (Shield Extension)";
+			sourceTree = "<group>";
+		};
+		AE10C0DE00000000000000A0 /* iOS (Shield Action Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				AE10C0DE00000000000000A1 /* ShieldActionExtension.swift */,
+				AE10C0DE00000000000000A2 /* Info.plist */,
+				AE10C0DE00000000000000A3 /* Shield Action Extension.entitlements */,
+			);
+			path = "iOS (Shield Action Extension)";
+			sourceTree = "<group>";
+		};
+		AF10C0DE00000000000000A0 /* iOS (Report Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				AF10C0DE00000000000000A1 /* ReportExtension.swift */,
+				AF10C0DE00000000000000A2 /* Info.plist */,
+				AF10C0DE00000000000000A3 /* Report Extension.entitlements */,
+			);
+			path = "iOS (Report Extension)";
 			sourceTree = "<group>";
 		};
 		BF6CF1868EB926C9BE668207 /* Shared (iOS) */ = {
@@ -274,6 +414,10 @@
 				66B8D0302FE985EF00BC0D7F /* Intention Safari.app */,
 				66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */,
 				66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */,
+				AC10C0DE00000000000000AF /* Intention Monitor Extension.appex */,
+				AD10C0DE00000000000000AF /* Intention Shield Extension.appex */,
+				AE10C0DE00000000000000AF /* Intention Shield Action Extension.appex */,
+				AF10C0DE00000000000000AF /* Intention Report Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -355,11 +499,16 @@
 				66B8D01B2FE985EE00BC0D7F /* Frameworks */,
 				66B8D01C2FE985EE00BC0D7F /* Resources */,
 				66B8D05F2FE985EF00BC0D7F /* Embed Foundation Extensions */,
+				AF10C0DE00000000000000F9 /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				66B8D03F2FE985EF00BC0D7F /* PBXTargetDependency */,
+				AC10C0DE00000000000000E2 /* PBXTargetDependency */,
+				AD10C0DE00000000000000E2 /* PBXTargetDependency */,
+				AE10C0DE00000000000000E2 /* PBXTargetDependency */,
+				AF10C0DE00000000000000E2 /* PBXTargetDependency */,
 			);
 			name = "Intention Safari (iOS)";
 			packageProductDependencies = (
@@ -427,6 +576,82 @@
 			productReference = 66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		AC10C0DE00000000000000D0 /* Intention Monitor Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AC10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Monitor Extension" */;
+			buildPhases = (
+				AC10C0DE00000000000000C1 /* Sources */,
+				AC10C0DE00000000000000C2 /* Frameworks */,
+				AC10C0DE00000000000000C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Intention Monitor Extension";
+			packageProductDependencies = (
+			);
+			productName = "Intention Monitor Extension";
+			productReference = AC10C0DE00000000000000AF /* Intention Monitor Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		AD10C0DE00000000000000D0 /* Intention Shield Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AD10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Shield Extension" */;
+			buildPhases = (
+				AD10C0DE00000000000000C1 /* Sources */,
+				AD10C0DE00000000000000C2 /* Frameworks */,
+				AD10C0DE00000000000000C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Intention Shield Extension";
+			packageProductDependencies = (
+			);
+			productName = "Intention Shield Extension";
+			productReference = AD10C0DE00000000000000AF /* Intention Shield Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		AE10C0DE00000000000000D0 /* Intention Shield Action Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AE10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Shield Action Extension" */;
+			buildPhases = (
+				AE10C0DE00000000000000C1 /* Sources */,
+				AE10C0DE00000000000000C2 /* Frameworks */,
+				AE10C0DE00000000000000C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Intention Shield Action Extension";
+			packageProductDependencies = (
+			);
+			productName = "Intention Shield Action Extension";
+			productReference = AE10C0DE00000000000000AF /* Intention Shield Action Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		AF10C0DE00000000000000D0 /* Intention Report Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AF10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Report Extension" */;
+			buildPhases = (
+				AF10C0DE00000000000000C1 /* Sources */,
+				AF10C0DE00000000000000C2 /* Frameworks */,
+				AF10C0DE00000000000000C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Intention Report Extension";
+			packageProductDependencies = (
+			);
+			productName = "Intention Report Extension";
+			productReference = AF10C0DE00000000000000AF /* Intention Report Extension.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -469,6 +694,10 @@
 				66B8D02F2FE985EF00BC0D7F /* Intention Safari (macOS) */,
 				66B8D03B2FE985EF00BC0D7F /* Intention Safari Extension (iOS) */,
 				66B8D0452FE985EF00BC0D7F /* Intention Safari Extension (macOS) */,
+				AC10C0DE00000000000000D0 /* Intention Monitor Extension */,
+				AD10C0DE00000000000000D0 /* Intention Shield Extension */,
+				AE10C0DE00000000000000D0 /* Intention Shield Action Extension */,
+				AF10C0DE00000000000000D0 /* Intention Report Extension */,
 			);
 		};
 /* End PBXProject section */
@@ -561,6 +790,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AC10C0DE00000000000000C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD10C0DE00000000000000C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AE10C0DE00000000000000C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF10C0DE00000000000000C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -606,6 +863,40 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AC10C0DE00000000000000C1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AC10C0DE00000000000000B1 /* DeviceActivityMonitorExtension.swift in Sources */,
+				AC10C0DE00000000000000B2 /* AppGroupConfig.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD10C0DE00000000000000C1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AD10C0DE00000000000000B1 /* ShieldConfigurationExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AE10C0DE00000000000000C1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AE10C0DE00000000000000B1 /* ShieldActionExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AF10C0DE00000000000000C1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AF10C0DE00000000000000B1 /* ReportExtension.swift in Sources */,
+				AF10C0DE00000000000000B2 /* AppGroupConfig.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -618,6 +909,26 @@
 			isa = PBXTargetDependency;
 			target = 66B8D0452FE985EF00BC0D7F /* Intention Safari Extension (macOS) */;
 			targetProxy = 66B8D0482FE985EF00BC0D7F /* PBXContainerItemProxy */;
+		};
+		AC10C0DE00000000000000E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AC10C0DE00000000000000D0 /* Intention Monitor Extension */;
+			targetProxy = AC10C0DE00000000000000E1 /* PBXContainerItemProxy */;
+		};
+		AD10C0DE00000000000000E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AD10C0DE00000000000000D0 /* Intention Shield Extension */;
+			targetProxy = AD10C0DE00000000000000E1 /* PBXContainerItemProxy */;
+		};
+		AE10C0DE00000000000000E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AE10C0DE00000000000000D0 /* Intention Shield Action Extension */;
+			targetProxy = AE10C0DE00000000000000E1 /* PBXContainerItemProxy */;
+		};
+		AF10C0DE00000000000000E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AF10C0DE00000000000000D0 /* Intention Report Extension */;
+			targetProxy = AF10C0DE00000000000000E1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -853,7 +1164,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (App)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Intention Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
@@ -872,7 +1183,7 @@
 					WebKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
-				PRODUCT_NAME = "Intention Safari";
+				PRODUCT_NAME = "Intention";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -895,7 +1206,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "iOS (App)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Intention Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
@@ -914,7 +1225,7 @@
 					WebKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
-				PRODUCT_NAME = "Intention Safari";
+				PRODUCT_NAME = "Intention";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -1013,7 +1324,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "macOS (App)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Intention Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1029,7 +1340,7 @@
 					WebKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
-				PRODUCT_NAME = "Intention Safari";
+				PRODUCT_NAME = "Intention";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1055,7 +1366,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "macOS (App)/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Intention Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention";
 				INFOPLIST_KEY_NSMainStoryboardFile = Main;
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1071,7 +1382,7 @@
 					WebKit,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention";
-				PRODUCT_NAME = "Intention Safari";
+				PRODUCT_NAME = "Intention";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1080,6 +1391,260 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		AC10C0DE00000000000000D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Monitor Extension)/Monitor Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Monitor Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Monitor Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Monitor";
+				PRODUCT_NAME = "Intention Monitor Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AC10C0DE00000000000000D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Monitor Extension)/Monitor Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Monitor Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Monitor Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Monitor";
+				PRODUCT_NAME = "Intention Monitor Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AD10C0DE00000000000000D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Shield Extension)/Shield Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Shield Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Shield Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Shield";
+				PRODUCT_NAME = "Intention Shield Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AD10C0DE00000000000000D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Shield Extension)/Shield Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Shield Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Shield Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Shield";
+				PRODUCT_NAME = "Intention Shield Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AE10C0DE00000000000000D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Shield Action Extension)/Shield Action Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Shield Action Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Shield Action Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.ShieldAction";
+				PRODUCT_NAME = "Intention Shield Action Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AE10C0DE00000000000000D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Shield Action Extension)/Shield Action Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Shield Action Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Shield Action Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.ShieldAction";
+				PRODUCT_NAME = "Intention Shield Action Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AF10C0DE00000000000000D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Report Extension)/Report Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Report Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Report Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Report";
+				PRODUCT_NAME = "Intention Report Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AF10C0DE00000000000000D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = "iOS (Report Extension)/Report Extension.entitlements";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Report Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Report Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.5.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Report";
+				PRODUCT_NAME = "Intention Report Extension";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
 		};
@@ -1127,6 +1692,42 @@
 			buildConfigurations = (
 				66B8D0682FE985EF00BC0D7F /* Debug */,
 				66B8D0692FE985EF00BC0D7F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AC10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Monitor Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC10C0DE00000000000000D2 /* Debug */,
+				AC10C0DE00000000000000D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AD10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Shield Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AD10C0DE00000000000000D2 /* Debug */,
+				AD10C0DE00000000000000D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AE10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Shield Action Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AE10C0DE00000000000000D2 /* Debug */,
+				AE10C0DE00000000000000D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AF10C0DE00000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Report Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AF10C0DE00000000000000D2 /* Debug */,
+				AF10C0DE00000000000000D3 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

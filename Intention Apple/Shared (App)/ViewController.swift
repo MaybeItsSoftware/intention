@@ -26,7 +26,14 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     // How stale the extension's native-messaging heartbeat (see
     // SafariWebExtensionHandler.swift's pullConfig handling) can be before we
     // treat the Safari Web Extension as "not enabled" and show the banner.
-    private let extensionHeartbeatFreshnessWindow: TimeInterval = 5 * 60
+    // Generous on purpose: the heartbeat only stamps when Safari actually
+    // runs the extension (a navigation, throttled to 30s), so a short window
+    // shows the banner to everyone who simply hasn't browsed recently.
+    private let extensionHeartbeatFreshnessWindow: TimeInterval = 24 * 60 * 60
+
+    // Dismissal lasts for this app session; a stale heartbeat brings the
+    // banner back on next launch.
+    private var extensionBannerDismissed = false
 
     private lazy var extensionBanner: UIView = makeExtensionBanner()
 #endif
@@ -190,17 +197,41 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             invokeBridgeCallback(callbackId, result: [
                 "available": true,
                 "authorized": manager.isAuthorized,
+                "authorizationStatus": manager.authorizationStatusString,
                 "selectionCount": manager.selectionCount,
                 "passEndsAt": manager.passEndsAt.map { $0.timeIntervalSince1970 * 1000 } as Any
             ])
         case "authorize":
             Task { @MainActor in
                 let ok = await manager.requestAuthorization()
-                self.invokeBridgeCallback(callbackId, result: ["authorized": ok])
+                self.invokeBridgeCallback(callbackId, result: [
+                    "authorized": ok,
+                    "authorizationStatus": manager.authorizationStatusString
+                ])
             }
         case "pickApps":
-            manager.presentPicker(from: self) { [weak self] count in
-                self?.invokeBridgeCallback(callbackId, result: ["selectionCount": count])
+            // Request authorization first if needed: presenting the
+            // FamilyActivityPicker unauthorized renders an empty list or an
+            // endless spinner, which looks like the picker is broken.
+            Task { @MainActor in
+                if !manager.isAuthorized {
+                    _ = await manager.requestAuthorization()
+                }
+                guard manager.isAuthorized else {
+                    self.invokeBridgeCallback(callbackId, result: [
+                        "selectionCount": manager.selectionCount,
+                        "authorized": false,
+                        "authorizationStatus": manager.authorizationStatusString
+                    ])
+                    return
+                }
+                manager.presentPicker(from: self) { [weak self] count in
+                    self?.invokeBridgeCallback(callbackId, result: [
+                        "selectionCount": count,
+                        "authorized": true,
+                        "authorizationStatus": manager.authorizationStatusString
+                    ])
+                }
             }
         case "grantPass":
             let minutes = dict["minutes"] as? Int ?? Int(dict["minutes"] as? Double ?? 0)
@@ -240,6 +271,10 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     // pullConfig native-messaging sync. If that heartbeat is stale (or has
     // never happened), we show a banner prompting the user to enable it.
 
+    // There is no public deep link into the Safari extensions settings page,
+    // so the banner spells out the exact path (which moved in iOS 18) instead
+    // of offering an "Open Settings" button that can only land somewhere
+    // unrelated and make things more confusing.
     private func makeExtensionBanner() -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -247,24 +282,54 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         container.layer.cornerRadius = 10
         container.isHidden = true
 
+        let settingsPath: String
+        if #available(iOS 18.0, *) {
+            settingsPath = "Settings \u{2192} Apps \u{2192} Safari \u{2192} Extensions"
+        } else {
+            settingsPath = "Settings \u{2192} Safari \u{2192} Extensions"
+        }
+
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "Intention needs the Safari Extension turned on to block sites. Enable it in Settings \u{2192} Apps \u{2192} Safari \u{2192} Extensions."
+        label.text = "Intention's Safari extension isn't active yet.\n1. Go to \(settingsPath) and turn on Intention Safari Extension.\n2. Open Safari and load any page once to activate it."
         label.textColor = UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)
         label.numberOfLines = 0
         label.font = .systemFont(ofSize: 13)
 
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle("Open Settings", for: .normal)
-        button.setTitleColor(UIColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1.0), for: .normal)
-        button.backgroundColor = UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)
-        button.layer.cornerRadius = 6
-        button.titleLabel?.font = .boldSystemFont(ofSize: 13)
-        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
-        button.addTarget(self, action: #selector(openSettings), for: .touchUpInside)
+        func filledButton(_ title: String, action: Selector) -> UIButton {
+            var config = UIButton.Configuration.filled()
+            var titleContainer = AttributeContainer()
+            titleContainer.font = UIFont.boldSystemFont(ofSize: 13)
+            config.attributedTitle = AttributedString(title, attributes: titleContainer)
+            config.baseForegroundColor = UIColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1.0)
+            config.baseBackgroundColor = UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)
+            config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+            config.background.cornerRadius = 6
+            let button = UIButton(configuration: config, primaryAction: nil)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.addTarget(self, action: action, for: .touchUpInside)
+            return button
+        }
 
-        let stack = UIStackView(arrangedSubviews: [label, button])
+        let safariButton = filledButton("Open Safari", action: #selector(openSafari))
+
+        var dismissConfig = UIButton.Configuration.plain()
+        var dismissTitleContainer = AttributeContainer()
+        dismissTitleContainer.font = UIFont.boldSystemFont(ofSize: 13)
+        dismissConfig.attributedTitle = AttributedString("Dismiss", attributes: dismissTitleContainer)
+        dismissConfig.baseForegroundColor = UIColor(red: 0.63, green: 0.65, blue: 0.70, alpha: 1.0)
+        dismissConfig.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+        let dismissButton = UIButton(configuration: dismissConfig, primaryAction: nil)
+        dismissButton.translatesAutoresizingMaskIntoConstraints = false
+        dismissButton.addTarget(self, action: #selector(dismissExtensionBanner), for: .touchUpInside)
+
+        let buttonsStack = UIStackView(arrangedSubviews: [safariButton, dismissButton])
+        buttonsStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonsStack.axis = .horizontal
+        buttonsStack.spacing = 10
+        buttonsStack.alignment = .center
+
+        let stack = UIStackView(arrangedSubviews: [label, buttonsStack])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 10
@@ -293,15 +358,36 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     @objc private func updateExtensionBanner() {
         let seenAt = AppGroupStorage.extensionLastSeenAt()
         let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
-        extensionBanner.isHidden = isFresh
+        extensionBanner.isHidden = isFresh || extensionBannerDismissed
+        view.setNeedsLayout()
     }
 
-    @objc private func openSettings() {
-        // Opens this app's own Settings page — iOS has no direct deep link
-        // into Settings > Apps > Safari > Extensions, hence the banner copy
-        // spelling out where to navigate from there.
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
+    // Keep the options page readable while the banner is up: push the web
+    // content down by the banner's height instead of floating over it.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let inset = extensionBanner.isHidden ? 0 : extensionBanner.frame.height + 16
+        if webView.scrollView.contentInset.top != inset {
+            webView.scrollView.contentInset.top = inset
+        }
+    }
+
+    @objc private func dismissExtensionBanner() {
+        extensionBannerDismissed = true
+        updateExtensionBanner()
+    }
+
+    @objc private func openSafari() {
+        // Loading any page in Safari runs the (enabled) extension, which
+        // stamps the heartbeat that hides this banner; the destination just
+        // needs to be neutral and fast.
+        if let safariURL = URL(string: "x-safari-https://www.apple.com") {
+            UIApplication.shared.open(safariURL, options: [:]) { success in
+                if !success, let fallbackURL = URL(string: "https://www.apple.com") {
+                    UIApplication.shared.open(fallbackURL)
+                }
+            }
+        }
     }
 #endif
 

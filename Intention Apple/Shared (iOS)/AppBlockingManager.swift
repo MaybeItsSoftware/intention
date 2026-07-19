@@ -43,6 +43,19 @@ final class AppBlockingManager {
         AuthorizationCenter.shared.authorizationStatus == .approved
     }
 
+    /// String form of the authorization state for the JS bridge, so the
+    /// options page can distinguish "never asked" from "declined" and show
+    /// recovery guidance for the latter (iOS won't always re-prompt after a
+    /// denial; the user may have to enable it in Settings > Screen Time).
+    var authorizationStatusString: String {
+        switch AuthorizationCenter.shared.authorizationStatus {
+        case .approved: return "approved"
+        case .denied: return "denied"
+        case .notDetermined: return "notDetermined"
+        @unknown default: return "notDetermined"
+        }
+    }
+
     func requestAuthorization() async -> Bool {
         do {
             try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
@@ -145,9 +158,12 @@ final class AppBlockingManager {
         let now = Date()
         let end = now.addingTimeInterval(TimeInterval(scheduleMins * 60))
         let calendar = Calendar.current
+        // Full date components (not just h/m/s) so a pass that crosses
+        // midnight doesn't produce an intervalEnd "earlier" than its start.
+        let components: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
         let schedule = DeviceActivitySchedule(
-            intervalStart: calendar.dateComponents([.hour, .minute, .second], from: now),
-            intervalEnd: calendar.dateComponents([.hour, .minute, .second], from: end),
+            intervalStart: calendar.dateComponents(components, from: now),
+            intervalEnd: calendar.dateComponents(components, from: end),
             repeats: false
         )
         let center = DeviceActivityCenter()
@@ -167,10 +183,9 @@ final class AppBlockingManager {
     // Per-app identity is intentionally never exposed by Family Controls
     // outside Apple's own rendering (ApplicationToken has no name/bundle-id
     // accessor), so this only surfaces one aggregate minutes-per-day number
-    // across the blocked selection -- see the Report Extension target
-    // (iOS (Report Extension)/ReportExtension.swift, not yet wired into
-    // Xcode -- see APP_BLOCKING_SETUP.md), which does the actual aggregation
-    // and writes the result into the App Group.
+    // across the blocked selection -- see the Intention Report Extension
+    // target (iOS (Report Extension)/ReportExtension.swift), which does the
+    // actual aggregation and writes the result into the App Group.
     //
     // Presenting the (invisible, zero-size) DeviceActivityReport view is what
     // triggers the OS to run the report extension; since the extension runs
@@ -179,9 +194,8 @@ final class AppBlockingManager {
     // instead of wiring up CFNotificationCenter Darwin notifications, which
     // would cut the latency but needs real cross-process C-callback plumbing
     // -- worth revisiting once this is verified on-device (Screen Time report
-    // extensions do not run in the Simulator, so none of this can be
-    // exercised until the extension target exists and is tested on a
-    // physical device).
+    // extensions do not run in the Simulator, so this can only be exercised
+    // on a physical device).
     private static let usageDateKey = "iosAppUsageByDate"
     private static let usageWrittenAtKey = "iosAppUsageWrittenAt"
     private static let usageReportContext = DeviceActivityReport.Context(rawValue: "intentionTotalMinutes")

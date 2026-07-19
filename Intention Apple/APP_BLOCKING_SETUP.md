@@ -1,56 +1,46 @@
-# iOS app blocking (Screen Time) — one-time Xcode setup
+# iOS app blocking (Screen Time)
 
-The Swift sources, Info.plists, and entitlements for native app blocking are
-in the repo, but Xcode targets cannot be created from the command line, so
-four extension targets need to be added once in Xcode. Until then the app
-still builds and runs; the options page simply drives the picker and shields
-from the main app, and only re-shielding-on-schedule, custom shield copy, and
-the app-usage row in the options page's usage log are missing.
+The four Screen Time extension targets are wired into
+`Intention Safari.xcodeproj` (added directly in project.pbxproj):
 
-## What already works without this setup
+| Target | Extension point | Sources |
+| --- | --- | --- |
+| Intention Monitor Extension | Device Activity Monitor (NSExtension) | `iOS (Monitor Extension)/DeviceActivityMonitorExtension.swift` + `Shared (iOS)/AppGroupConfig.swift` |
+| Intention Shield Extension | Shield Configuration (NSExtension) | `iOS (Shield Extension)/ShieldConfigurationExtension.swift` |
+| Intention Shield Action Extension | Shield Action (NSExtension) | `iOS (Shield Action Extension)/ShieldActionExtension.swift` |
+| Intention Report Extension | Device Activity Report (ExtensionKit) | `iOS (Report Extension)/ReportExtension.swift` + `Shared (iOS)/AppGroupConfig.swift` |
 
-- `Shared (iOS)/AppBlockingManager.swift` is compiled into the iOS App target.
-- The options page (Blocked apps card) can authorize Screen Time, present the
-  FamilyActivityPicker, apply shields, and grant a coach-approved pass.
-- Passes are re-shielded when the app is next foregrounded
-  (`reapplyIfPassExpired()`); without the monitor extension there is no
-  guaranteed background re-shield.
+All four have App Groups + Family Controls entitlements (files live in each
+target folder) and a 16.0 deployment target. The Report Extension is an
+ExtensionKit extension (embedded in `Intention.app/Extensions`, declared via
+`EXAppExtensionAttributes`), unlike the other three NSExtension appexes in
+`PlugIns`; it also needs a direct `import ExtensionKit` because the project
+enables `MemberImportVisibility`.
 
-## 1. Family Controls capability
+## Remaining manual steps
 
-- Targets: **iOS (App)** → Signing & Capabilities → add **Family Controls**.
-  The entitlement is already in `iOS (App)/iOS (App).entitlements`.
 - Distribution outside development requires requesting the Family Controls
   entitlement from Apple: https://developer.apple.com/contact/request/family-controls-distribution
-  (development builds on a physical device work without approval).
-- Screen Time APIs do not work in the Simulator — test on a device.
+  (development builds on a physical device work without approval; automatic
+  signing registers the capability on the App IDs the first time you build
+  to a device).
+- Screen Time APIs do not work in the Simulator — everything below has to be
+  verified on a physical device.
 
-## 2. Create the four extension targets
+## On-device verification checklist
 
-For each one: File → New → Target → iOS, pick the template, then delete the
-template's generated source file and add the existing one from the repo
-(File → Add Files, uncheck "Copy items"). Set the App Group + Family Controls
-capabilities on every target (entitlements files are already in each folder).
-
-| Template | Target name | Existing sources |
-| --- | --- | --- |
-| Device Activity Monitor Extension | IntentionMonitor | `iOS (Monitor Extension)/DeviceActivityMonitorExtension.swift` + also add `Shared (iOS)/AppGroupConfig.swift` to this target |
-| Shield Configuration Extension | IntentionShield | `iOS (Shield Extension)/ShieldConfigurationExtension.swift` |
-| Shield Action Extension | IntentionShieldAction | `iOS (Shield Action Extension)/ShieldActionExtension.swift` |
-| Device Activity Report Extension | IntentionReport | `iOS (Report Extension)/ReportExtension.swift` + also add `Shared (iOS)/AppGroupConfig.swift` to this target |
-
-The Report Extension only computes an **aggregate** total-minutes-used number
-for the blocked selection, not a per-app breakdown — Family Controls doesn't
-expose app identity (bundle IDs/names) to third-party code outside Apple's
-own report-rendering UI, by design. This can't be exercised in the Simulator
-(no Screen Time data there), so test it on a physical device: block an app,
-use it briefly, then check that "Blocked apps (this device)" appears in the
-options page's usage log after a few minutes.
-
-Point each target's Info.plist / entitlements build settings at the files in
-the matching folder (or let Xcode's generated ones match the values there —
-the `NSExtensionPointIdentifier` and `NSExtensionPrincipalClass` values are
-what matter).
+- Authorize + pick apps from the options page (the picker now auto-requests
+  authorization on first use), confirm the shield shows the Intention copy
+  (Shield Extension) and its button closes the app (Shield Action Extension).
+- Grant a pass via the coach, background Intention, and confirm the apps
+  re-shield after the pass ends without reopening Intention (Monitor
+  Extension; passes under 15 minutes still rely on the next foreground).
+- The Report Extension only computes an **aggregate** total-minutes-used
+  number for the blocked selection, not a per-app breakdown — Family Controls
+  doesn't expose app identity (bundle IDs/names) to third-party code outside
+  Apple's own report-rendering UI, by design. Block an app, use it briefly,
+  then check that "Blocked apps (this device)" appears in the options page's
+  usage log after a few minutes.
 
 ## 3. How the pieces fit
 

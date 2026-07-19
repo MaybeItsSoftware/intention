@@ -1,5 +1,12 @@
 {
   "homepage_url": null,
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "declarativeNetRequest",
+    "nativeMessaging"
+  ],
   "background": {
     "scripts": [
       "providers.js",

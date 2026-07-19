@@ -15,20 +15,21 @@
 //  options page's usage log.
 //
 //  Target membership: this file + Shared (iOS)/AppGroupConfig.swift (same
-//  pattern as the Monitor extension -- see APP_BLOCKING_SETUP.md, which also
-//  documents adding this as a 4th extension target).
+//  pattern as the Monitor extension -- see APP_BLOCKING_SETUP.md). Unlike
+//  the other three extensions this is an ExtensionKit extension, and it
+//  needs the direct `import ExtensionKit` below: the project enables
+//  MemberImportVisibility, which otherwise hides the default
+//  extensionPoint/_makeScene witnesses that live in ExtensionKit.
 //
 //  NOTE: DeviceActivityReport extensions only run on a physical device (the
-//  Simulator has no Screen Time data), so none of this can be exercised
-//  until the Xcode target exists and is tested on-device -- treat the exact
-//  framework call shapes here as a best-effort implementation against
-//  Apple's documented DeviceActivityReportScene API, not as compiled/
-//  verified code. The `intentionTotalMinutes` context string below must
-//  match the one used by AppBlockingManager.requestUsageReport exactly.
+//  Simulator has no Screen Time data), so runtime behavior still needs
+//  on-device verification. The `intentionTotalMinutes` context string below
+//  must match the one used by AppBlockingManager.requestUsageReport exactly.
 //
 
 #if os(iOS)
 import DeviceActivity
+import ExtensionKit
 import SwiftUI
 
 @main

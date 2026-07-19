@@ -631,13 +631,23 @@ async function refreshSetupIOSApps() {
     return;
   }
   if (!st.authorized) {
-    statusEl.textContent = 'Allow Intention to use Screen Time so it can shield the apps you choose.';
+    statusEl.textContent = iosAuthGuidance(st);
     authorizeBtn.hidden = false;
     return;
   }
   authorizeBtn.hidden = true;
   const n = st.selectionCount || 0;
   statusEl.textContent = n === 0 ? 'No apps blocked yet.' : `${n} app${n === 1 ? '' : 's or categories'} blocked.`;
+}
+
+// Unauthorized states need different guidance: before the first prompt it's a
+// simple ask, but after a decline iOS may stop re-prompting, so point at the
+// Screen Time settings page where access can be turned back on.
+function iosAuthGuidance(st) {
+  if (st.authorizationStatus === 'denied') {
+    return 'Screen Time access was declined, so the app picker can\'t load. Tap "Allow Screen Time" to try again; if no prompt appears, open Settings > Screen Time > Apps with Screen Time Access and turn on Intention.';
+  }
+  return 'Allow Intention to use Screen Time so it can shield the apps you choose. Choosing apps will ask for this automatically.';
 }
 
 // ---- Mobile Apps/Websites tab toggle ----
@@ -910,7 +920,7 @@ async function refreshIOSAppsCard() {
     return;
   }
   if (!st.authorized) {
-    statusEl.textContent = 'Allow Intention to use Screen Time so it can shield the apps you choose.';
+    statusEl.textContent = iosAuthGuidance(st);
     authorizeBtn.hidden = false;
     requestBtn.hidden = true;
     return;
