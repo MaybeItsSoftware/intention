@@ -23,6 +23,20 @@
     ["@semantic-release/exec", {
       "prepareCmd": "scripts/bump-version.sh ${nextRelease.version} && ./build.sh"
     }],
+    ["@semantic-release/git", {
+      "assets": [
+        "shared/manifest.base.json",
+        "package.json",
+        "package-lock.json",
+        "CHANGELOG.md",
+        "Intention Apple/Intention Safari.xcodeproj/project.pbxproj",
+        "Intention Android/app/build.gradle.kts",
+        "Intention Chrome/manifest.json",
+        "Intention Firefox/manifest.json",
+        "Intention Apple/Shared (Extension)/Resources/manifest.json"
+      ],
+      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+    }],
     ["@semantic-release/github", {
       "assets": [
         {"path": "build/intention-chrome-v*.zip", "label": "Intention Chrome Extension (v${nextRelease.version})"},
