@@ -15,23 +15,20 @@ Do these once, before the first submission of each platform.
 
 ## Release flow
 
-1. Bump the version everywhere in one shot:
-   ```
-   scripts/bump-version.sh 2.1        # or scripts/bump-version.sh 2.1 5 to also set the Safari build number
-   ```
-2. Verify locally: `./build.sh` (add `--all` to also build the Safari `.app`, macOS only — requires Xcode).
-3. Commit, tag, and push:
-   ```
-   git add -A && git commit -m "Bump version to 2.1"
-   git tag v2.1 && git push origin v2.1
-   ```
-4. Pushing the tag triggers four workflows automatically:
-   - **`release.yml`** — zips Chrome + Firefox and creates a GitHub Release with both as assets. Always runs, no setup required.
-   - **`publish-chrome.yml`** — uploads to the Chrome Web Store, *if* the secrets below are configured. If not configured, it logs a warning and skips without failing — tagging always works.
-   - **`publish-firefox.yml`** — submits to AMO, *if* configured. Same skip-gracefully behavior.
-   - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured. Same skip-gracefully behavior.
-
-   Each store's workflow is independent — you can also run any one of them by hand from the Actions tab (or `gh workflow run publish-android.yml`) without triggering the others, which is useful when only one store needs a retry.
+1. **Commit changes using Conventional Commits**: To enable auto-versioning, commit messages must follow the Conventional Commits syntax (e.g., `feat: login screen`, `fix: cookie parser`, or `feat!: remove legacy API` for breaking changes).
+2. **Merge/Push to `main`**: Pushing or merging code into the `main` branch automatically triggers the [auto-release.yml](file:///.github/workflows/auto-release.yml) workflow.
+3. **Automated Release**: The CI runner:
+   - Evaluates Conventional Commits since the last release tag.
+   - Bumps the version using SemVer rules.
+   - Updates files using `scripts/bump-version.sh`.
+   - Compiles and packages Chrome/Firefox extensions.
+   - Tags the commit and creates a GitHub Release with build zips and `CHANGELOG.md`.
+4. **Publishing to Stores**: The tag push triggers the store publishing workflows:
+   - **`publish-chrome.yml`** — uploads to the Chrome Web Store, *if* the secrets below are configured.
+   - **`publish-firefox.yml`** — submits to AMO, *if* configured.
+   - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured.
+   
+   If secrets are missing, these workflows log warnings and skip gracefully. You can run any store workflow by hand via the Actions tab.
 5. Safari/App Store has no CLI-only path (Apple requires Xcode/Transporter for the first submission of a build). See [Safari / App Store](#safari--app-store-macos--ios) below.
 
 ## Chrome Web Store: automated publishing
@@ -106,7 +103,7 @@ To build the signed bundle locally without CI: `cd "Intention Android" && ./grad
 | Workflow | Trigger | What it does |
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
-| `release.yml` | `v*` tag push | Zips Chrome + Firefox, creates a GitHub Release |
+| `auto-release.yml` | push to `main` | Calculates next version, runs tests, bumps versions, zips Chrome + Firefox, tags the commit, and creates a GitHub Release |
 | `publish-chrome.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store, if secrets are configured; skips gracefully otherwise |
 | `publish-firefox.yml` | `v*` tag push (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
 | `publish-android.yml` | `v*` tag push (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |

@@ -40,7 +40,7 @@ Add these secrets in your GitHub repository settings under **Settings → Secret
 *   `CHROME_CLIENT_SECRET`: Your Google Developer OAuth Client Secret.
 *   `CHROME_REFRESH_TOKEN`: The authorized OAuth Refresh Token.
 
-To activate, uncomment the `# Publish to Chrome Web Store` block in [`.github/workflows/release.yml`](file:///.github/workflows/release.yml).
+The storefront publishing triggers automatically on tag creation once secrets are configured.
 
 ---
 
@@ -60,7 +60,7 @@ Add these secrets to your GitHub repository:
 *   `AMO_JWT_ISSUER`: Your AMO JWT Issuer key.
 *   `AMO_JWT_SECRET`: Your AMO JWT Secret token.
 
-To activate, uncomment the `# Publish to Firefox Add-ons (AMO)` block in [`.github/workflows/release.yml`](file:///.github/workflows/release.yml).
+The storefront publishing triggers automatically on tag creation once secrets are configured.
 
 ---
 
@@ -140,9 +140,10 @@ To automate Play Store submissions:
 
 ```mermaid
 graph TD
-    A[Git Push / PR] --> B{Branch / Trigger}
-    B -- Pull Request / Main --> C[CI Workflow]
-    B -- Push Tag v* --> D[Release Workflow]
+    A[Git Push / PR / Merge to main] --> B{Branch / Trigger}
+    B -- PR or Push to main --> C[CI Workflow]
+    B -- Push/Merge to main --> D[Automated Release Workflow]
+    D -- Pushes Tag v* --> E[Store Publish Workflows]
     
     subgraph CI Workflow
         C --> C1[npm ci]
@@ -152,13 +153,17 @@ graph TD
         C4 --> C5[Verify cross-platform sync]
     end
     
-    subgraph Release Workflow
+    subgraph Automated Release Workflow
         D --> D1[npm ci]
-        D1 --> D2[./build.sh - Checks & Builds Zips]
-        D2 --> D3[Create GitHub Release]
-        D3 --> D4[Upload Zips to Github Release]
-        D4 -.-> D5[Uncomment to Deploy: Chrome Web Store]
-        D4 -.-> D6[Uncomment to Deploy: Firefox AMO]
+        D1 --> D2[semantic-release]
+        D2 --> D3[bump-version.sh & build.sh]
+        D3 --> D4[Create GitHub Release & Upload Zips]
+    end
+
+    subgraph Store Publish Workflows
+        E --> E1[publish-chrome.yml]
+        E --> E2[publish-firefox.yml]
+        E --> E3[publish-android.yml]
     end
 ```
 
