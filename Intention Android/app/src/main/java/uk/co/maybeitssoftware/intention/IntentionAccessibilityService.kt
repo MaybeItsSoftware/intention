@@ -102,6 +102,15 @@ class IntentionAccessibilityService : AccessibilityService() {
                     scheduleExpiryRecheck(expiresAt)
                 }
             }
+
+            // A browser coming (back) to the foreground must be re-evaluated
+            // even when the URL bar still shows the same host — e.g. the user
+            // swiped the coach away and reopened the browser from recents.
+            // Drop the dedupe/throttle state so checkWebsiteBlock runs fresh.
+            if (BROWSER_URL_BAR_IDS.containsKey(packageName)) {
+                lastSeenHost.remove(packageName)
+                lastContentCheckAt.remove(packageName)
+            }
         }
 
         val urlBarIds = BROWSER_URL_BAR_IDS[packageName] ?: return
@@ -131,7 +140,7 @@ class IntentionAccessibilityService : AccessibilityService() {
             scheduleExpiryRecheck(expiresAt)
         } else if (hostChanged) {
             Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
-            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain)
+            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
         }
     }
 
@@ -167,7 +176,7 @@ class IntentionAccessibilityService : AccessibilityService() {
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt == null) {
             Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
-            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain)
+            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
         } else {
             scheduleExpiryRecheck(expiresAt)
         }
@@ -274,12 +283,13 @@ class IntentionAccessibilityService : AccessibilityService() {
         return latest
     }
 
-    private fun launchCoachingOverlay(key: String, isApp: Boolean, label: String) {
+    private fun launchCoachingOverlay(key: String, isApp: Boolean, label: String, browserPackage: String? = null) {
         val intent = Intent(this, CoachingActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("domain", key)
             putExtra("isApp", isApp)
             putExtra("appLabel", label)
+            putExtra("browserPackage", browserPackage)
         }
         startActivity(intent)
     }
