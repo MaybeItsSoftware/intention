@@ -1,0 +1,145 @@
+# Release lanes for Intention's Safari App Extension wrapper (iOS + macOS).
+#
+#   bundle exec fastlane ios beta      # build IPA   -> upload to App Store Connect
+#   bundle exec fastlane mac beta      # build PKG   -> upload to App Store Connect
+#
+# Auth is via an App Store Connect API key and fastlane match, both shared
+# with the rest of the maybeitssoftware apps (same Apple team, 6NQNU5YSC2) —
+# mirrors the open-parliament repo's setup.
+
+ROOT = File.expand_path("..", __dir__)
+
+# Secrets live in the repo root .env (same place as the Chrome/Firefox store
+# credentials), not fastlane's own fastlane/.env, so load it explicitly.
+require "dotenv"
+Dotenv.load(File.join(ROOT, "..", ".env"))
+
+PROJECT = File.join(ROOT, "Intention Safari.xcodeproj")
+TEAM_ID = ENV["TEAM_ID"] || "6NQNU5YSC2"
+
+# target name -> bundle identifier, split by platform since macOS only
+# embeds one extension while iOS embeds five.
+IOS_TARGETS = {
+  "Intention Safari (iOS)"            => "uk.co.maybeitssoftware.intention",
+  "Intention Safari Extension (iOS)"  => "uk.co.maybeitssoftware.intention.Extension",
+  "Intention Monitor Extension"       => "uk.co.maybeitssoftware.intention.Monitor",
+  "Intention Shield Extension"        => "uk.co.maybeitssoftware.intention.Shield",
+  "Intention Shield Action Extension" => "uk.co.maybeitssoftware.intention.ShieldAction",
+  "Intention Report Extension"        => "uk.co.maybeitssoftware.intention.Report",
+}
+MACOS_TARGETS = {
+  "Intention Safari (macOS)"           => "uk.co.maybeitssoftware.intention",
+  "Intention Safari Extension (macOS)" => "uk.co.maybeitssoftware.intention.Extension",
+}
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id:                ENV["ASC_KEY_ID"],
+    issuer_id:             ENV["ASC_ISSUER_ID"],
+    key_content:           ENV["ASC_KEY_CONTENT"],
+    is_key_content_base64: true,
+  )
+end
+
+# match names macOS profiles "match AppStore <bundle id> macos" (suffixed) to
+# disambiguate from the iOS profile sharing the same bundle ID — don't guess
+# the name, read it back from what match actually created.
+def apply_manual_signing(target_map)
+  mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
+  target_map.each do |target, bundle_id|
+    update_code_signing_settings(
+      path:                  PROJECT,
+      use_automatic_signing: false,
+      team_id:               TEAM_ID,
+      code_sign_identity:    "Apple Distribution",
+      bundle_identifier:     bundle_id,
+      targets:               [target],
+      profile_name:          mapping.fetch(bundle_id),
+    )
+  end
+end
+
+def write_export_options(path, bundle_ids)
+  mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
+  options = {
+    "method"                => "app-store",
+    "teamID"                => TEAM_ID,
+    "uploadSymbols"         => true,
+    "signingStyle"          => "manual",
+    "provisioningProfiles"  => bundle_ids.to_h { |id| [id, mapping.fetch(id)] },
+  }
+  require "plist"
+  File.write(path, options.to_plist)
+end
+
+platform :ios do
+  desc "Build a signed release IPA and upload it to App Store Connect"
+  lane :beta do
+    api_key = asc_api_key
+
+    match(
+      type:           "appstore",
+      platform:       "ios",
+      app_identifier: IOS_TARGETS.values,
+      api_key:        api_key,
+      readonly:       false,
+    )
+
+    apply_manual_signing(IOS_TARGETS)
+
+    export_options = File.join(ROOT, "ExportOptions-ios.plist")
+    write_export_options(export_options, IOS_TARGETS.values)
+
+    build_app(
+      project:            PROJECT,
+      scheme:             "Intention Safari (iOS)",
+      export_method:      "app-store",
+      export_options:     export_options,
+      output_directory:   File.join(ROOT, "..", "build", "ios"),
+    )
+
+    upload_to_testflight(
+      api_key:                           api_key,
+      ipa:                               lane_context[SharedValues::IPA_OUTPUT_PATH],
+      skip_waiting_for_build_processing: true,
+    )
+  end
+end
+
+platform :mac do
+  desc "Build a signed release PKG and upload it to App Store Connect"
+  lane :beta do
+    api_key = asc_api_key
+
+    match(
+      type:                 "appstore",
+      platform:             "macos",
+      app_identifier:       MACOS_TARGETS.values,
+      api_key:              api_key,
+      readonly:             false,
+      # macOS App Store export packages the signed .app into a .pkg, which
+      # needs a separate "Mac Installer Distribution" cert beyond the
+      # "Apple Distribution" one used to sign the .app itself.
+      additional_cert_types: ["mac_installer_distribution"],
+    )
+
+    apply_manual_signing(MACOS_TARGETS)
+
+    export_options = File.join(ROOT, "ExportOptions-macos.plist")
+    write_export_options(export_options, MACOS_TARGETS.values)
+
+    build_app(
+      project:            PROJECT,
+      scheme:             "Intention Safari (macOS)",
+      export_method:      "app-store",
+      export_options:     export_options,
+      output_directory:   File.join(ROOT, "..", "build", "macos"),
+    )
+
+    upload_to_testflight(
+      api_key:                           api_key,
+      pkg:                               lane_context[SharedValues::PKG_OUTPUT_PATH],
+      skip_waiting_for_build_processing: true,
+    )
+  end
+end

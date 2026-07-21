@@ -1,0 +1,10 @@
+# Centralized signing shared with the rest of the maybeitssoftware apps (same
+# Apple team, 6NQNU5YSC2). Certs/profiles live, encrypted, in the match-certs
+# repo; MATCH_PASSWORD decrypts them. The distribution certificate already
+# exists there from other apps on this team — running match here only adds
+# new App Store provisioning profiles for Intention's bundle IDs.
+storage_mode("git")
+# SSH so CI (and local runs) authenticate with a deploy key/SSH identity,
+# sidestepping HTTPS PAT/org-approval issues.
+git_url("git@github.com:MaybeItsSoftware/match-certs.git")
+type("appstore")

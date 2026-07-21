@@ -24,7 +24,7 @@ Do these once, before the first submission of each platform.
    - Compiles and packages Chrome/Firefox extensions.
    - Tags the commit and creates a GitHub Release with build zips and `CHANGELOG.md`.
 4. **Publishing to Stores**: The tag push triggers the store publishing workflows:
-   - **`publish-chrome.yml`** — uploads to the Chrome Web Store, *if* the secrets below are configured.
+   - **`publish-chrome.yml`** — uploads a draft build to the Chrome Web Store, *if* the secrets below are configured. This only primes the new version in the dashboard; it does **not** submit it for review — do that manually in the Developer Dashboard when ready.
    - **`publish-firefox.yml`** — submits to AMO, *if* configured.
    - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured.
    
@@ -34,7 +34,7 @@ Do these once, before the first submission of each platform.
    > **Automated Store Publishing:**
    > The storefront publishing workflows (`publish-chrome.yml`, `publish-firefox.yml`, `publish-android.yml`) are configured to trigger automatically on the successful completion of the `Automated Release` workflow (`workflow_run`).
    > Because of this, they execute fully automatically on every new version release without requiring you to configure any Personal Access Tokens (PATs) or repository release secrets.
-5. Safari/App Store has no CLI-only path (Apple requires Xcode/Transporter for the first submission of a build). See [Safari / App Store](#safari--app-store-macos--ios) below.
+5. Safari/App Store isn't wired into this tag-triggered pipeline yet — it's a local step you run by hand via Fastlane. See [Safari / App Store](#safari--app-store-macos--ios) below.
 
 ## Chrome Web Store: automated publishing
 
@@ -46,7 +46,7 @@ Do these once, before the first submission of each platform.
 | `CHROME_CLIENT_ID` / `CHROME_CLIENT_SECRET` | Create an OAuth 2.0 Client ID (type "Desktop app") in [Google Cloud Console](https://console.cloud.google.com/apis/credentials), with the Chrome Web Store API enabled on that project. |
 | `CHROME_REFRESH_TOKEN` | Generate once via the OAuth consent flow using the client ID/secret above and scope `https://www.googleapis.com/auth/chromewebstore` (see the [chrome-extension-upload README](https://github.com/mnao305/chrome-extension-upload) for the exact `curl`/browser flow). |
 
-The very first submission must be done manually (upload a zip from `./build.sh`'s `build/` output, fill in the store listing, submit for review) — Google requires the extension to exist before the API can update it. After that, `publish-chrome.yml` handles every subsequent version.
+The very first submission must be done manually (upload a zip from `./build.sh`'s `build/` output, fill in the store listing, submit for review) — Google requires the extension to exist before the API can update it. After that, `publish-chrome.yml` uploads every subsequent version as a draft automatically, but you still need to go to the [Developer Dashboard](https://chrome.google.com/webstore/devconsole) and click **Submit for review** yourself — the workflow never does that step.
 
 ## Firefox Add-ons (AMO): automated publishing
 
@@ -61,14 +61,28 @@ Unlike Chrome, `web-ext sign --channel=listed` can handle the *first* submission
 
 ## Safari / App Store (macOS + iOS)
 
-No public API for first-time app submission — this stays manual, on a Mac with Xcode:
+**One-time setup:** create the app record manually in [App Store Connect](https://appstoreconnect.apple.com) (My Apps → +) — Apple requires this before any API/CLI upload can target it, same as Chrome/Play. Already done for Intention (app ID `6791299221`, team `6NQNU5YSC2`). If forking under a different bundle identifier, also set your own Team under **Signing & Capabilities** for all targets in `Intention Apple/Intention Safari.xcodeproj` — the bundle identifiers are set to `uk.co.maybeitssoftware.intention...` (Xcode → target → General → Bundle Identifier). `scripts/bump-version.sh` keeps `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in sync on every release; it doesn't touch bundle identifiers or signing.
 
-1. Open `Intention Apple/Intention Safari.xcodeproj` in Xcode.
-2. Set your own Team under **Signing & Capabilities** for all four targets (App + Extension, macOS + iOS). The bundle identifiers are already set to `uk.co.maybeitssoftware.intention...` (Xcode → target → General → Bundle Identifier) — change them if you're forking under a different identifier. `scripts/bump-version.sh` keeps `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in sync for you on every release; it does not touch bundle identifiers or signing.
-3. `Product → Archive` for the macOS scheme and the iOS scheme (or `./build.sh --safari` for the macOS build only — Xcode CLI tools required, macOS only).
-4. Use the Xcode Organizer (or Transporter) to upload each archive to App Store Connect.
-5. In [App Store Connect](https://appstoreconnect.apple.com), fill in the listing (see below) and submit for review.
-6. To regenerate the wrapper from the latest Chrome sources after a big change: `xcrun safari-web-extension-converter "./Intention Chrome" --project-location . --app-name "Intention Safari"`, then re-apply your Team/bundle ID settings.
+**Every release after that** is CLI-automated via Fastlane + [match](https://docs.fastlane.tools/actions/match/) — no Xcode GUI needed for signing or upload:
+
+```bash
+cd "Intention Apple"
+bundle exec fastlane ios beta   # archive -> build/ios/Intention.ipa   -> upload to App Store Connect
+bundle exec fastlane mac beta   # archive -> build/macos/Intention.pkg -> upload to App Store Connect
+```
+
+Needs these in the repo root `.env` — see [DEVOPS.md](DEVOPS.md#3-apple-app-store-macos--ios-safari-wrapper) for exactly how to get them and what each lane does under the hood:
+
+| Variable | Purpose |
+|---|---|
+| `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_CONTENT` | App Store Connect API key — auth for both provisioning (`match`) and the upload |
+| `MATCH_PASSWORD` | Decrypts the shared `MaybeItsSoftware/match-certs` cert/profile repo (same repo other maybeitssoftware apps use) |
+
+After a successful upload, the build takes a few minutes to finish processing in App Store Connect before you can attach it to a version and submit for review — that part stays manual at [App Store Connect](https://appstoreconnect.apple.com).
+
+This isn't triggered by a tag push (no `publish-apple.yml`, would need a macOS CI runner) — run the two commands above by hand after cutting a release.
+
+To regenerate the Xcode wrapper from the latest Chrome sources after a big change: `xcrun safari-web-extension-converter "./Intention Chrome" --project-location . --app-name "Intention Safari"`, then re-apply Team/bundle ID settings and re-share (**Product → Scheme → Manage Schemes → Shared**) any schemes Fastlane needs to see.
 
 ## Google Play: automated publishing
 
@@ -109,6 +123,6 @@ To build the signed bundle locally without CI: `cd "Intention Android" && ./grad
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
 | `auto-release.yml` | push to `main` | Calculates next version, runs tests, bumps versions, zips Chrome + Firefox, tags the commit, and creates a GitHub Release |
-| `publish-chrome.yml` | `v*` tag push (or manual) | Publishes to Chrome Web Store, if secrets are configured; skips gracefully otherwise |
+| `publish-chrome.yml` | `v*` tag push (or manual) | Uploads a draft to the Chrome Web Store (not submitted for review), if secrets are configured; skips gracefully otherwise |
 | `publish-firefox.yml` | `v*` tag push (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
 | `publish-android.yml` | `v*` tag push (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |

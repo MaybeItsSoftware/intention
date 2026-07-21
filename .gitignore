@@ -57,3 +57,13 @@ local.properties
 keystore.properties
 
 .env.local
+
+# Fastlane (Intention Apple/)
+*.pkg
+Intention Apple/fastlane/report.xml
+Intention Apple/fastlane/Preview.html
+Intention Apple/fastlane/.env
+Intention Apple/fastlane/test_output
+# Regenerated each run from match's live profile-name mapping — see Fastfile.
+Intention Apple/ExportOptions-ios.plist
+Intention Apple/ExportOptions-macos.plist

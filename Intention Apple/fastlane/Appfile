@@ -1,0 +1,5 @@
+app_identifier("uk.co.maybeitssoftware.intention")
+team_id("6NQNU5YSC2")
+
+# Authentication is done with an App Store Connect API key (see the Fastfile),
+# so no apple_id / team credentials are needed here.

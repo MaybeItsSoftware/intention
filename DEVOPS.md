@@ -66,43 +66,49 @@ The storefront publishing triggers automatically on tag creation once secrets ar
 
 ### 3. Apple App Store (macOS & iOS Safari Wrapper)
 
-The Safari web extension is wrapped in a native Xcode project under `Intention Apple/`. 
+The Safari web extension is wrapped in a native Xcode project under `Intention Apple/` (targets: App + Extension for both iOS and macOS, plus four iOS-only extensions — Monitor, Shield, Shield Action, Report). App Store Connect app ID: `6791299221`. Team: `6NQNU5YSC2`.
 
-#### Building Locally
+#### Building Locally (unsigned)
 Run:
 ```bash
 ./build.sh --safari
 ```
-This runs the preflight check, converts assets, runs `xcodebuild`, and copies `Intention Safari.app` into the `build/` folder.
+This runs the preflight check, converts assets, runs `xcodebuild`, and copies `Intention Safari.app` into the `build/` folder. Plain local build only — no distribution signing, no upload.
 
-#### App Store Connect Automation (Fastlane)
-To automate submissions to the Apple App Store, we recommend using [Fastlane](https://fastlane.tools/).
-1. **Initialize Fastlane** in the Xcode project:
-   ```bash
-   cd "Intention Apple"
-   fastlane init
-   ```
-2. **Configure App Store Connect API Key:**
-   Store your App Store Connect API Key (Issuer ID, Key ID, and `.p8` key file contents) as GitHub Secrets.
-3. **Configure Match/Certificates:**
-   Use Fastlane `match` to manage signing certificates and provisioning profiles securely inside a private Git repository or cloud storage.
-4. **Create a Deployment Lane:**
-   Add a `release` lane in your `Fastfile` to build and upload to TestFlight or the App Store Connect:
-   ```ruby
-   lane :release do
-     setup_ci
-     match(type: "appstore")
-     increment_build_number(xcodeproj: "Intention Safari.xcodeproj")
-     build_app(
-       workspace: "Intention Safari.xcworkspace",
-       scheme: "Intention Safari (macOS)",
-       output_directory: "../build"
-     )
-     upload_to_app_store(
-       api_key_path: "fastlane/api_key.json"
-     )
-   end
-   ```
+#### App Store Connect Automation (Fastlane + match)
+
+Uploads are automated end-to-end from the CLI via [Fastlane](https://fastlane.tools/) + [match](https://docs.fastlane.tools/actions/match/) — the same pattern the open-parliament repo uses. No Xcode GUI is needed for signing or upload.
+
+Lanes live in `Intention Apple/fastlane/Fastfile`:
+```bash
+cd "Intention Apple"
+bundle exec fastlane ios beta   # archive -> Intention.ipa -> upload to App Store Connect
+bundle exec fastlane mac beta   # archive -> Intention.pkg -> upload to App Store Connect
+```
+
+Each lane:
+1. Runs `match` (type `appstore`) to fetch/create the App Store distribution provisioning profiles for that platform's bundle IDs, pulling the encrypted cert/profile bundle from the shared `MaybeItsSoftware/match-certs` git repo — the same repo and team distribution certificate other maybeitssoftware apps use; `match` only needs to create new *profiles* per app, not a new cert.
+2. Switches the relevant Xcode targets to manual signing pointed at whatever profile `match` just resolved (never a hardcoded name — profile names differ by platform; macOS profiles get a `" macos"` suffix to disambiguate from the iOS profile sharing the same bundle ID).
+3. Archives and exports (`build_app`), producing a signed `.ipa` (iOS) or `.pkg` (macOS) under `build/ios/` or `build/macos/`.
+4. Uploads the binary to App Store Connect via `upload_to_testflight`, authenticated with an App Store Connect API key — no Apple ID/2FA prompts.
+
+**Secrets** — stored in the repo root `.env` (the Fastfile loads it explicitly via `Dotenv.load`, since Fastlane's built-in dotenv support only checks `fastlane/.env`):
+
+| Variable | How to get it |
+|---|---|
+| `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_CONTENT` | Create an App Store Connect API key at **Users and Access → Integrations → App Store Connect API**, role **App Manager** or **Admin** (needed for both provisioning-profile management and uploads). `ASC_KEY_CONTENT` is the base64 of the downloaded `.p8`: `base64 -i AuthKey_XXXX.p8`. |
+| `MATCH_PASSWORD` | Passphrase that decrypts the shared `match-certs` repo. |
+| `TEAM_ID` | Optional — defaults to `6NQNU5YSC2` in the Fastfile. |
+
+You also need SSH access to `git@github.com:MaybeItsSoftware/match-certs.git` (same deploy key/identity used for open-parliament) so `match` can push newly created profiles.
+
+This is currently a **local/manual step** — unlike Chrome/Firefox/Android there's no `publish-apple.yml`, so it doesn't run on a tag push. Run the two `bundle exec fastlane` commands by hand after a release. Wiring this into a tag-triggered GitHub Actions workflow (needs a macOS runner) would be a natural next step if unattended publishing is wanted.
+
+**Gotchas already worked out** (so nobody has to re-discover them):
+- Fastlane's `platform` block must be named `:mac`, not `:macos` — pass `platform: "macos"` as a string param to `match`/`build_app` instead.
+- macOS App Store export (a `.pkg`) needs a separate **Mac Installer Distribution** certificate beyond the Apple Distribution app-signing cert — fetched via `match(..., additional_cert_types: ["mac_installer_distribution"])`.
+- Every scheme built via CLI must be *shared* (`Intention Safari.xcodeproj/xcshareddata/xcschemes/*.xcscheme`, committed to git) — `fastlane`/`gym` can't see per-user local-only schemes. `Intention Safari (macOS)` wasn't originally shared; it is now.
+- The macOS target's Info.plist needs `LSApplicationCategoryType` set (`INFOPLIST_KEY_LSApplicationCategoryType` build setting, currently `"public.app-category.productivity"`) or Apple's validator rejects the upload with a 409.
 
 ---
 
