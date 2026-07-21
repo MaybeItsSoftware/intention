@@ -27,7 +27,7 @@ const closeBtn = document.getElementById('int-close');
 const bottomBar = document.getElementById('int-bottom-bar');
 
 closeBtn.textContent = isApp ? 'Close app' : 'Close tab';
-if (isApp) closeBtn.classList.add('int-block');
+closeBtn.classList.add('int-block');
 
 // Keep .int-column's bottom padding in sync with the bar's real rendered
 // height (font swap, text wrap, and safe-area insets can all change it).
@@ -97,6 +97,20 @@ try {
 
 let sending = false;
 
+function sendChatMessage(message, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    chrome.runtime.sendMessage(message, (resp) => {
+      clearTimeout(timer);
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(resp);
+    });
+  });
+}
+
 async function send() {
   const text = inputEl.value.trim();
   if (!text || sending) return;
@@ -111,15 +125,13 @@ async function attemptSend(text) {
 
   let resp;
   try {
-    resp = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        action: 'chat',
-        mode: 'gate',
-        domain,
-        isApp,
-        appLabel: isApp ? appLabel : undefined,
-        userMessage: text
-      }, resolve);
+    resp = await sendChatMessage({
+      action: 'chat',
+      mode: 'gate',
+      domain,
+      isApp,
+      appLabel: isApp ? appLabel : undefined,
+      userMessage: text
     });
   } catch (e) {
     thinking.remove();

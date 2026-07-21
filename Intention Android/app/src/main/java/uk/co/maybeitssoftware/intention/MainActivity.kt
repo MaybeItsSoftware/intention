@@ -53,37 +53,56 @@ class MainActivity : AppCompatActivity() {
         }
 
         val alertText = TextView(this).apply {
-            text = "Intention needs Accessibility permission to coach you when you open distracting apps. Enable it to continue."
+            text = "Intention needs Accessibility permission to coach you when you open distracting apps."
             setTextColor(android.graphics.Color.parseColor("#9a9aa5"))
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 24, 0, 48)
+            setPadding(0, 24, 0, 24)
+        }
+
+        // Some OEM settings screens (MIUI, One UI, etc.) drop the app straight
+        // into a long "Downloaded apps" list rather than Intention's toggle, so
+        // spell out every tap rather than assuming the deep link lands exactly.
+        val stepsText = TextView(this).apply {
+            text = "1. Tap \"Open Accessibility Settings\" below\n" +
+                "2. Find \"Intention\" in the list (it may be under \"Downloaded apps\" or \"Installed apps\")\n" +
+                "3. Tap it, then turn the switch on\n" +
+                "4. Confirm \"Allow\" on the popup, then come back here"
+            setTextColor(android.graphics.Color.parseColor("#c7c7d1"))
+            gravity = android.view.Gravity.START
+            setPadding(0, 0, 0, 48)
         }
 
         val enableServiceBtn = Button(this).apply {
             text = "Open Accessibility Settings"
             setBackgroundColor(android.graphics.Color.parseColor("#e7e7ea"))
             setTextColor(android.graphics.Color.parseColor("#0f1115"))
+            setOnClickListener { openAccessibilitySettings() }
+        }
+
+        val recheckBtn = Button(this).apply {
+            text = "I've turned it on — check again"
+            setBackgroundColor(android.graphics.Color.parseColor("#0f1115"))
+            setTextColor(android.graphics.Color.parseColor("#e7e7ea"))
+            setPadding(0, 24, 0, 0)
             setOnClickListener {
-                val componentName = android.content.ComponentName(
-                    this@MainActivity,
-                    IntentionAccessibilityService::class.java
-                )
-                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                    putExtra(":settings:fragment_args_key", componentName.flattenToString())
-                    putExtra(
-                        ":settings:show_fragment_args",
-                        Bundle().apply {
-                            putString(":settings:fragment_args_key", componentName.flattenToString())
-                        }
-                    )
+                if (isAccessibilityServiceEnabled()) {
+                    accessibilityGate.visibility = View.GONE
+                    webView.visibility = View.VISIBLE
+                } else {
+                    android.widget.Toast.makeText(
+                        this@MainActivity,
+                        "Still not enabled — make sure the switch next to Intention is on",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
                 }
-                startActivity(intent)
             }
         }
 
         (accessibilityGate as android.widget.LinearLayout).addView(alertTitle)
         (accessibilityGate as android.widget.LinearLayout).addView(alertText)
+        (accessibilityGate as android.widget.LinearLayout).addView(stepsText)
         (accessibilityGate as android.widget.LinearLayout).addView(enableServiceBtn)
+        (accessibilityGate as android.widget.LinearLayout).addView(recheckBtn)
 
         // Options WebView — the rest of the app, hidden until accessibility is enabled
         webView = WebView(this).apply {
@@ -131,6 +150,31 @@ class MainActivity : AppCompatActivity() {
         } else {
             accessibilityGate.visibility = View.GONE
             webView.visibility = View.VISIBLE
+        }
+    }
+
+    // Deep-links to Intention's own toggle where supported; some OEM skins
+    // (MIUI, One UI, etc.) reject the fragment-args extras and throw, so fall
+    // back to the plain accessibility settings list rather than leaving the
+    // user stuck on a crash.
+    private fun openAccessibilitySettings() {
+        val componentName = android.content.ComponentName(
+            this,
+            IntentionAccessibilityService::class.java
+        )
+        val deepLinkIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+            putExtra(":settings:fragment_args_key", componentName.flattenToString())
+            putExtra(
+                ":settings:show_fragment_args",
+                Bundle().apply {
+                    putString(":settings:fragment_args_key", componentName.flattenToString())
+                }
+            )
+        }
+        try {
+            startActivity(deepLinkIntent)
+        } catch (e: Exception) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
     }
 

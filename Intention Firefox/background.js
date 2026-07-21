@@ -28,7 +28,6 @@ async function syncBlockingRules() {
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
     
-    const coachingUrl = chrome.runtime.getURL('coaching.html');
     const addRules = blockedDomains.map((domain, index) => {
       const ruleId = 1000 + index;
       const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -38,7 +37,7 @@ async function syncBlockingRules() {
         action: {
           type: 'redirect',
           redirect: {
-            regexSubstitution: `${coachingUrl}?domain=${domain}`
+            extensionPath: `/coaching.html?domain=${encodeURIComponent(domain)}`
           }
         },
         condition: {
@@ -48,11 +47,33 @@ async function syncBlockingRules() {
       };
     });
 
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds,
-      addRules
-    });
-    console.log(INT_LOG, 'Synced dynamic blocking rules:', addRules.length);
+    try {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds,
+        addRules
+      });
+      console.log(INT_LOG, 'Synced dynamic blocking rules:', addRules.length);
+    } catch (e) {
+      console.error(INT_LOG, 'Error syncing dynamic blocking rules:', e, 'rules:', JSON.stringify(addRules));
+      // WebKit's DNR validator sometimes rejects the whole batch on one bad rule, and the
+      // call is atomic — so the old rule IDs were never removed. Clear them out first,
+      // otherwise stale/broken rules (e.g. pre-fix redirect targets) keep firing and no
+      // new rule can reuse the same ID. Then retry adds one at a time so we can tell which
+      // rule (and which field) is invalid.
+      try {
+        await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds });
+      } catch (e3) {
+        console.error(INT_LOG, 'Failed to remove stale rules:', e3);
+      }
+      for (const rule of addRules) {
+        try {
+          await chrome.declarativeNetRequest.updateDynamicRules({ addRules: [rule] });
+          console.log(INT_LOG, 'Rule OK:', JSON.stringify(rule));
+        } catch (e2) {
+          console.error(INT_LOG, 'Rule FAILED:', JSON.stringify(rule), e2);
+        }
+      }
+    }
   } catch (e) {
     console.error(INT_LOG, 'Error syncing dynamic blocking rules:', e);
   }

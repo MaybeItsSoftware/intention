@@ -6,7 +6,10 @@
 
 * **Firefox**: [Download on the Firefox Add-on Store](https://addons.mozilla.org/en-US/firefox/addon/intentionai/)
 
-*(Chrome, Safari, and Android versions are currently built/run from source—see details below.)*
+* **Chrome**: [Download on the Chrome Web Store](https://chromewebstore.google.com/detail/intention/dbeapcoomlbnpljdnblmegniiacfoeop)
+
+
+*(Safari and Android versions are currently built/run from source—see details below.)*
 
 ## How it works
 
