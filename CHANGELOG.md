@@ -1,3 +1,5 @@
+## [0.15.0](https://github.com/MaybeItsSoftware/intention/compare/v0.14.0...v0.15.0) (2026-07-21)
+
 ## [0.14.0](https://github.com/MaybeItsSoftware/intention/compare/v0.13.4...v0.14.0) (2026-07-21)
 
 ## [0.13.4](https://github.com/MaybeItsSoftware/intention/compare/v0.13.3...v0.13.4) (2026-07-21)
