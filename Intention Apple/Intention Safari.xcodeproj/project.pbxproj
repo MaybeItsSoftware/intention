@@ -1099,7 +1099,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1134,7 +1134,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1175,7 +1175,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1217,7 +1217,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1257,7 +1257,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1293,7 +1293,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1332,7 +1332,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1374,7 +1374,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1411,7 +1411,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Monitor";
 				PRODUCT_NAME = "Intention Monitor Extension";
 				SDKROOT = iphoneos;
@@ -1442,7 +1442,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Monitor";
 				PRODUCT_NAME = "Intention Monitor Extension";
 				SDKROOT = iphoneos;
@@ -1474,7 +1474,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Shield";
 				PRODUCT_NAME = "Intention Shield Extension";
 				SDKROOT = iphoneos;
@@ -1505,7 +1505,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Shield";
 				PRODUCT_NAME = "Intention Shield Extension";
 				SDKROOT = iphoneos;
@@ -1537,7 +1537,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.ShieldAction";
 				PRODUCT_NAME = "Intention Shield Action Extension";
 				SDKROOT = iphoneos;
@@ -1568,7 +1568,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.ShieldAction";
 				PRODUCT_NAME = "Intention Shield Action Extension";
 				SDKROOT = iphoneos;
@@ -1600,7 +1600,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Report";
 				PRODUCT_NAME = "Intention Report Extension";
 				SDKROOT = iphoneos;
@@ -1632,7 +1632,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.13.3;
+				MARKETING_VERSION = 0.13.4;
 				PRODUCT_BUNDLE_IDENTIFIER = "uk.co.maybeitssoftware.intention.Report";
 				PRODUCT_NAME = "Intention Report Extension";
 				SDKROOT = iphoneos;
