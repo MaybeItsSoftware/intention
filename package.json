@@ -1,6 +1,6 @@
 {
   "name": "intention-extension",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "private": true,
   "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
   "type": "module",
