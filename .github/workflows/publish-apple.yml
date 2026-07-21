@@ -1,0 +1,106 @@
+name: Publish to App Store Connect
+
+# Builds and uploads signed iOS/macOS binaries to App Store Connect on every
+# vX.Y tag push, provided the ASC_*/MATCH_* secrets are configured (see
+# DEPLOYMENT.md). This only primes each build in App Store Connect — it does
+# not attach it to a version or submit it for review; do that manually when
+# ready. Skips gracefully — without failing the run — if secrets are
+# missing. Runs on a macOS runner via Fastlane + match, the same setup used
+# for local releases (see Intention Apple/fastlane/Fastfile).
+
+on:
+  workflow_run:
+    workflows: ["Automated Release"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  check-release:
+    name: Check a release happened
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.check.outputs.released }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Was the commit Release just left on main tagged as a release?
+        id: check
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  apple:
+    name: Publish to App Store Connect (${{ matrix.platform.name }})
+    needs: check-release
+    if: needs.check-release.outputs.released == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: iOS
+            lane: ios beta
+          - name: macOS
+            lane: mac beta
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-release.outputs.sha }}
+
+      - name: Check secrets configured
+        id: check
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_SSH_KEY: ${{ secrets.MATCH_GIT_SSH_KEY }}
+        run: |
+          if [[ -n "$ASC_KEY_ID" && -n "$ASC_ISSUER_ID" && -n "$ASC_KEY_CONTENT" && -n "$MATCH_PASSWORD" && -n "$MATCH_GIT_SSH_KEY" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::App Store Connect secrets not configured — skipping publish. See DEPLOYMENT.md."
+          fi
+
+      - name: Select Xcode
+        if: steps.check.outputs.configured == 'true'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Load match-certs SSH key
+        if: steps.check.outputs.configured == 'true'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MATCH_GIT_SSH_KEY }}
+
+      - name: Set up Ruby + Fastlane
+        if: steps.check.outputs.configured == 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+          working-directory: Intention Apple
+
+      - name: Build & upload to App Store Connect
+        if: steps.check.outputs.configured == 'true'
+        working-directory: Intention Apple
+        run: bundle exec fastlane ${{ matrix.platform.lane }}
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}

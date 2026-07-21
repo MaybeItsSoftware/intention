@@ -102,7 +102,19 @@ Each lane:
 
 You also need SSH access to `git@github.com:MaybeItsSoftware/match-certs.git` (same deploy key/identity used for open-parliament) so `match` can push newly created profiles.
 
-This is currently a **local/manual step** — unlike Chrome/Firefox/Android there's no `publish-apple.yml`, so it doesn't run on a tag push. Run the two `bundle exec fastlane` commands by hand after a release. Wiring this into a tag-triggered GitHub Actions workflow (needs a macOS runner) would be a natural next step if unattended publishing is wanted.
+Both lanes work identically locally (secrets from `.env`) and in CI (secrets from GitHub Actions). In CI, `setup_ci` (called at the top of each lane) forces `match` into `readonly` mode automatically, so a stray/compromised CI run can never create or revoke certs/profiles — only a local run can do that.
+
+#### CI: `publish-apple.yml`
+
+Runs both lanes on a macOS GitHub Actions runner (`macos-15`), triggered the same way as Chrome/Firefox/Android (`workflow_run` off `auto-release.yml`, plus manual `workflow_dispatch`). Needs these **repo secrets** (**Settings → Secrets and variables → Actions**) — same names/values as the `.env` vars above, plus one more for git access:
+
+| Secret | Purpose |
+|---|---|
+| `ASC_KEY_ID` / `ASC_ISSUER_ID` / `ASC_KEY_CONTENT` | App Store Connect API key (see table above) |
+| `MATCH_PASSWORD` | Decrypts the `match-certs` repo |
+| `MATCH_GIT_SSH_KEY` | SSH private key (deploy key) with access to `MaybeItsSoftware/match-certs`, loaded via `webfactory/ssh-agent` |
+
+Skips gracefully (with a `::warning::`, not a failed run) if any secret is missing — same pattern as the other three publish workflows.
 
 **Gotchas already worked out** (so nobody has to re-discover them):
 - Fastlane's `platform` block must be named `:mac`, not `:macos` — pass `platform: "macos"` as a string param to `match`/`build_app` instead.
@@ -170,6 +182,7 @@ graph TD
         E --> E1[publish-chrome.yml]
         E --> E2[publish-firefox.yml]
         E --> E3[publish-android.yml]
+        E --> E4[publish-apple.yml]
     end
 ```
 

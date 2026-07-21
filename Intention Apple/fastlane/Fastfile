@@ -75,6 +75,7 @@ end
 platform :ios do
   desc "Build a signed release IPA and upload it to App Store Connect"
   lane :beta do
+    setup_ci # no-op locally; on CI, uses a temp keychain and forces match readonly
     api_key = asc_api_key
 
     match(
@@ -82,7 +83,9 @@ platform :ios do
       platform:       "ios",
       app_identifier: IOS_TARGETS.values,
       api_key:        api_key,
-      readonly:       false,
+      # Only CI is forbidden from creating new profiles/certs — a local run
+      # (e.g. adding a new bundle ID) still needs write access.
+      readonly:       is_ci,
     )
 
     apply_manual_signing(IOS_TARGETS)
@@ -109,6 +112,7 @@ end
 platform :mac do
   desc "Build a signed release PKG and upload it to App Store Connect"
   lane :beta do
+    setup_ci # no-op locally; on CI, uses a temp keychain and forces match readonly
     api_key = asc_api_key
 
     match(
@@ -116,7 +120,7 @@ platform :mac do
       platform:             "macos",
       app_identifier:       MACOS_TARGETS.values,
       api_key:              api_key,
-      readonly:             false,
+      readonly:             is_ci,
       # macOS App Store export packages the signed .app into a .pkg, which
       # needs a separate "Mac Installer Distribution" cert beyond the
       # "Apple Distribution" one used to sign the .app itself.
