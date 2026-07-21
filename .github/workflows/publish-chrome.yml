@@ -1,8 +1,10 @@
 name: Publish to Chrome Web Store
 
-# Auto-publishes to the Chrome Web Store on every vX.Y tag push, provided
-# CHROME_* secrets are configured (see DEPLOYMENT.md). Skips gracefully —
-# without failing the run — if secrets are missing.
+# Uploads a draft build to the Chrome Web Store on every vX.Y tag push,
+# provided CHROME_* secrets are configured (see DEPLOYMENT.md). This only
+# primes the new version in the dashboard — it does not submit it for
+# review; do that manually when ready. Skips gracefully — without failing
+# the run — if secrets are missing.
 
 on:
   workflow_run:
@@ -66,7 +68,7 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         run: (cd "Intention Chrome" && zip -r -q "../intention-chrome.zip" . -x "env.txt" "*.DS_Store")
 
-      - name: Upload & publish to Chrome Web Store
+      - name: Upload to Chrome Web Store (draft only, not submitted for review)
         if: steps.check.outputs.configured == 'true'
         uses: mnao305/chrome-extension-upload@v6.0.0
         with:
@@ -75,4 +77,4 @@ jobs:
           client-id: ${{ secrets.CHROME_CLIENT_ID }}
           client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
           refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          publish: true
+          publish: false
