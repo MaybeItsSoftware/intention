@@ -14,12 +14,12 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "uk.co.maybeitssoftware.intention"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "uk.co.maybeitssoftware.intention"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 28
         versionName = "0.15.1"
 
