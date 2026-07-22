@@ -47,8 +47,9 @@ class CoachingActivity : AppCompatActivity() {
         val encodedDomain = android.net.Uri.encode(domain)
         val encodedLabel = android.net.Uri.encode(appLabel)
         val appParam = if (isApp) "1" else "0"
+        val encodedBrowserPackage = android.net.Uri.encode(browserPackage ?: "")
         webView.loadDataWithBaseURL(
-            "file:///android_asset/coaching.html?domain=$encodedDomain&app=$appParam&label=$encodedLabel",
+            "file:///android_asset/coaching.html?domain=$encodedDomain&app=$appParam&label=$encodedLabel&browserPackage=$encodedBrowserPackage",
             modifiedHtml,
             "text/html",
             "UTF-8",

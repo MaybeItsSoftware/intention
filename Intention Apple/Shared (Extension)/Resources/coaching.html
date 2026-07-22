@@ -32,7 +32,7 @@
     .int-column {
       max-width: 620px;
       margin: 0 auto;
-      min-height: 100vh;
+      height: 100%;
       padding: 14vh 24px calc(var(--int-bar-height) + 24px);
       display: flex;
       flex-direction: column;
@@ -72,6 +72,7 @@
 
     .int-messages {
       flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
       gap: 22px;
@@ -152,18 +153,20 @@
     }
 
     .int-composer button {
-      border: none;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
       background: transparent;
       color: #9aa0ac;
       font-weight: 600;
       font-size: 15px;
       cursor: pointer;
       font-family: inherit;
-      padding: 4px 0;
+      padding: 6px 14px;
     }
 
     .int-composer button:hover {
       color: #f3f4f6;
+      background: rgba(255, 255, 255, 0.06);
     }
 
     .int-close-row {

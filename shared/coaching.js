@@ -8,6 +8,9 @@ const urlParams = new URLSearchParams(window.location.search);
 const domain = urlParams.get('domain') || window.location.hostname;
 const isApp = urlParams.get('app') === '1';
 const appLabel = urlParams.get('label') || '';
+// Android only: the browser package that opened the blocked site, so a
+// website grant can return to that browser instead of navigating our WebView.
+const browserPackage = urlParams.get('browserPackage') || '';
 // On iOS the coach grants a pass across all shielded apps (the Screen Time
 // selection is opaque), so there is no per-app label — use a generic name.
 const displayName = isApp ? (appLabel || 'a blocked app') : domain;
@@ -166,8 +169,12 @@ async function attemptSend(text) {
           window.intentionScreenTime.grantPass(resp.grantedSession.intervalMinutes, () => {
             window.location.href = 'options.html';
           });
+        } else if (!isApp && window.intentionApps && browserPackage) {
+          // Android website: bring the real browser (which still holds the
+          // blocked tab) back to the foreground and close this overlay.
+          window.intentionApps.launchApp(browserPackage);
         } else {
-          // Redirect back to the target website once session is granted
+          // Chrome/Firefox/Safari: coaching.html IS the blocked tab, so redirect it.
           window.location.href = `https://${domain}`;
         }
       }, 2200);
