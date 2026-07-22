@@ -62,23 +62,16 @@ class CoachingActivity : AppCompatActivity() {
         goHome()
     }
 
-    // Another app's tab can't literally be closed, but steering the browser to
-    // about:blank replaces its foreground tab, so reopening the browser later
-    // doesn't land back on the blocked site and re-trigger the coach.
+    // Another app's specific tab can't be targeted or closed via any public
+    // Android API, so for a website we just dismiss the overlay and leave the
+    // browser exactly as it was — other tabs stay usable. The accessibility
+    // service debounces re-showing the coach for this domain so this doesn't
+    // loop; see IntentionAccessibilityService.recordDismissal.
     private fun closeBlockedTab() {
-        val pkg = browserPackage
-        if (!isApp && pkg != null) {
-            try {
-                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("about:blank")).apply {
-                    `package` = pkg
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                }
-                startActivity(intent)
-                finish()
-                return
-            } catch (e: Exception) {
-                // Browser doesn't handle about:blank; fall back to the home screen.
-            }
+        if (!isApp && browserPackage != null) {
+            IntentionAccessibilityService.instance?.recordDismissal(browserPackage!!, domain)
+            finish()
+            return
         }
         goHome()
     }

@@ -29,7 +29,10 @@ const sendBtn = document.getElementById('int-send');
 const closeBtn = document.getElementById('int-close');
 const bottomBar = document.getElementById('int-bottom-bar');
 
-closeBtn.textContent = isApp ? 'Close app' : 'Close tab';
+// On Android, declining a website doesn't close/blank the tab (no public API
+// can target a specific tab in another app) — it just dismisses this overlay
+// and leaves the browser as it was. "Close tab" would be inaccurate there.
+closeBtn.textContent = isApp ? 'Close app' : (window.intentionApps ? 'Not now' : 'Close tab');
 closeBtn.classList.add('int-block');
 
 // Keep .int-column's bottom padding in sync with the bar's real rendered
@@ -210,7 +213,8 @@ function addRetryButton(container, onRetry) {
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 closeBtn.addEventListener('click', () => {
-  // End session and close the current tab
+  // End session and close the current tab (extensions) or dismiss the
+  // overlay without touching the tab (Android — see closeBtn.textContent above)
   chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
   chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
   if (isApp && !window.intentionApps) {

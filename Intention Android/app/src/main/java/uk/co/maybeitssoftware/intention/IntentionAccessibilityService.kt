@@ -18,6 +18,12 @@ class IntentionAccessibilityService : AccessibilityService() {
         // Fire the re-check just after the session's expiration timestamp so
         // the timestamp comparison in sessionExpiresAt sees it as expired.
         private const val EXPIRY_RECHECK_BUFFER_MS = 250L
+        // How long to hold off re-showing the coach for a (browser, domain)
+        // pair after the user dismisses it. We can't close/blank the specific
+        // tab that triggered the coach (see CoachingActivity.closeBlockedTab),
+        // so without this the dedupe-clearing on every browser-foreground
+        // event would immediately re-trigger the coach on that same tab.
+        private const val DISMISS_DEBOUNCE_MS = 60_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -57,6 +63,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private val lastContentCheckAt = mutableMapOf<String, Long>()
     private val lastSeenHost = mutableMapOf<String, String>()
+    private val dismissedUntil = mutableMapOf<String, Long>()
 
     private val handler = Handler(Looper.getMainLooper())
     private val expiryRecheck = Runnable { recheckForeground() }
@@ -121,6 +128,18 @@ class IntentionAccessibilityService : AccessibilityService() {
         Log.d(TAG, "Accessibility Service Interrupted")
     }
 
+    // Called by CoachingActivity when the user dismisses the coach for a
+    // website without granting a pass, so the still-open blocked tab doesn't
+    // immediately re-trigger the coach the next time this browser is checked.
+    fun recordDismissal(browserPackage: String, domain: String) {
+        dismissedUntil["$browserPackage|$domain"] = System.currentTimeMillis() + DISMISS_DEBOUNCE_MS
+    }
+
+    private fun isDismissed(browserPackage: String, domain: String): Boolean {
+        val until = dismissedUntil["$browserPackage|$domain"] ?: return false
+        return System.currentTimeMillis() < until
+    }
+
     private fun checkWebsiteBlock(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>) {
         val now = System.currentTimeMillis()
         val lastCheck = lastContentCheckAt[packageName] ?: 0L
@@ -138,7 +157,7 @@ class IntentionAccessibilityService : AccessibilityService() {
             // Keep an expiry re-check armed while the user stays on the site,
             // since no further host change will trigger a check.
             scheduleExpiryRecheck(expiresAt)
-        } else if (hostChanged) {
+        } else if (hostChanged && !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
             launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
         }
@@ -174,10 +193,10 @@ class IntentionAccessibilityService : AccessibilityService() {
         lastSeenHost[packageName] = host
         val matchedDomain = findBlockedDomain(host) ?: return
         val expiresAt = sessionExpiresAt(matchedDomain)
-        if (expiresAt == null) {
+        if (expiresAt == null && !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
             launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
-        } else {
+        } else if (expiresAt != null) {
             scheduleExpiryRecheck(expiresAt)
         }
     }
