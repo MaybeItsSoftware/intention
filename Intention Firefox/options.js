@@ -1230,11 +1230,14 @@ function renderStats(summary) {
     .sort((a, b) => b[1] - a[1])
     .map(([d, m]) => `${d}: ${Math.round(m)}m`)
     .join(' · ');
+  // perSite carries domain and package names straight out of stored config, so
+  // it goes in as text — the rest of the markup is static.
   el.innerHTML = `
     <p><strong>${summary.minutesToday} min</strong> on blocked sites today.</p>
-    <p class="muted">${perSite}</p>
+    <p class="muted" id="stats-per-site"></p>
     <p class="muted">Past 7 days: <strong>${summary.minutesWeek} min</strong>.</p>
   `;
+  el.querySelector('#stats-per-site').textContent = perSite;
 }
 
 function formatLogDate(key) {

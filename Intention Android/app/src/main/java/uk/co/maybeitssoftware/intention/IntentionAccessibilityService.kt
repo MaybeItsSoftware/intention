@@ -29,6 +29,12 @@ class IntentionAccessibilityService : AccessibilityService() {
         // while the blank tab opens — and is dropped as soon as the browser is
         // seen off the blocked site, so closing that tab re-arms the coach.
         private const val DIVERTED_GRACE_MS = 10_000L
+        // Coaching modes understood by coaching.js (via CoachingActivity).
+        private const val MODE_GATE = "gate"
+        private const val MODE_CHECKIN = "checkin"
+        // How recently a session must have run out for the relaunched coach to
+        // open as a check-in rather than a fresh gate.
+        private const val CHECKIN_WINDOW_MS = 5 * 60_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -207,7 +213,12 @@ class IntentionAccessibilityService : AccessibilityService() {
             val expiresAt = sessionExpiresAt(packageName)
             if (expiresAt == null) {
                 Log.d(TAG, "Session expired while $packageName in foreground. Launching Coach!")
-                launchCoachingOverlay(packageName, isApp = true, label = getAppLabel(packageName))
+                launchCoachingOverlay(
+                    packageName,
+                    isApp = true,
+                    label = getAppLabel(packageName),
+                    mode = if (justExpired(packageName)) MODE_CHECKIN else MODE_GATE
+                )
             } else {
                 scheduleExpiryRecheck(expiresAt)
             }
@@ -230,7 +241,13 @@ class IntentionAccessibilityService : AccessibilityService() {
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt == null && !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
-            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
+            launchCoachingOverlay(
+                matchedDomain,
+                isApp = false,
+                label = matchedDomain,
+                browserPackage = packageName,
+                mode = if (justExpired(matchedDomain)) MODE_CHECKIN else MODE_GATE
+            )
         } else if (expiresAt != null) {
             scheduleExpiryRecheck(expiresAt)
         }
@@ -330,14 +347,24 @@ class IntentionAccessibilityService : AccessibilityService() {
     // Returns the latest future expiration time of any active session for
     // this app/domain, or null if there is no unexpired session.
     private fun sessionExpiresAt(key: String): Long? {
+        val latest = latestSessionExpiry(key) ?: return null
+        return latest.takeIf { System.currentTimeMillis() < it }
+    }
+
+    // Latest expiration among this app/domain's sessions, whether or not it has
+    // passed. Sessions the background JS has already banked stay in storage
+    // (their reason feeds the check-in prompt), so "expired" and "never had
+    // one" have to be told apart — see justExpired.
+    private fun latestSessionExpiry(key: String): Long? {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
         val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         var latest: Long? = null
         try {
-            // activeSessions is stored as a JSON object: {"tabId": {"domain": "com.instagram.android", "startTime": 12345, "intervalMinutes": 10}}
+            // activeSessions is a JSON object keyed by tab id (extensions) or
+            // "target:<domain|package>" (Android/iOS, which have no tabs):
+            // {"target:instagram.com": {"domain": "instagram.com", "startTime": 12345, "intervalMinutes": 10}}
             val json = JSONObject(activeSessionsStr)
             val keys = json.keys()
-            val now = System.currentTimeMillis()
             while (keys.hasNext()) {
                 val sessionKey = keys.next()
                 val session = json.getJSONObject(sessionKey)
@@ -346,7 +373,7 @@ class IntentionAccessibilityService : AccessibilityService() {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val expirationTime = startTime + (intervalMinutes * 60 * 1000)
-                    if (now < expirationTime && expirationTime > (latest ?: 0L)) {
+                    if (expirationTime > (latest ?: 0L)) {
                         latest = expirationTime
                     }
                 }
@@ -357,13 +384,30 @@ class IntentionAccessibilityService : AccessibilityService() {
         return latest
     }
 
-    private fun launchCoachingOverlay(key: String, isApp: Boolean, label: String, browserPackage: String? = null) {
+    // True when a session for this target ran out just now, rather than there
+    // never having been one — the difference between the coach opening with
+    // "your time is up" and opening with "what are you here for?". Bounded so
+    // a session from hours ago doesn't resurface as a stale check-in.
+    private fun justExpired(key: String): Boolean {
+        val expiry = latestSessionExpiry(key) ?: return false
+        val sinceExpiry = System.currentTimeMillis() - expiry
+        return sinceExpiry in 0..CHECKIN_WINDOW_MS
+    }
+
+    private fun launchCoachingOverlay(
+        key: String,
+        isApp: Boolean,
+        label: String,
+        browserPackage: String? = null,
+        mode: String = MODE_GATE
+    ) {
         val intent = Intent(this, CoachingActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("domain", key)
             putExtra("isApp", isApp)
             putExtra("appLabel", label)
             putExtra("browserPackage", browserPackage)
+            putExtra("mode", mode)
         }
         startActivity(intent)
     }

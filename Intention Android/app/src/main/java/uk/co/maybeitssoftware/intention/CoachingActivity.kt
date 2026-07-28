@@ -29,6 +29,9 @@ class CoachingActivity : AppCompatActivity() {
         domain = intent.getStringExtra("domain") ?: ""
         isApp = intent.getBooleanExtra("isApp", true)
         browserPackage = intent.getStringExtra("browserPackage")
+        // "checkin" when a granted session just ran out (the coach asks whether
+        // they got what they came for); "gate" for a fresh block.
+        val mode = intent.getStringExtra("mode") ?: "gate"
         val appLabel = intent.getStringExtra("appLabel") ?: domain
 
         webView = WebView(this).apply {
@@ -58,8 +61,9 @@ class CoachingActivity : AppCompatActivity() {
         val encodedLabel = android.net.Uri.encode(appLabel)
         val appParam = if (isApp) "1" else "0"
         val encodedBrowserPackage = android.net.Uri.encode(browserPackage ?: "")
+        val encodedMode = android.net.Uri.encode(mode)
         webView.loadDataWithBaseURL(
-            "file:///android_asset/coaching.html?domain=$encodedDomain&app=$appParam&label=$encodedLabel&browserPackage=$encodedBrowserPackage",
+            "file:///android_asset/coaching.html?domain=$encodedDomain&app=$appParam&label=$encodedLabel&browserPackage=$encodedBrowserPackage&mode=$encodedMode",
             modifiedHtml,
             "text/html",
             "UTF-8",

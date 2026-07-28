@@ -11,6 +11,10 @@ const appLabel = urlParams.get('label') || '';
 // Android only: the browser package that opened the blocked site, so a
 // website grant can return to that browser instead of navigating our WebView.
 const browserPackage = urlParams.get('browserPackage') || '';
+// The extensions run their check-in inside the page (content.js); the native
+// ports have no content script, so the platform relaunches this page with
+// mode=checkin when a granted session runs out.
+const mode = urlParams.get('mode') === 'checkin' ? 'checkin' : 'gate';
 // On iOS the coach grants a pass across all shielded apps (the Screen Time
 // selection is opaque), so there is no per-app label — use a generic name.
 const displayName = isApp ? (appLabel || 'a blocked app') : domain;
@@ -29,10 +33,14 @@ const sendBtn = document.getElementById('int-send');
 const closeBtn = document.getElementById('int-close');
 const bottomBar = document.getElementById('int-bottom-bar');
 
-// On Android, declining a website doesn't close the tab (no public API can
-// target a specific tab in another app) — it opens a blank tab in front of it
-// instead, leaving the original open. "Close tab" would be inaccurate there.
-closeBtn.textContent = isApp ? 'Close app' : (window.intentionApps ? 'Not now' : 'Close tab');
+// In check-in mode the session is already over, so the button ends it rather
+// than declining anything. Otherwise: on Android, declining a website doesn't
+// close the tab (no public API can target a specific tab in another app) — it
+// opens a blank tab in front of it instead, leaving the original open, so
+// "Close tab" would be inaccurate there.
+closeBtn.textContent = mode === 'checkin'
+  ? "I'm done"
+  : (isApp ? 'Close app' : (window.intentionApps ? 'Not now' : 'Close tab'));
 closeBtn.classList.add('int-block');
 
 // Keep .int-column's bottom padding in sync with the bar's real rendered
@@ -62,7 +70,9 @@ if (window.visualViewport) {
 }
 
 // Show initial coaching prompt
-const seed = `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
+const seed = mode === 'checkin'
+  ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
+  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
 addMessage(messagesEl, 'assistant', seed);
 
 // Fetch stats and render stats row
@@ -133,7 +143,7 @@ async function attemptSend(text) {
   try {
     resp = await sendChatMessage({
       action: 'chat',
-      mode: 'gate',
+      mode,
       domain,
       isApp,
       appLabel: isApp ? appLabel : undefined,
@@ -215,8 +225,9 @@ inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 closeBtn.addEventListener('click', () => {
   // End session and close the current tab (extensions) or hand off to the
   // native bridge, which opens a blank tab over the blocked one and dismisses
-  // this overlay (Android — see closeBtn.textContent above)
-  chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
+  // this overlay (Android — see closeBtn.textContent above). `domain` is what
+  // keys the session on the native ports, which have no tab id to key on.
+  chrome.runtime.sendMessage({ action: 'endSession', domain, reason: 'fulfilled' });
   chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
   if (isApp && !window.intentionApps) {
     // iOS app WebView: window.close() is a no-op — go back to settings.

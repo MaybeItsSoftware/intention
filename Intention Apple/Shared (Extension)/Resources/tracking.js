@@ -26,6 +26,32 @@ function setStorage(obj) {
   return new Promise(resolve => chrome.storage.local.set(obj, resolve));
 }
 
+// chrome.storage has no transactions, so a plain read → await → write cycle
+// silently drops whatever another caller committed in between (two coaching
+// tabs appending to chatHistories, a grant racing a session end, overlapping
+// stats writes). Every read-modify-write of a shared key goes through this
+// queue instead, so those cycles serialize rather than clobber each other.
+//
+// `mutator` receives the stored value (or a fresh `fallback`) and may mutate it
+// in place or return a replacement. It may await — the queue holds until it
+// settles — but it must never call mutateStorage itself, which would deadlock.
+let storageQueue = Promise.resolve();
+
+function mutateStorage(key, mutator, fallback = {}) {
+  const run = async () => {
+    const stored = await getStorage([key]);
+    const value = stored[key] === undefined ? fallback : stored[key];
+    const replacement = await mutator(value);
+    const next = replacement === undefined ? value : replacement;
+    await setStorage({ [key]: next });
+    return next;
+  };
+  const queued = storageQueue.then(run, run);
+  // Keep the chain alive regardless of how this link settles.
+  storageQueue = queued.then(() => {}, () => {});
+  return queued;
+}
+
 // ---------------------------------------------------------------------------
 // Native app config bridge (Apple platforms only).
 //
@@ -93,15 +119,15 @@ async function syncConfigFromNative() {
 }
 
 async function withDailyStats(mutator) {
-  const { dailyStats = {} } = await getStorage(['dailyStats']);
-  const today = dateKey();
-  if (!dailyStats[today]) dailyStats[today] = {};
-  mutator(dailyStats, today);
-  const allKeys = Object.keys(dailyStats).sort().reverse();
-  if (allKeys.length > 365) {
-    for (const old of allKeys.slice(365)) delete dailyStats[old];
-  }
-  await setStorage({ dailyStats });
+  await mutateStorage('dailyStats', (dailyStats) => {
+    const today = dateKey();
+    if (!dailyStats[today]) dailyStats[today] = {};
+    mutator(dailyStats, today);
+    const allKeys = Object.keys(dailyStats).sort().reverse();
+    if (allKeys.length > 365) {
+      for (const old of allKeys.slice(365)) delete dailyStats[old];
+    }
+  });
 }
 
 async function recordGrant(domain, minutes, reason) {
@@ -119,20 +145,23 @@ async function recordSessionMinutes(domain, elapsedMinutes) {
     stats[today][domain].minutes += elapsedMinutes;
   });
 
-  const { allTimeStats = {} } = await getStorage(['allTimeStats']);
-  if (allTimeStats[domain] === undefined) {
-    const { dailyStats = {} } = await getStorage(['dailyStats']);
-    let sumDaily = 0;
-    for (const entries of Object.values(dailyStats)) {
-      if (entries[domain]) {
-        sumDaily += entries[domain].minutes || 0;
+  await mutateStorage('allTimeStats', async (allTimeStats) => {
+    if (allTimeStats[domain] === undefined) {
+      // First write for this domain: seed it from the daily history (which
+      // already includes the minutes recorded just above) rather than starting
+      // from zero and losing everything logged before all-time tracking.
+      const { dailyStats = {} } = await getStorage(['dailyStats']);
+      let sumDaily = 0;
+      for (const entries of Object.values(dailyStats)) {
+        if (entries[domain]) {
+          sumDaily += entries[domain].minutes || 0;
+        }
       }
+      allTimeStats[domain] = sumDaily;
+    } else {
+      allTimeStats[domain] += elapsedMinutes;
     }
-    allTimeStats[domain] = sumDaily;
-  } else {
-    allTimeStats[domain] += elapsedMinutes;
-  }
-  await setStorage({ allTimeStats });
+  });
 }
 
 async function getStatsForDomain(domain) {

@@ -400,10 +400,12 @@ function renderChatUI({ mode, domain }) {
 
   const root = document.createElement("div");
   root.id = "intention-root";
+  // The subtitle carries a domain name, which reaches us from stored config —
+  // set it as text below rather than interpolating markup into innerHTML.
   root.innerHTML = `
     <div class="int-column">
       <h1>Intention</h1>
-      <p class="int-subtitle">${subtitle}</p>
+      <p class="int-subtitle"></p>
       <div class="int-stats-row" id="int-stats-row" style="display: none;"></div>
       <div class="int-messages" id="int-messages"></div>
       <div class="int-composer">
@@ -415,6 +417,7 @@ function renderChatUI({ mode, domain }) {
       </div>
     </div>
   `;
+  root.querySelector(".int-subtitle").textContent = subtitle;
   document.body.appendChild(root);
 
   const messagesEl = document.getElementById("int-messages");
@@ -560,7 +563,7 @@ function renderChatUI({ mode, domain }) {
     if (e.key === "Enter") send();
   });
   closeBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ action: "endSession", reason: "fulfilled" });
+    chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
     window.close();
   });
   inputEl.focus();
@@ -636,11 +639,18 @@ function renderStatusBadge(session) {
   const intervalId = setInterval(update, 1000);
   document.body.appendChild(badge);
 
+  // "Finished" means the user is done here: end the session and let the
+  // background close the tab. Stop the timer and the re-attach observer first
+  // so neither keeps running against a tab on its way out.
   finishBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ action: "endSession", reason: "fulfilled" });
     clearInterval(intervalId);
     observer.disconnect();
     badge.remove();
+    chrome.runtime.sendMessage({
+      action: "endSession",
+      domain: session.domain,
+      reason: "fulfilled"
+    });
   });
 
   // SPA sites (Twitter, YouTube, …) re-render <body> and can drop our node.
