@@ -1,12 +1,22 @@
 package uk.co.maybeitssoftware.intention
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
+import android.provider.Browser
+import android.util.Log
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatActivity
 
 class CoachingActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "CoachingActivity"
+        // Blank page to send the browser to on decline. No network, no content,
+        // and its "host" has no dot, so findBlockedDomain never matches it.
+        private const val BLANK_TAB_URL = "about:blank"
+    }
 
     private lateinit var webView: WebView
     private var domain: String = ""
@@ -62,18 +72,40 @@ class CoachingActivity : AppCompatActivity() {
         goHome()
     }
 
-    // Another app's specific tab can't be targeted or closed via any public
-    // Android API, so for a website we just dismiss the overlay and leave the
-    // browser exactly as it was — other tabs stay usable. The accessibility
-    // service debounces re-showing the coach for this domain so this doesn't
-    // loop; see IntentionAccessibilityService.recordDismissal.
+    // Another app's specific tab can't be closed via any public Android API,
+    // so for a website we do the next best thing: open a fresh blank tab in the
+    // same browser. That puts a neutral page in front of the user instead of
+    // dropping them straight back onto the distracting site, while the original
+    // tab (and every other tab) stays open and reachable.
     private fun closeBlockedTab() {
-        if (!isApp && browserPackage != null) {
-            IntentionAccessibilityService.instance?.recordDismissal(browserPackage!!, domain)
+        val pkg = browserPackage
+        if (!isApp && pkg != null) {
+            // Debounce even when the divert succeeds: the browser's URL bar can
+            // still report the blocked host for a moment while the new tab
+            // opens, which would otherwise re-trigger the coach immediately.
+            IntentionAccessibilityService.instance?.recordDismissal(pkg, domain)
+            openBlankTab(pkg)
             finish()
             return
         }
         goHome()
+    }
+
+    // ACTION_VIEW + EXTRA_CREATE_NEW_TAB is the standard way to ask a browser
+    // for a new tab; Chromium- and Gecko-based browsers both honour it. If this
+    // browser doesn't handle about: URLs we simply dismiss the overlay and leave
+    // it as it was, rather than booting the user out to the home screen.
+    private fun openBlankTab(pkg: String) {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BLANK_TAB_URL)).apply {
+            `package` = pkg
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Browser.EXTRA_CREATE_NEW_TAB, true)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "$pkg doesn't handle $BLANK_TAB_URL; leaving the browser untouched", e)
+        }
     }
 
     private fun goHome() {

@@ -19,10 +19,11 @@ class IntentionAccessibilityService : AccessibilityService() {
         // the timestamp comparison in sessionExpiresAt sees it as expired.
         private const val EXPIRY_RECHECK_BUFFER_MS = 250L
         // How long to hold off re-showing the coach for a (browser, domain)
-        // pair after the user dismisses it. We can't close/blank the specific
-        // tab that triggered the coach (see CoachingActivity.closeBlockedTab),
-        // so without this the dedupe-clearing on every browser-foreground
-        // event would immediately re-trigger the coach on that same tab.
+        // pair after the user dismisses it. Declining opens a blank tab rather
+        // than closing the blocked one (see CoachingActivity.closeBlockedTab),
+        // so the URL bar can still read the blocked host while that new tab
+        // opens — and the dedupe-clearing on every browser-foreground event
+        // would otherwise re-trigger the coach off that stale reading.
         private const val DISMISS_DEBOUNCE_MS = 60_000L
 
         @Volatile

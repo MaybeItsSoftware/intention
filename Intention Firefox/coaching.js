@@ -29,9 +29,9 @@ const sendBtn = document.getElementById('int-send');
 const closeBtn = document.getElementById('int-close');
 const bottomBar = document.getElementById('int-bottom-bar');
 
-// On Android, declining a website doesn't close/blank the tab (no public API
-// can target a specific tab in another app) — it just dismisses this overlay
-// and leaves the browser as it was. "Close tab" would be inaccurate there.
+// On Android, declining a website doesn't close the tab (no public API can
+// target a specific tab in another app) — it opens a blank tab in front of it
+// instead, leaving the original open. "Close tab" would be inaccurate there.
 closeBtn.textContent = isApp ? 'Close app' : (window.intentionApps ? 'Not now' : 'Close tab');
 closeBtn.classList.add('int-block');
 
@@ -213,8 +213,9 @@ function addRetryButton(container, onRetry) {
 sendBtn.addEventListener('click', send);
 inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 closeBtn.addEventListener('click', () => {
-  // End session and close the current tab (extensions) or dismiss the
-  // overlay without touching the tab (Android — see closeBtn.textContent above)
+  // End session and close the current tab (extensions) or hand off to the
+  // native bridge, which opens a blank tab over the blocked one and dismisses
+  // this overlay (Android — see closeBtn.textContent above)
   chrome.runtime.sendMessage({ action: 'endSession', reason: 'fulfilled' });
   chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
   if (isApp && !window.intentionApps) {
