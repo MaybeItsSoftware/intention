@@ -80,11 +80,12 @@ class CoachingActivity : AppCompatActivity() {
     private fun closeBlockedTab() {
         val pkg = browserPackage
         if (!isApp && pkg != null) {
-            // Debounce even when the divert succeeds: the browser's URL bar can
-            // still report the blocked host for a moment while the new tab
-            // opens, which would otherwise re-trigger the coach immediately.
-            IntentionAccessibilityService.instance?.recordDismissal(pkg, domain)
-            openBlankTab(pkg)
+            // A short grace is needed even when the divert works, since the URL
+            // bar can still report the blocked host while the new tab opens.
+            // The service drops it as soon as it sees the blank tab, so closing
+            // that tab puts the coach straight back in front of the site.
+            val diverted = openBlankTab(pkg)
+            IntentionAccessibilityService.instance?.recordDismissal(pkg, domain, diverted)
             finish()
             return
         }
@@ -92,19 +93,21 @@ class CoachingActivity : AppCompatActivity() {
     }
 
     // ACTION_VIEW + EXTRA_CREATE_NEW_TAB is the standard way to ask a browser
-    // for a new tab; Chromium- and Gecko-based browsers both honour it. If this
-    // browser doesn't handle about: URLs we simply dismiss the overlay and leave
-    // it as it was, rather than booting the user out to the home screen.
-    private fun openBlankTab(pkg: String) {
+    // for a new tab; Chromium- and Gecko-based browsers both honour it. Returns
+    // false if this browser doesn't handle about: URLs, in which case we leave
+    // it as it was rather than booting the user out to the home screen.
+    private fun openBlankTab(pkg: String): Boolean {
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BLANK_TAB_URL)).apply {
             `package` = pkg
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(Browser.EXTRA_CREATE_NEW_TAB, true)
         }
-        try {
+        return try {
             startActivity(intent)
+            true
         } catch (e: ActivityNotFoundException) {
             Log.w(TAG, "$pkg doesn't handle $BLANK_TAB_URL; leaving the browser untouched", e)
+            false
         }
     }
 

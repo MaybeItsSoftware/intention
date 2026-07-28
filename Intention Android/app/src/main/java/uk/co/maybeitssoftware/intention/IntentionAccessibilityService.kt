@@ -19,12 +19,16 @@ class IntentionAccessibilityService : AccessibilityService() {
         // the timestamp comparison in sessionExpiresAt sees it as expired.
         private const val EXPIRY_RECHECK_BUFFER_MS = 250L
         // How long to hold off re-showing the coach for a (browser, domain)
-        // pair after the user dismisses it. Declining opens a blank tab rather
-        // than closing the blocked one (see CoachingActivity.closeBlockedTab),
-        // so the URL bar can still read the blocked host while that new tab
-        // opens — and the dedupe-clearing on every browser-foreground event
-        // would otherwise re-trigger the coach off that stale reading.
+        // pair after the user dismisses it and the browser could not be
+        // diverted off the blocked page (see CoachingActivity.closeBlockedTab).
+        // The blocked tab is still in front, so without this the dedupe-clearing
+        // on every browser-foreground event would re-trigger the coach at once.
         private const val DISMISS_DEBOUNCE_MS = 60_000L
+        // The same grace when the divert did work. It only has to cover the
+        // hand-off — the URL bar can still read the blocked host for a moment
+        // while the blank tab opens — and is dropped as soon as the browser is
+        // seen off the blocked site, so closing that tab re-arms the coach.
+        private const val DIVERTED_GRACE_MS = 10_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -132,13 +136,25 @@ class IntentionAccessibilityService : AccessibilityService() {
     // Called by CoachingActivity when the user dismisses the coach for a
     // website without granting a pass, so the still-open blocked tab doesn't
     // immediately re-trigger the coach the next time this browser is checked.
-    fun recordDismissal(browserPackage: String, domain: String) {
-        dismissedUntil["$browserPackage|$domain"] = System.currentTimeMillis() + DISMISS_DEBOUNCE_MS
+    // `divertedAway` says whether we managed to open a blank tab over it, which
+    // is a much shorter grace — see the two constants above.
+    fun recordDismissal(browserPackage: String, domain: String, divertedAway: Boolean) {
+        val grace = if (divertedAway) DIVERTED_GRACE_MS else DISMISS_DEBOUNCE_MS
+        dismissedUntil["$browserPackage|$domain"] = System.currentTimeMillis() + grace
     }
 
     private fun isDismissed(browserPackage: String, domain: String): Boolean {
         val until = dismissedUntil["$browserPackage|$domain"] ?: return false
         return System.currentTimeMillis() < until
+    }
+
+    // Once this browser is seen showing anything but the blocked site, the
+    // dismissal has done its job. Dropping it here — rather than waiting the
+    // full grace period out — is what stops "decline, then close the blank tab"
+    // from being a free pass back onto the site.
+    private fun clearDismissals(browserPackage: String) {
+        if (dismissedUntil.isEmpty()) return
+        dismissedUntil.keys.removeAll { it.startsWith("$browserPackage|") }
     }
 
     private fun checkWebsiteBlock(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>) {
@@ -148,11 +164,20 @@ class IntentionAccessibilityService : AccessibilityService() {
         lastContentCheckAt[packageName] = now
 
         val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return
-        val host = findBrowserHost(root, packageName, urlBarIds) ?: return
+        val urlText = findBrowserUrlText(root, packageName, urlBarIds) ?: return
+        if (isBlankPage(urlText)) {
+            onBrowserLeftBlockedSite(packageName)
+            return
+        }
+        val host = extractHost(urlText) ?: return
         val hostChanged = lastSeenHost[packageName] != host
         lastSeenHost[packageName] = host
 
-        val matchedDomain = findBlockedDomain(host) ?: return
+        val matchedDomain = findBlockedDomain(host)
+        if (matchedDomain == null) {
+            clearDismissals(packageName)
+            return
+        }
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt != null) {
             // Keep an expiry re-check armed while the user stays on the site,
@@ -190,9 +215,18 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
 
         val urlBarIds = BROWSER_URL_BAR_IDS[packageName] ?: return
-        val host = findBrowserHost(root ?: return, packageName, urlBarIds) ?: return
+        val urlText = findBrowserUrlText(root ?: return, packageName, urlBarIds) ?: return
+        if (isBlankPage(urlText)) {
+            onBrowserLeftBlockedSite(packageName)
+            return
+        }
+        val host = extractHost(urlText) ?: return
         lastSeenHost[packageName] = host
-        val matchedDomain = findBlockedDomain(host) ?: return
+        val matchedDomain = findBlockedDomain(host)
+        if (matchedDomain == null) {
+            clearDismissals(packageName)
+            return
+        }
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt == null && !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
@@ -208,15 +242,35 @@ class IntentionAccessibilityService : AccessibilityService() {
         handler.postDelayed(expiryRecheck, delay)
     }
 
-    private fun findBrowserHost(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
+    // Raw URL-bar text, or null when no URL bar could be read at all (the
+    // toolbar is mid-animation, hidden while scrolling, a browser update
+    // renamed the view ID…). An empty string is not the same thing: it means
+    // the bar is there and showing nothing, i.e. a blank/new tab.
+    private fun findBrowserUrlText(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
+        var sawEmptyBar = false
         for (idName in urlBarIds) {
-            val nodes = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")
-            val text = nodes?.firstOrNull()?.text?.toString()
-            if (!text.isNullOrBlank()) {
-                return extractHost(text)
-            }
+            val node = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")?.firstOrNull() ?: continue
+            val text = node.text?.toString()
+            if (!text.isNullOrBlank()) return text
+            sawEmptyBar = true
         }
-        return null
+        return if (sawEmptyBar) "" else null
+    }
+
+    // A blank/new tab or an internal about: page — definitively not a blocked
+    // site, unlike an unreadable URL bar. This is what the tab we open on
+    // dismissal looks like once it has actually loaded.
+    private fun isBlankPage(urlText: String): Boolean {
+        val text = urlText.trim().lowercase()
+        return text.isEmpty() || text.startsWith("about:")
+    }
+
+    // Forget both the dismissal grace and the last-host dedupe for this
+    // browser, so whatever it navigates to next is evaluated from scratch —
+    // including a return to the blocked tab that is still open behind this one.
+    private fun onBrowserLeftBlockedSite(packageName: String) {
+        lastSeenHost.remove(packageName)
+        clearDismissals(packageName)
     }
 
     private fun getRootFromEvent(event: AccessibilityEvent): AccessibilityNodeInfo? {
