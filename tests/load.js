@@ -128,9 +128,11 @@ export function makeMockFetch(handler) {
 // Returns the context's global object, on which all top-level functions and
 // `const`/`var` declarations from the source are visible (vm hoists top-level
 // declarations onto the context global).
-export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGlobals = {} } = {}) {
+// `source` overrides reading from disk (used by loadBackground to evaluate
+// several files as one script); `file` then only names the vm frame.
+export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGlobals = {}, source } = {}) {
   const path = resolveSourcePath(file, variant);
-  const code = readFileSync(path, 'utf8');
+  const code = source !== undefined ? source : readFileSync(path, 'utf8');
 
   const sandbox = {
     chrome: chrome || makeMockChrome(),
@@ -200,6 +202,62 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
   const chrome = makeMockChrome(seed);
   const ctx = loadSource('tracking.js', { variant, chrome });
   return { ctx, chrome };
+}
+
+// Convenience: load the whole background worker — providers.js, prompts.js,
+// tracking.js and background.js — into ONE vm context, the way the service
+// worker (importScripts) and the native background WebViews (four <script>
+// tags) both load them. Concatenating is safe because no top-level name is
+// declared in more than one of the four.
+//
+// Returns { ctx, chrome, fetch, listeners } where `listeners` exposes the
+// handlers background.js registers, so tests can fire an alarm or a tab close
+// the way the browser would. Call ctx.handleMessage(msg, sender) to drive the
+// message API — `sender` is {tab:{id}} in the extensions and {} on the native
+// ports, which is exactly what the session keying turns on.
+export function loadBackground({ seed = {}, fetch } = {}) {
+  const chrome = makeMockChrome(seed);
+  const mockFetch = fetch || makeMockFetch({ content: [{ type: 'text', text: 'ok' }] });
+
+  const listeners = { alarm: null, tabRemoved: null, message: null };
+  const alarms = [];
+  chrome.alarms = {
+    create: (name, info) => alarms.push({ name, info }),
+    clear: (name) => {
+      const i = alarms.findIndex(a => a.name === name);
+      if (i !== -1) alarms.splice(i, 1);
+    },
+    _created: alarms,
+    onAlarm: { addListener: (fn) => { listeners.alarm = fn; } }
+  };
+  chrome.tabs = {
+    query: async () => [],
+    update: async () => {},
+    remove: () => {},
+    sendMessage: async () => { throw new Error('no content script'); },
+    onRemoved: { addListener: (fn) => { listeners.tabRemoved = fn; } }
+  };
+  chrome.windows = { update: async () => {} };
+  chrome.action = { onClicked: { addListener: () => {} } };
+  chrome.runtime.onInstalled = { addListener: () => {} };
+  chrome.runtime.onMessage = { addListener: (fn) => { listeners.message = fn; } };
+  chrome.runtime.openOptionsPage = () => {};
+  chrome.declarativeNetRequest = {
+    getDynamicRules: async () => [],
+    updateDynamicRules: async () => {},
+    updateSessionRules: async () => {}
+  };
+
+  const sources = ['providers.js', 'prompts.js', 'tracking.js', 'background.js']
+    .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
+    .join('\n;\n');
+
+  const ctx = loadSource(join(VARIANTS.chrome, '__background_bundle__.js'), {
+    chrome,
+    fetch: mockFetch,
+    source: sources
+  });
+  return { ctx, chrome, fetch: mockFetch, listeners };
 }
 
 // Convenience: load providers.js with a mock fetch.

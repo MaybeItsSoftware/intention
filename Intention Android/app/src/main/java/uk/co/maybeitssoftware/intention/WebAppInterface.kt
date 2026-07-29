@@ -52,6 +52,14 @@ class WebAppInterface(
                 runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{\"ok\":true}')")
                 return
             }
+            // The shared handler routes this through chrome.tabs/openOptionsPage,
+            // neither of which exists on Android — bring up MainActivity, which
+            // hosts the same options page, instead of silently doing nothing.
+            if (action == "openOptions") {
+                openOptions()
+                runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{\"ok\":true}')")
+                return
+            }
         } catch (e: Exception) {}
 
         BackgroundJsHelper.sendMessage(messageJson) { response ->
@@ -86,6 +94,18 @@ class WebAppInterface(
             array.put(JSONObject().put("packageName", pkg).put("label", label).put("icon", icon))
         }
         runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(array.toString())})")
+    }
+
+    private fun openOptions() {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        Handler(Looper.getMainLooper()).post {
+            context.startActivity(intent)
+            if (context is CoachingActivity) {
+                context.finish()
+            }
+        }
     }
 
     private fun drawableToBase64Png(drawable: Drawable, size: Int = 64): String {

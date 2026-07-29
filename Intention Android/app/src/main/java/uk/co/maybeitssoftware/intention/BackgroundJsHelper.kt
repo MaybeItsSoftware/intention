@@ -88,7 +88,12 @@ object BackgroundJsHelper {
             pendingCallbacks[callbackId] = callback
         }
         val dispatch = {
-            val senderJson = "{\"tab\":{\"id\":1}}"
+            // No tab: Android has no browser tabs of its own, and faking one id
+            // made every site and app on the device share a single session,
+            // chat history and check-in alarm. The shared background.js keys
+            // per blocked target when the sender has no tab (sessionKeyFor),
+            // which is also what the iOS host sends.
+            val senderJson = "{}"
             // messageJson is already-escaped JSON text (e.g. multi-line userContext
             // becomes literal "\n" sequences). Wrapping it in a hand-escaped single-quoted
             // JS literal double-unescapes those sequences into raw control characters,
@@ -165,24 +170,8 @@ object BackgroundJsHelper {
             }
             
             for (key in keys) {
-                val valueStr = prefs.getString(key, null)
-                if (valueStr != null) {
-                    try {
-                        response.put(key, JSONObject(valueStr))
-                    } catch (e: Exception) {
-                        try {
-                            response.put(key, org.json.JSONArray(valueStr))
-                        } catch (e2: Exception) {
-                            if (valueStr == "true") response.put(key, true)
-                            else if (valueStr == "false") response.put(key, false)
-                            else {
-                                val num = valueStr.toDoubleOrNull()
-                                if (num != null) response.put(key, num)
-                                else response.put(key, valueStr)
-                            }
-                        }
-                    }
-                }
+                val valueStr = prefs.getString(key, null) ?: continue
+                response.put(key, decodeStoredValue(valueStr))
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in getSharedStorage: ", e)
@@ -199,11 +188,28 @@ object BackgroundJsHelper {
             while (iter.hasNext()) {
                 val key = iter.next()
                 val value = json.get(key)
-                editor.putString(key, value.toString())
+                // Strings are stored quoted so they survive the round trip.
+                // Without it, decodeStoredValue has to guess, and a setting
+                // whose text happens to read as "true" or "1.5" comes back as
+                // a boolean or a number. Objects and arrays keep their plain
+                // JSON form — IntentionAccessibilityService reads blockedApps,
+                // blockedDomains and activeSessions straight out of prefs.
+                editor.putString(key, if (value is String) JSONObject.quote(value) else value.toString())
             }
             editor.apply()
         } catch (e: Exception) {
             Log.e(TAG, "Error saving to storage: ", e)
+        }
+    }
+
+    // Inverse of the encoding in setSharedStorage. Values written by older
+    // builds are unquoted, so a bare string still has to decode as itself —
+    // JSONTokener handles both, and anything it can't parse is raw text.
+    private fun decodeStoredValue(valueStr: String): Any {
+        return try {
+            org.json.JSONTokener(valueStr).nextValue() ?: valueStr
+        } catch (e: Exception) {
+            valueStr
         }
     }
 }

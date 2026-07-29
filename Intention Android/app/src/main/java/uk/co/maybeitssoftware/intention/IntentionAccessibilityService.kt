@@ -19,12 +19,22 @@ class IntentionAccessibilityService : AccessibilityService() {
         // the timestamp comparison in sessionExpiresAt sees it as expired.
         private const val EXPIRY_RECHECK_BUFFER_MS = 250L
         // How long to hold off re-showing the coach for a (browser, domain)
-        // pair after the user dismisses it. Declining opens a blank tab rather
-        // than closing the blocked one (see CoachingActivity.closeBlockedTab),
-        // so the URL bar can still read the blocked host while that new tab
-        // opens — and the dedupe-clearing on every browser-foreground event
-        // would otherwise re-trigger the coach off that stale reading.
+        // pair after the user dismisses it and the browser could not be
+        // diverted off the blocked page (see CoachingActivity.closeBlockedTab).
+        // The blocked tab is still in front, so without this the dedupe-clearing
+        // on every browser-foreground event would re-trigger the coach at once.
         private const val DISMISS_DEBOUNCE_MS = 60_000L
+        // The same grace when the divert did work. It only has to cover the
+        // hand-off — the URL bar can still read the blocked host for a moment
+        // while the blank tab opens — and is dropped as soon as the browser is
+        // seen off the blocked site, so closing that tab re-arms the coach.
+        private const val DIVERTED_GRACE_MS = 10_000L
+        // Coaching modes understood by coaching.js (via CoachingActivity).
+        private const val MODE_GATE = "gate"
+        private const val MODE_CHECKIN = "checkin"
+        // How recently a session must have run out for the relaunched coach to
+        // open as a check-in rather than a fresh gate.
+        private const val CHECKIN_WINDOW_MS = 5 * 60_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -132,13 +142,25 @@ class IntentionAccessibilityService : AccessibilityService() {
     // Called by CoachingActivity when the user dismisses the coach for a
     // website without granting a pass, so the still-open blocked tab doesn't
     // immediately re-trigger the coach the next time this browser is checked.
-    fun recordDismissal(browserPackage: String, domain: String) {
-        dismissedUntil["$browserPackage|$domain"] = System.currentTimeMillis() + DISMISS_DEBOUNCE_MS
+    // `divertedAway` says whether we managed to open a blank tab over it, which
+    // is a much shorter grace — see the two constants above.
+    fun recordDismissal(browserPackage: String, domain: String, divertedAway: Boolean) {
+        val grace = if (divertedAway) DIVERTED_GRACE_MS else DISMISS_DEBOUNCE_MS
+        dismissedUntil["$browserPackage|$domain"] = System.currentTimeMillis() + grace
     }
 
     private fun isDismissed(browserPackage: String, domain: String): Boolean {
         val until = dismissedUntil["$browserPackage|$domain"] ?: return false
         return System.currentTimeMillis() < until
+    }
+
+    // Once this browser is seen showing anything but the blocked site, the
+    // dismissal has done its job. Dropping it here — rather than waiting the
+    // full grace period out — is what stops "decline, then close the blank tab"
+    // from being a free pass back onto the site.
+    private fun clearDismissals(browserPackage: String) {
+        if (dismissedUntil.isEmpty()) return
+        dismissedUntil.keys.removeAll { it.startsWith("$browserPackage|") }
     }
 
     private fun checkWebsiteBlock(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>) {
@@ -148,11 +170,20 @@ class IntentionAccessibilityService : AccessibilityService() {
         lastContentCheckAt[packageName] = now
 
         val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return
-        val host = findBrowserHost(root, packageName, urlBarIds) ?: return
+        val urlText = findBrowserUrlText(root, packageName, urlBarIds) ?: return
+        if (isBlankPage(urlText)) {
+            onBrowserLeftBlockedSite(packageName)
+            return
+        }
+        val host = extractHost(urlText) ?: return
         val hostChanged = lastSeenHost[packageName] != host
         lastSeenHost[packageName] = host
 
-        val matchedDomain = findBlockedDomain(host) ?: return
+        val matchedDomain = findBlockedDomain(host)
+        if (matchedDomain == null) {
+            clearDismissals(packageName)
+            return
+        }
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt != null) {
             // Keep an expiry re-check armed while the user stays on the site,
@@ -182,7 +213,12 @@ class IntentionAccessibilityService : AccessibilityService() {
             val expiresAt = sessionExpiresAt(packageName)
             if (expiresAt == null) {
                 Log.d(TAG, "Session expired while $packageName in foreground. Launching Coach!")
-                launchCoachingOverlay(packageName, isApp = true, label = getAppLabel(packageName))
+                launchCoachingOverlay(
+                    packageName,
+                    isApp = true,
+                    label = getAppLabel(packageName),
+                    mode = if (justExpired(packageName)) MODE_CHECKIN else MODE_GATE
+                )
             } else {
                 scheduleExpiryRecheck(expiresAt)
             }
@@ -190,13 +226,28 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
 
         val urlBarIds = BROWSER_URL_BAR_IDS[packageName] ?: return
-        val host = findBrowserHost(root ?: return, packageName, urlBarIds) ?: return
+        val urlText = findBrowserUrlText(root ?: return, packageName, urlBarIds) ?: return
+        if (isBlankPage(urlText)) {
+            onBrowserLeftBlockedSite(packageName)
+            return
+        }
+        val host = extractHost(urlText) ?: return
         lastSeenHost[packageName] = host
-        val matchedDomain = findBlockedDomain(host) ?: return
+        val matchedDomain = findBlockedDomain(host)
+        if (matchedDomain == null) {
+            clearDismissals(packageName)
+            return
+        }
         val expiresAt = sessionExpiresAt(matchedDomain)
         if (expiresAt == null && !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Session expired while $host in foreground. Launching Coach!")
-            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
+            launchCoachingOverlay(
+                matchedDomain,
+                isApp = false,
+                label = matchedDomain,
+                browserPackage = packageName,
+                mode = if (justExpired(matchedDomain)) MODE_CHECKIN else MODE_GATE
+            )
         } else if (expiresAt != null) {
             scheduleExpiryRecheck(expiresAt)
         }
@@ -208,15 +259,35 @@ class IntentionAccessibilityService : AccessibilityService() {
         handler.postDelayed(expiryRecheck, delay)
     }
 
-    private fun findBrowserHost(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
+    // Raw URL-bar text, or null when no URL bar could be read at all (the
+    // toolbar is mid-animation, hidden while scrolling, a browser update
+    // renamed the view ID…). An empty string is not the same thing: it means
+    // the bar is there and showing nothing, i.e. a blank/new tab.
+    private fun findBrowserUrlText(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
+        var sawEmptyBar = false
         for (idName in urlBarIds) {
-            val nodes = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")
-            val text = nodes?.firstOrNull()?.text?.toString()
-            if (!text.isNullOrBlank()) {
-                return extractHost(text)
-            }
+            val node = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")?.firstOrNull() ?: continue
+            val text = node.text?.toString()
+            if (!text.isNullOrBlank()) return text
+            sawEmptyBar = true
         }
-        return null
+        return if (sawEmptyBar) "" else null
+    }
+
+    // A blank/new tab or an internal about: page — definitively not a blocked
+    // site, unlike an unreadable URL bar. This is what the tab we open on
+    // dismissal looks like once it has actually loaded.
+    private fun isBlankPage(urlText: String): Boolean {
+        val text = urlText.trim().lowercase()
+        return text.isEmpty() || text.startsWith("about:")
+    }
+
+    // Forget both the dismissal grace and the last-host dedupe for this
+    // browser, so whatever it navigates to next is evaluated from scratch —
+    // including a return to the blocked tab that is still open behind this one.
+    private fun onBrowserLeftBlockedSite(packageName: String) {
+        lastSeenHost.remove(packageName)
+        clearDismissals(packageName)
     }
 
     private fun getRootFromEvent(event: AccessibilityEvent): AccessibilityNodeInfo? {
@@ -276,14 +347,24 @@ class IntentionAccessibilityService : AccessibilityService() {
     // Returns the latest future expiration time of any active session for
     // this app/domain, or null if there is no unexpired session.
     private fun sessionExpiresAt(key: String): Long? {
+        val latest = latestSessionExpiry(key) ?: return null
+        return latest.takeIf { System.currentTimeMillis() < it }
+    }
+
+    // Latest expiration among this app/domain's sessions, whether or not it has
+    // passed. Sessions the background JS has already banked stay in storage
+    // (their reason feeds the check-in prompt), so "expired" and "never had
+    // one" have to be told apart — see justExpired.
+    private fun latestSessionExpiry(key: String): Long? {
         val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
         val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         var latest: Long? = null
         try {
-            // activeSessions is stored as a JSON object: {"tabId": {"domain": "com.instagram.android", "startTime": 12345, "intervalMinutes": 10}}
+            // activeSessions is a JSON object keyed by tab id (extensions) or
+            // "target:<domain|package>" (Android/iOS, which have no tabs):
+            // {"target:instagram.com": {"domain": "instagram.com", "startTime": 12345, "intervalMinutes": 10}}
             val json = JSONObject(activeSessionsStr)
             val keys = json.keys()
-            val now = System.currentTimeMillis()
             while (keys.hasNext()) {
                 val sessionKey = keys.next()
                 val session = json.getJSONObject(sessionKey)
@@ -292,7 +373,7 @@ class IntentionAccessibilityService : AccessibilityService() {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val expirationTime = startTime + (intervalMinutes * 60 * 1000)
-                    if (now < expirationTime && expirationTime > (latest ?: 0L)) {
+                    if (expirationTime > (latest ?: 0L)) {
                         latest = expirationTime
                     }
                 }
@@ -303,13 +384,30 @@ class IntentionAccessibilityService : AccessibilityService() {
         return latest
     }
 
-    private fun launchCoachingOverlay(key: String, isApp: Boolean, label: String, browserPackage: String? = null) {
+    // True when a session for this target ran out just now, rather than there
+    // never having been one — the difference between the coach opening with
+    // "your time is up" and opening with "what are you here for?". Bounded so
+    // a session from hours ago doesn't resurface as a stale check-in.
+    private fun justExpired(key: String): Boolean {
+        val expiry = latestSessionExpiry(key) ?: return false
+        val sinceExpiry = System.currentTimeMillis() - expiry
+        return sinceExpiry in 0..CHECKIN_WINDOW_MS
+    }
+
+    private fun launchCoachingOverlay(
+        key: String,
+        isApp: Boolean,
+        label: String,
+        browserPackage: String? = null,
+        mode: String = MODE_GATE
+    ) {
         val intent = Intent(this, CoachingActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("domain", key)
             putExtra("isApp", isApp)
             putExtra("appLabel", label)
             putExtra("browserPackage", browserPackage)
+            putExtra("mode", mode)
         }
         startActivity(intent)
     }

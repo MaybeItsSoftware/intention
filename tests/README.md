@@ -24,6 +24,12 @@ source file and evaluates it inside a `node:vm` context with injected mocks for
 resulting functions/consts back off the context. See `loadPrompts`,
 `loadTracking`, `loadProviders`, `makeMockChrome`, `makeMockFetch`.
 
+`loadBackground` is the exception to one-file-per-context: it evaluates
+`providers.js` + `prompts.js` + `tracking.js` + `background.js` together, the
+way the service worker (`importScripts`) and the native background WebViews
+(four `<script>` tags) both load them, and hands back the registered alarm and
+tab-removal listeners so tests can fire them like the browser would.
+
 ## Running tests
 
 ```bash
@@ -42,6 +48,12 @@ Test files:
 - `providers.test.js` — request shape + response parsing for Anthropic,
   OpenAI-compatible (OpenAI/Groq), and Gemini, plus `callLLM` dispatch, backed
   by the mock `fetch`.
+- `background.test.js` — session/chat-history/alarm keying (`sessionKeyFor`,
+  `activeSession`), the check-in alarm, and the `mutateStorage` queue that
+  keeps concurrent read-modify-write cycles from clobbering each other. Covers
+  both sender shapes: `{tab:{id}}` from the extensions, and the tab-less sender
+  the native hosts send (Android's `BackgroundJsHelper`, iOS's
+  `BackgroundJSHost`) — which nothing else in the suite can exercise.
 - `parity.test.js` — loads `prompts.js` and `tracking.js` from **all three**
   variant directories and asserts identical behavior (a sync guard on top of
   the byte-diff check in CI/build).

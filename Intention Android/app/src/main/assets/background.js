@@ -4,8 +4,36 @@ try {
   // Firefox loads these via manifest scripts array; globals already present.
 }
 
-const GRANTS_DAILY_CAP = 3;
 const INT_LOG = '[Intention]';
+
+// Sessions, chat history and check-in alarms are keyed per browser tab in the
+// extensions. The native ports (Android, iOS) have no tabs — their bridges
+// deliver messages with no sender.tab — so they key per blocked target
+// instead. Without this every site and app on the device shares one slot: a
+// second grant silently evicts the first, declining one target ends another's
+// pass, and every coaching conversation appends to the same transcript.
+function sessionKeyFor(tabId, target) {
+  if (tabId != null) return String(tabId);
+  return target ? `target:${target}` : null;
+}
+
+// A session that has been banked by the check-in alarm is kept around on the
+// native ports so the check-in coach can quote its original reason, but it
+// must never read as a live pass — nor must one whose time has simply run out
+// while nothing was around to close it (a restarted service worker, or iOS,
+// where the shields re-arm natively and no alarm ever fires).
+function activeSession(session) {
+  if (!session || session.endedAt) return null;
+  const expiresAt = session.startTime + (session.intervalMinutes * 60000);
+  return Date.now() < expiresAt ? session : null;
+}
+
+// Whether this session's minutes still need recording. Distinct from
+// activeSession: an expired-but-unbanked session is no longer a pass, but its
+// time on the site is real and must not be dropped.
+function isBanked(session) {
+  return !!(session && session.endedAt);
+}
 
 async function focusOrCreateTab(urlPattern, createFn) {
   try {
@@ -135,39 +163,48 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const { activeSessions = {}, chatHistories = {} } = await getStorage(['activeSessions', 'chatHistories']);
-  const session = activeSessions[tabId];
-  if (session) {
-    const elapsed = (Date.now() - session.startTime) / 60000;
-    await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
-    delete activeSessions[tabId];
-    await setStorage({ activeSessions });
-  }
-  if (chatHistories[String(tabId)]) {
-    delete chatHistories[String(tabId)];
-    await setStorage({ chatHistories });
-  }
-  chrome.alarms.clear(`checkin-${tabId}`);
-  removeSessionRule(tabId);
+  await endSession({ tabId, reason: 'closed' });
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm.name.startsWith('checkin-')) return;
-  const tabId = parseInt(alarm.name.replace('checkin-', ''), 10);
-  
+  const sessionKey = alarm.name.slice('checkin-'.length);
+  const tabId = /^\d+$/.test(sessionKey) ? Number(sessionKey) : null;
+
+  if (tabId == null) {
+    // Native ports: there is no content script to interrupt. The platform
+    // relaunches the coach in check-in mode off its own timer (Android's
+    // accessibility service), so bank the minutes now — they'd be lost if the
+    // user never came back — but leave the session in place, marked ended, so
+    // the check-in prompt can still quote what they said they came for.
+    await bankExpiredSession(sessionKey);
+    return;
+  }
+
   // Expiration of session time -> remove DNR allow rule for this tab
   removeSessionRule(tabId);
-  
+
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'showCheckin' });
   } catch (e) {
-    const { activeSessions = {} } = await getStorage(['activeSessions']);
-    if (activeSessions[tabId]) {
-      delete activeSessions[tabId];
-      await setStorage({ activeSessions });
-    }
+    // Tab is gone, or has no content script to show the check-in in — drop the
+    // session rather than leaving a pass nothing will ever close.
+    await mutateStorage('activeSessions', (activeSessions) => {
+      delete activeSessions[sessionKey];
+    });
   }
 });
+
+async function bankExpiredSession(sessionKey) {
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const session = activeSessions[sessionKey];
+  if (!session || isBanked(session)) return;
+  const elapsed = (Date.now() - session.startTime) / 60000;
+  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
+  await mutateStorage('activeSessions', (sessions) => {
+    if (sessions[sessionKey]) sessions[sessionKey].endedAt = Date.now();
+  });
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
@@ -191,9 +228,10 @@ async function handleMessage(message, sender) {
     case 'saveSetup': return saveSetup(message.config);
     case 'saveSettings': return saveSettings(message.config);
     case 'getSession': {
-      if (tabId == null) return { session: null };
+      const sessionKey = sessionKeyFor(tabId, message.domain);
+      if (!sessionKey) return { session: null };
       const { activeSessions = {} } = await getStorage(['activeSessions']);
-      return { session: activeSessions[tabId] || null };
+      return { session: activeSession(activeSessions[sessionKey]) };
     }
     case 'chat':
       return handleChat({
@@ -208,9 +246,9 @@ async function handleMessage(message, sender) {
         newValue: message.newValue
       });
     case 'clearChatHistory':
-      return clearChatHistory(message.historyKey || (tabId != null ? String(tabId) : null));
+      return clearChatHistory(message.historyKey || sessionKeyFor(tabId, message.domain));
     case 'endSession':
-      return endSession({ tabId, reason: message.reason });
+      return endSession({ tabId, domain: message.domain, reason: message.reason });
     case 'getStatsForDomain':
       return getStatsForDomain(message.domain);
     case 'getStatsSummary':
@@ -258,7 +296,8 @@ async function checkPageMatch(host, tabId) {
   await syncConfigFromNative();
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
-  const session = tabId != null ? (activeSessions[tabId] || null) : null;
+  const sessionKey = sessionKeyFor(tabId, matchedDomain);
+  const session = sessionKey ? activeSession(activeSessions[sessionKey]) : null;
   return {
     isBlocked: !!matchedDomain,
     matchedDomain,
@@ -348,10 +387,12 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     displayName = label ? `the ${label} app` : 'a blocked app';
   }
 
+  const sessionKey = sessionKeyFor(tabId, domain);
+
   let historyKey;
   if (mode === 'context' || mode === 'setup') historyKey = mode;
   else if (mode === 'settings_gate') historyKey = `settings_gate:${changeType}:${domain || 'all'}`;
-  else historyKey = (tabId != null ? String(tabId) : null);
+  else historyKey = sessionKey;
   if (!historyKey) return { error: 'No history context' };
   const { chatHistories = {} } = await getStorage(['chatHistories']);
   const history = chatHistories[historyKey] || [];
@@ -379,7 +420,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     tools = [GRANT_TOOL];
   } else if (mode === 'checkin') {
     const { activeSessions = {} } = await getStorage(['activeSessions']);
-    const session = activeSessions[tabId] || {};
+    // Deliberately not activeSession(): by check-in time the native ports have
+    // already marked this one ended, and its reason is what we're after.
+    const session = activeSessions[sessionKey] || {};
     const stats = await getStatsForDomain(domain);
     const limits = await getLimitsForDomain(domain);
     systemPrompt = buildCheckinSystemPrompt({
@@ -472,14 +515,25 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       
       const reason = String(tc.input.reason || '').slice(0, 240);
       await recordGrant(domain, minutes, reason);
+
+      // Granting replaces whatever session held this key (a check-in extending
+      // time, or a native port reusing the target's slot), so bank the old
+      // one's minutes before it's overwritten and lost.
       const { activeSessions = {} } = await getStorage(['activeSessions']);
-      activeSessions[tabId] = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
-      await setStorage({ activeSessions });
-      chrome.alarms.create(`checkin-${tabId}`, { delayInMinutes: minutes });
+      const previous = activeSessions[sessionKey];
+      if (previous && !isBanked(previous)) {
+        const elapsed = (Date.now() - previous.startTime) / 60000;
+        await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
+      }
+
+      const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
+      await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
+      chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
       // Apps have no network rules to allow — the Android accessibility
-      // service reads activeSessions directly to let the app through.
-      if (!isApp) await registerSessionRule(tabId, domain, minutes);
-      grantedSession = activeSessions[tabId];
+      // service reads activeSessions directly to let the app through — and
+      // neither do the native ports, which have no tab to scope a rule to.
+      if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+      grantedSession = session;
     } else if (tc.name === 'update_context' && mode === 'context') {
       const newContext = String(tc.input.new_context || '').slice(0, 5000).trim();
       if (newContext) {
@@ -533,8 +587,12 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   }
   const assistantText = (rawText || acceptanceFallback) + appendedNote;
   history.push({ role: 'assistant', content: assistantText || '(…)' });
-  chatHistories[historyKey] = history.slice(-40);
-  await setStorage({ chatHistories });
+  // Re-read under the lock: the LLM call above took seconds, and writing back
+  // the copy of chatHistories read before it would drop any other
+  // conversation's turns committed in the meantime.
+  await mutateStorage('chatHistories', (histories) => {
+    histories[historyKey] = history.slice(-40);
+  });
 
   return { assistantText, grantedSession, contextUpdated, approved: settingApproved ? true : false };
 }
@@ -594,27 +652,31 @@ async function applySettingChange({ domain, changeType, newValue }) {
 
 async function clearChatHistory(historyKey) {
   if (!historyKey) return { ok: true };
-  const { chatHistories = {} } = await getStorage(['chatHistories']);
-  delete chatHistories[historyKey];
-  await setStorage({ chatHistories });
+  await mutateStorage('chatHistories', (chatHistories) => {
+    delete chatHistories[historyKey];
+  });
   return { ok: true };
 }
 
-async function endSession({ tabId, reason }) {
-  const { activeSessions = {}, chatHistories = {} } = await getStorage(['activeSessions', 'chatHistories']);
-  const session = activeSessions[tabId];
+async function endSession({ tabId, domain, reason }) {
+  const sessionKey = sessionKeyFor(tabId, domain);
+  if (!sessionKey) return { ok: true };
+
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const session = activeSessions[sessionKey];
   if (session) {
-    const elapsed = (Date.now() - session.startTime) / 60000;
-    await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
-    delete activeSessions[tabId];
-    await setStorage({ activeSessions });
+    // An already-banked session (see bankExpiredSession) must not be counted
+    // twice — drop it, but don't re-record its minutes.
+    if (!isBanked(session)) {
+      const elapsed = (Date.now() - session.startTime) / 60000;
+      await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
+    }
+    await mutateStorage('activeSessions', (sessions) => { delete sessions[sessionKey]; });
   }
-  if (tabId != null) {
-    delete chatHistories[String(tabId)];
-    await setStorage({ chatHistories });
-    chrome.alarms.clear(`checkin-${tabId}`);
-    removeSessionRule(tabId);
-  }
+  await mutateStorage('chatHistories', (chatHistories) => { delete chatHistories[sessionKey]; });
+  chrome.alarms.clear(`checkin-${sessionKey}`);
+  if (tabId != null) removeSessionRule(tabId);
+
   if (reason === 'fulfilled' && tabId != null) {
     try { chrome.tabs.remove(tabId); } catch (e) {}
   }
