@@ -19,13 +19,22 @@ object BackgroundJsHelper {
 
     fun init(context: Context) {
         if (webView != null) return
-        
+
         Handler(Looper.getMainLooper()).post {
-            val wv = WebView(context.applicationContext)
+            // BootReceiver initializes us straight out of a device restart, where
+            // the WebView provider can still be settling. A throw here would be
+            // an uncaught exception on the main thread — i.e. a crash at every
+            // boot — so fail quietly and let the next entry point retry.
+            val wv = try {
+                WebView(context.applicationContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not create the background WebView: ", e)
+                return@post
+            }
             wv.settings.javaScriptEnabled = true
             wv.settings.allowFileAccess = true
             wv.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            
+
             wv.addJavascriptInterface(object {
                 @JavascriptInterface
                 fun getStorage(keysJson: String, callbackId: String) {
@@ -70,6 +79,11 @@ object BackgroundJsHelper {
                         copy
                     }
                     queued.forEach { it() }
+                    // A fresh background page means a fresh process — after a
+                    // reboot, an update, a force stop, or the system reclaiming
+                    // us — and the alarms backing any live session went with the
+                    // old one. Rebuild them.
+                    reconcileSessions()
                 }
             }
             
@@ -79,32 +93,38 @@ object BackgroundJsHelper {
     }
 
     fun sendMessage(messageJson: String, callback: (String?) -> Unit) {
-        val wv = webView ?: run {
-            callback("{\"error\":\"Background JS helper not initialized\"}")
-            return
-        }
         val callbackId = "native_cb_" + System.currentTimeMillis() + "_" + (0..1000).random()
-        synchronized(pendingCallbacks) {
-            pendingCallbacks[callbackId] = callback
-        }
-        val dispatch = {
-            // No tab: Android has no browser tabs of its own, and faking one id
-            // made every site and app on the device share a single session,
-            // chat history and check-in alarm. The shared background.js keys
-            // per blocked target when the sender has no tab (sessionKeyFor),
-            // which is also what the iOS host sends.
-            val senderJson = "{}"
-            // messageJson is already-escaped JSON text (e.g. multi-line userContext
-            // becomes literal "\n" sequences). Wrapping it in a hand-escaped single-quoted
-            // JS literal double-unescapes those sequences into raw control characters,
-            // which then fail JSON.parse inside triggerMessage. JSONObject.quote produces
-            // a JS-literal-safe string that round-trips correctly.
-            wv.evaluateJavascript(
-                "window.triggerMessage(${JSONObject.quote(messageJson)}, ${JSONObject.quote(senderJson)}, ${JSONObject.quote(callbackId)})",
-                null
-            )
-        }
+        // init() creates the WebView on a main-thread post, so `webView` is still
+        // null when a caller that just called init() gets here — which is what
+        // every entry point does (BootReceiver, MainActivity, CoachingActivity).
+        // Resolving it inside our own post puts this behind that creation rather
+        // than failing the call outright.
         Handler(Looper.getMainLooper()).post {
+            val wv = webView
+            if (wv == null) {
+                callback("{\"error\":\"Background JS helper not initialized\"}")
+                return@post
+            }
+            synchronized(pendingCallbacks) {
+                pendingCallbacks[callbackId] = callback
+            }
+            val dispatch = {
+                // No tab: Android has no browser tabs of its own, and faking one id
+                // made every site and app on the device share a single session,
+                // chat history and check-in alarm. The shared background.js keys
+                // per blocked target when the sender has no tab (sessionKeyFor),
+                // which is also what the iOS host sends.
+                val senderJson = "{}"
+                // messageJson is already-escaped JSON text (e.g. multi-line userContext
+                // becomes literal "\n" sequences). Wrapping it in a hand-escaped single-quoted
+                // JS literal double-unescapes those sequences into raw control characters,
+                // which then fail JSON.parse inside triggerMessage. JSONObject.quote produces
+                // a JS-literal-safe string that round-trips correctly.
+                wv.evaluateJavascript(
+                    "window.triggerMessage(${JSONObject.quote(messageJson)}, ${JSONObject.quote(senderJson)}, ${JSONObject.quote(callbackId)})",
+                    null
+                )
+            }
             if (isReady) {
                 dispatch()
             } else {
@@ -113,6 +133,14 @@ object BackgroundJsHelper {
                 }
             }
         }
+    }
+
+    // Banks any pass that ran out while the process was gone and re-arms the
+    // check-in alarms a restart destroyed — see reconcileSessions() in
+    // background.js. `onDone` fires once the background page has answered, which
+    // BootReceiver uses to hold its broadcast open until the work is finished.
+    fun reconcileSessions(onDone: () -> Unit = {}) {
+        sendMessage("{\"action\":\"reconcileSessions\"}") { onDone() }
     }
 
     // Fires the chrome.alarms.onAlarm listener registered by the shared

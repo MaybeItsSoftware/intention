@@ -203,6 +203,108 @@ describe('check-in alarm', () => {
   });
 });
 
+// Stands in for what the native hosts do on start: Android's BootReceiver and
+// BackgroundJsHelper, and iOS's BackgroundJSHost, both send
+// { action: 'reconcileSessions' } once the background page is up, because a
+// device restart leaves them with sessions in storage but no alarms.
+describe('reconcileSessions', () => {
+  it('banks a pass that ran out while the device was off', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10, 'reply to a DM') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    // The pass ran out while the phone was powered off, so its alarm never fired.
+    chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 30 * 60000;
+
+    const res = await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+
+    expect(res.banked).toEqual(['target:instagram.com']);
+    expect(res.rearmed).toEqual([]);
+    // Capped at what was granted, not the half hour the phone was off for.
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.minutesToday).toBe(10);
+    // Kept, so a check-in can still quote the reason.
+    const session = chrome.storage._store.activeSessions['target:instagram.com'];
+    expect(session.reason).toBe('reply to a DM');
+    expect(ctx.activeSession(session)).toBe(null);
+  });
+
+  it('re-arms the check-in for a pass with time left, at its original expiry', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    const session = chrome.storage._store.activeSessions['target:instagram.com'];
+    // Four of the ten granted minutes were spent before the restart.
+    session.startTime = Date.now() - 4 * 60000;
+    chrome.alarms._created.length = 0;
+
+    const res = await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+
+    expect(res.banked).toEqual([]);
+    expect(res.rearmed).toEqual(['target:instagram.com']);
+    expect(chrome.alarms._created).toHaveLength(1);
+    const alarm = chrome.alarms._created[0];
+    expect(alarm.name).toBe('checkin-target:instagram.com');
+    // Absolute expiry, so the remaining six minutes are what's left — not a
+    // fresh ten from the moment the device came back up.
+    expect(alarm.info.when).toBe(session.startTime + 10 * 60000);
+    // Still a live pass: the user is not re-gated for time they already have.
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.minutesToday).toBe(0);
+  });
+
+  it('leaves an already-banked session alone, so minutes are never counted twice', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 10 * 60000;
+    await listeners.alarm({ name: 'checkin-target:instagram.com' });
+
+    // Two reconciles on top of the alarm that already banked it.
+    await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+    const res = await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+
+    expect(res.banked).toEqual([]);
+    expect(res.rearmed).toEqual([]);
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.minutesToday).toBe(10);
+  });
+
+  it('handles every session in storage, not just the first', async () => {
+    const now = Date.now();
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        activeSessions: {
+          'target:instagram.com': { domain: 'instagram.com', intervalMinutes: 10, startTime: now - 30 * 60000 },
+          'target:youtube.com': { domain: 'youtube.com', intervalMinutes: 15, startTime: now - 60 * 60000 },
+          'target:com.reddit.frontpage': { domain: 'com.reddit.frontpage', intervalMinutes: 5, startTime: now - 60000 }
+        }
+      }
+    });
+
+    const res = await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+
+    expect(res.banked.sort()).toEqual(['target:instagram.com', 'target:youtube.com']);
+    expect(res.rearmed).toEqual(['target:com.reddit.frontpage']);
+    expect((await ctx.getStatsForDomain('instagram.com')).minutesToday).toBe(10);
+    expect((await ctx.getStatsForDomain('youtube.com')).minutesToday).toBe(15);
+    expect(chrome.alarms._created.map(a => a.name)).toEqual(['checkin-target:com.reddit.frontpage']);
+  });
+
+  it('is a no-op when there are no sessions', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED });
+    const res = await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+    expect(res).toEqual({ banked: [], rearmed: [] });
+    expect(chrome.alarms._created).toEqual([]);
+  });
+});
+
 describe('extension tab keying still holds', () => {
   it('gives two tabs on the same site their own sessions and histories', async () => {
     const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10) });

@@ -70,8 +70,16 @@
         },
         alarms: {
           onAlarm: { addListener: function(listener) { window.alarmListener = listener; } },
-          create: function() {},
-          clear: function() {}
+          // Backed by the persisted alarm store in BackgroundJSHost.swift. iOS
+          // gives an app no background execution, so an alarm cannot fire while
+          // the app is closed — but it must not be dropped either, which is what
+          // this shim used to do, leaving bankExpiredSession unreachable and a
+          // pass's minutes unrecorded unless the user tapped through the coach.
+          // Fire times live in the App Group instead: a due alarm is delivered on
+          // the next host start (late, but delivered), and one still in the future
+          // gets an in-process timer for as long as the app stays in front.
+          create: function(name, info) { post({ type: 'createAlarm', name: name, info: info || {} }); },
+          clear: function(name) { post({ type: 'clearAlarm', name: name }); }
         },
         storage: {
           local: {
