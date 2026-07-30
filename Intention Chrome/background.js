@@ -56,7 +56,13 @@ async function syncBlockingRules() {
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
     
-    const addRules = blockedDomains.map((domain, index) => {
+    const isSafari = typeof navigator !== 'undefined' && 
+                     navigator.userAgent && 
+                     navigator.userAgent.includes('Safari') && 
+                     !navigator.userAgent.includes('Chrome') && 
+                     !navigator.userAgent.includes('Chromium');
+
+    const addRules = isSafari ? [] : blockedDomains.map((domain, index) => {
       const ruleId = 1000 + index;
       const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
       return {
