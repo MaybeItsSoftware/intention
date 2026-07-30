@@ -1233,7 +1233,7 @@
 		66B8D0642FE985EF00BC0D7F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 6NQNU5YSC2;
@@ -1257,7 +1257,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Extension;
 				PRODUCT_NAME = "Intention Safari Extension";
-				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Extension macos";
+				PROVISIONING_PROFILE_SPECIFIER = "match Development uk.co.maybeitssoftware.intention.Extension macos";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1271,7 +1271,7 @@
 		66B8D0652FE985EF00BC0D7F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 6NQNU5YSC2;
@@ -1295,7 +1295,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Extension;
 				PRODUCT_NAME = "Intention Safari Extension";
-				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Extension macos";
+				PROVISIONING_PROFILE_SPECIFIER = "match Development uk.co.maybeitssoftware.intention.Extension macos";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1311,7 +1311,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 6NQNU5YSC2;
@@ -1339,7 +1339,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention;
 				PRODUCT_NAME = Intention;
-				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention macos";
+				PROVISIONING_PROFILE_SPECIFIER = "match Development uk.co.maybeitssoftware.intention macos";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -1356,7 +1356,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_TEAM = 6NQNU5YSC2;
@@ -1384,7 +1384,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention;
 				PRODUCT_NAME = Intention;
-				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention macos";
+				PROVISIONING_PROFILE_SPECIFIER = "match Development uk.co.maybeitssoftware.intention macos";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

@@ -36,6 +36,14 @@ Build a signed release IPA and upload it to App Store Connect
 
 Build a signed release PKG and upload it to App Store Connect
 
+### mac local
+
+```sh
+[bundle exec] fastlane mac local
+```
+
+Build a signed .app and install it to /Applications on this Mac
+
 ----
 
 This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.

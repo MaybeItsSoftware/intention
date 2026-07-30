@@ -2,6 +2,7 @@
 #
 #   bundle exec fastlane ios beta      # build IPA   -> upload to App Store Connect
 #   bundle exec fastlane mac beta      # build PKG   -> upload to App Store Connect
+#   bundle exec fastlane mac local     # build .app, Developer ID sign + notarize -> /Applications
 #
 # Auth is via an App Store Connect API key and fastlane match, both shared
 # with the rest of the maybeitssoftware apps (same Apple team, 6NQNU5YSC2) —
@@ -44,14 +45,14 @@ end
 # match names macOS profiles "match AppStore <bundle id> macos" (suffixed) to
 # disambiguate from the iOS profile sharing the same bundle ID — don't guess
 # the name, read it back from what match actually created.
-def apply_manual_signing(target_map)
+def apply_manual_signing(target_map, code_sign_identity:)
   mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
   target_map.each do |target, bundle_id|
     update_code_signing_settings(
       path:                  PROJECT,
       use_automatic_signing: false,
       team_id:               TEAM_ID,
-      code_sign_identity:    "Apple Distribution",
+      code_sign_identity:    code_sign_identity,
       bundle_identifier:     bundle_id,
       targets:               [target],
       profile_name:          mapping.fetch(bundle_id),
@@ -88,7 +89,7 @@ platform :ios do
       readonly:       is_ci,
     )
 
-    apply_manual_signing(IOS_TARGETS)
+    apply_manual_signing(IOS_TARGETS, code_sign_identity: "Apple Distribution")
 
     export_options = File.join(ROOT, "ExportOptions-ios.plist")
     write_export_options(export_options, IOS_TARGETS.values)
@@ -110,8 +111,11 @@ platform :ios do
 end
 
 platform :mac do
-  desc "Build a signed release PKG and upload it to App Store Connect"
-  lane :beta do
+  # Shared by both mac lanes: signs with the real "Apple Distribution" /
+  # "Mac Installer Distribution" certs on the paid team (6NQNU5YSC2), not a
+  # 7-day personal-team dev profile — so the resulting .pkg keeps working
+  # indefinitely, unlike an Xcode Run build.
+  private_lane :build_signed_pkg do
     setup_ci # no-op locally; on CI, uses a temp keychain and forces match readonly
     api_key = asc_api_key
 
@@ -127,7 +131,7 @@ platform :mac do
       additional_cert_types: ["mac_installer_distribution"],
     )
 
-    apply_manual_signing(MACOS_TARGETS)
+    apply_manual_signing(MACOS_TARGETS, code_sign_identity: "Apple Distribution")
 
     export_options = File.join(ROOT, "ExportOptions-macos.plist")
     write_export_options(export_options, MACOS_TARGETS.values)
@@ -140,10 +144,83 @@ platform :mac do
       output_directory:   File.join(ROOT, "..", "build", "macos"),
     )
 
+    api_key
+  end
+
+  desc "Build a signed release PKG and upload it to App Store Connect"
+  lane :beta do
+    api_key = build_signed_pkg
+
     upload_to_testflight(
       api_key:                           api_key,
       pkg:                               lane_context[SharedValues::PKG_OUTPUT_PATH],
       skip_waiting_for_build_processing: true,
     )
+  end
+
+  desc "Build a signed .app and install it to /Applications on this Mac"
+  lane :local do
+    setup_ci
+    api_key = asc_api_key
+
+    # An "appstore" provisioning profile only validates when launched through
+    # an actual Mac App Store install — macOS refuses to run a sideloaded
+    # .pkg signed with it ("No matching profile found" in the amfid log).
+    #
+    # "developer_id" (Apple's mechanism for direct distribution outside the
+    # store) was tried first, but creating that certificate via API key is
+    # restricted by Apple to the team's Account Holder specifically — our
+    # Admin-level ASC key gets "This operation can only be performed by the
+    # Account Holder." So: sign with an ordinary "Apple Development"
+    # certificate instead. It's tied to the paid team (~1 year validity, not
+    # the 7-day free-account expiry) and, since the build is copied locally
+    # rather than downloaded, never picks up the quarantine flag that would
+    # otherwise require Gatekeeper/notarization.
+    # A macOS development profile needs at least one registered Mac attached.
+    # Apple Silicon Macs report a "Provisioning UDID" distinct from their
+    # Hardware UUID — the Dev Portal wants the former, not the latter.
+    register_device(
+      name:      ENV["HOST"] || `scutil --get ComputerName`.strip,
+      udid:      `system_profiler SPHardwareDataType | awk -F': ' '/Provisioning UDID/ {print $2}'`.strip,
+      team_id:   TEAM_ID,
+      api_key:   api_key,
+    )
+
+    match(
+      type:                 "development",
+      platform:             "macos",
+      app_identifier:       MACOS_TARGETS.values,
+      api_key:              api_key,
+      readonly:             is_ci,
+      # Regenerate the profile if the device list changed since it was last
+      # created (e.g. this Mac was just registered above).
+      force_for_new_devices: true,
+    )
+
+    apply_manual_signing(MACOS_TARGETS, code_sign_identity: "Apple Development")
+
+    mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
+    export_options = File.join(ROOT, "ExportOptions-macos-local.plist")
+    options = {
+      "method"               => "development",
+      "teamID"               => TEAM_ID,
+      "signingStyle"         => "manual",
+      "provisioningProfiles" => MACOS_TARGETS.values.to_h { |id| [id, mapping.fetch(id)] },
+    }
+    require "plist"
+    File.write(export_options, options.to_plist)
+
+    app_path = build_app(
+      project:            PROJECT,
+      scheme:             "Intention Safari (macOS)",
+      export_method:      "development",
+      export_options:     export_options,
+      output_directory:   File.join(ROOT, "..", "build", "macos-local"),
+      skip_package_pkg:   true,
+    )
+
+    dest = "/Applications/Intention.app"
+    sh("rm -rf #{dest.shellescape} && cp -R #{app_path.shellescape} #{dest.shellescape}")
+    UI.success("Installed build to #{dest}")
   end
 end
