@@ -79,6 +79,11 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
     @objc private func appDidBecomeActive() {
         updateExtensionBanner()
+        // iOS stops the host's in-process timers as soon as the app leaves the
+        // foreground, and a device restart takes them with it — so a granted pass
+        // can have run out with nothing around to fire its check-in. Deliver
+        // whatever came due and re-arm what's left.
+        BackgroundJSHost.shared.catchUpOnDueWork()
         // Backup for the DeviceActivityMonitor extension: passes shorter than
         // DeviceActivity's ~15-minute schedule floor are re-shielded here.
 #if canImport(FamilyControls)

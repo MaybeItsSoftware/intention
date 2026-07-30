@@ -206,6 +206,44 @@ async function bankExpiredSession(sessionKey) {
   });
 }
 
+// Rebuilds the half of session state that lives in a one-shot OS timer rather
+// than in storage. A device restart wipes every pending check-in alarm —
+// Android's AlarmManager drops them all on reboot, and the iOS host can't run
+// at all while the app is closed — and nothing re-arms them, so the check-in
+// for a granted pass never fires: its minutes are never banked into
+// dailyStats/allTimeStats, and the session sits in activeSessions unbanked
+// forever. Gating itself is unaffected (activeSession recomputes from
+// timestamps), so this is purely a bookkeeping catch-up:
+//
+//   * a pass that ran out while the device was off is banked now
+//   * a pass with time left has its check-in re-armed for the original expiry,
+//     so the rest of its minutes are still accounted for
+//
+// Storage already holds every timestamp needed, so this needs no state of its
+// own. Idempotent — banking is guarded by isBanked() and chrome.alarms.create
+// replaces any alarm of the same name — so the native hosts can call it on
+// every start.
+async function reconcileSessions() {
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const banked = [];
+  const rearmed = [];
+  for (const [sessionKey, session] of Object.entries(activeSessions)) {
+    if (!session || isBanked(session)) continue;
+    const expiresAt = session.startTime + (session.intervalMinutes * 60000);
+    if (Date.now() >= expiresAt) {
+      await bankExpiredSession(sessionKey);
+      banked.push(sessionKey);
+    } else {
+      chrome.alarms.create(`checkin-${sessionKey}`, { when: expiresAt });
+      rearmed.push(sessionKey);
+    }
+  }
+  if (banked.length || rearmed.length) {
+    console.log(INT_LOG, 'reconcileSessions: banked', banked.length, 're-armed', rearmed.length);
+  }
+  return { banked, rearmed };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
     .then(sendResponse)
@@ -249,6 +287,12 @@ async function handleMessage(message, sender) {
       return clearChatHistory(message.historyKey || sessionKeyFor(tabId, message.domain));
     case 'endSession':
       return endSession({ tabId, domain: message.domain, reason: message.reason });
+    // Sent by the native hosts (Android BackgroundJsHelper / BootReceiver, iOS
+    // BackgroundJSHost) once the background page is up, since a device restart
+    // leaves them with sessions in storage but no timers. Not used by the
+    // extensions, where the browser owns alarm persistence.
+    case 'reconcileSessions':
+      return reconcileSessions();
     case 'getStatsForDomain':
       return getStatsForDomain(message.domain);
     case 'getStatsSummary':

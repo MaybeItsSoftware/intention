@@ -171,10 +171,22 @@ final class AppBlockingManager {
         try? center.startMonitoring(Self.passActivityName, during: schedule)
     }
 
-    /// Re-applies shields if a granted pass has lapsed. Called on app
-    /// foreground as a backup to the DeviceActivityMonitor extension.
+    /// Re-applies shields if a granted pass has lapsed. Called on app foreground
+    /// as a backup to the DeviceActivityMonitor extension — and the only thing
+    /// that runs at all after a device restart, since the app gets no background
+    /// execution and a schedule registered before the reboot may never deliver
+    /// its intervalDidEnd. Until this runs, a pass interrupted by a restart
+    /// leaves the blocked apps unshielded.
+    ///
+    /// Also clears the stale pass record and stops its monitoring, so the state
+    /// left behind matches what intervalDidEnd would have produced.
     func reapplyIfPassExpired() {
         guard passEndsAt == nil else { return }
+        if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier),
+           defaults.double(forKey: Self.passEndsAtKey) > 0 {
+            defaults.removeObject(forKey: Self.passEndsAtKey)
+            DeviceActivityCenter().stopMonitoring([Self.passActivityName])
+        }
         applyShields()
     }
 
