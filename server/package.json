@@ -1,0 +1,14 @@
+{
+  "name": "intention-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Intention's hosted coach backend: verifies App Store / Play subscriptions and proxies coaching calls under Intention's own LLM key.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "NODE_ENV=development node --watch src/index.js"
+  }
+}

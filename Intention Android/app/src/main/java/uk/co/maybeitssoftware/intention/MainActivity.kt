@@ -125,6 +125,10 @@ class MainActivity : AppCompatActivity() {
         // Initialize background helper
         BackgroundJsHelper.init(applicationContext)
 
+        // Connect to Play Billing up front so the paywall has prices ready by
+        // the time onboarding reaches it.
+        BillingManager.init(applicationContext)
+
         // Set up bridge
         webView.addJavascriptInterface(WebAppInterface(this, webView) {
             finish()

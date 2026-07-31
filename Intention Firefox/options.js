@@ -39,12 +39,15 @@ async function renderCurrentView() {
   else showSetupView();
 }
 
+// Only the bring-your-own-key providers are listed: the hosted provider isn't
+// something the user picks, it's what an active subscription routes to.
 function populateProviderDropdowns() {
-  for (const id of ['provider-select', 'provider-select-2']) {
+  for (const id of ['provider-select-2']) {
     const sel = document.getElementById(id);
     if (!sel) continue;
     sel.innerHTML = '';
     for (const [key, cfg] of Object.entries(PROVIDERS)) {
+      if (cfg.hosted) continue;
       const opt = document.createElement('option');
       opt.value = key;
       opt.textContent = cfg.label;
@@ -118,7 +121,6 @@ let setupAppLimits = {};
 let setupAppLabels = {};
 let setupStep = 1;
 let setupStepOrder = []; // computed per-render — apps step only exists where the native bridge does
-let setupSelectedModel = null; // null = custom (use #model-input)
 
 let installedAppsCache = null;
 
@@ -136,93 +138,12 @@ function showSetupView() {
   document.getElementById('setup-view').hidden = false;
   document.getElementById('settings-view').hidden = true;
 
-  const providerSel = document.getElementById('provider-select');
-  const modelInput = document.getElementById('model-input');
-  const apiKeyInput = document.getElementById('api-key-input');
-
-  const syncPlaceholder = () => {
-    const p = PROVIDERS[providerSel.value];
-    modelInput.placeholder = p ? p.modelPlaceholder : '';
-  };
-
-  // Select the pill matching `model`, or fall back to the Custom pill.
-  const setModelSelection = (model) => {
-    const p = PROVIDERS[providerSel.value];
-    if (model && p && (p.models || []).includes(model)) {
-      setupSelectedModel = model;
-    } else if (model) {
-      setupSelectedModel = null;
-      modelInput.value = model;
-    } else {
-      setupSelectedModel = p ? p.defaultModel : null;
-    }
-    renderModelPills();
-  };
-
-  function renderModelPills() {
-    const container = document.getElementById('setup-model-pills');
-    const customGroup = document.getElementById('setup-custom-model-group');
-    container.innerHTML = '';
-    const p = PROVIDERS[providerSel.value];
-    for (const m of (p ? p.models : []) || []) {
-      const pill = document.createElement('button');
-      pill.type = 'button';
-      pill.className = 'pill' + (setupSelectedModel === m ? ' selected' : '');
-      pill.textContent = m + (p.defaultModel === m ? ' (default)' : '');
-      pill.addEventListener('click', () => {
-        setupSelectedModel = m;
-        renderModelPills();
-      });
-      container.appendChild(pill);
-    }
-    const custom = document.createElement('button');
-    custom.type = 'button';
-    custom.className = 'pill' + (setupSelectedModel === null ? ' selected' : '');
-    custom.textContent = 'Custom…';
-    custom.addEventListener('click', () => {
-      setupSelectedModel = null;
-      renderModelPills();
-      modelInput.focus();
-    });
-    container.appendChild(custom);
-    customGroup.hidden = setupSelectedModel !== null;
-  }
-
-  let env = {};
-  const syncEnvFields = () => {
-    const provider = providerSel.value;
-    const providerKey = `${provider.toUpperCase()}_API_KEY`;
-    const modelKey = `${provider.toUpperCase()}_MODEL`;
-
-    const apiKey = env[providerKey] || env.API_KEY || '';
-    if (apiKey) apiKeyInput.value = apiKey;
-    else apiKeyInput.value = '';
-
-    const model = env[modelKey] || env.DEFAULT_MODEL || '';
-    modelInput.value = '';
-    setModelSelection(model);
-  };
-
-  providerSel.addEventListener('change', () => {
-    syncPlaceholder();
-    syncEnvFields();
-  });
-  syncPlaceholder();
-  setModelSelection('');
-
-  loadEnv().then(parsedEnv => {
-    env = parsedEnv;
-    if (env.DEFAULT_PROVIDER && PROVIDERS[env.DEFAULT_PROVIDER]) {
-      providerSel.value = env.DEFAULT_PROVIDER;
-      syncPlaceholder();
-    }
-    syncEnvFields();
-  });
-
   // Apps get their own step, ahead of websites, wherever a native bridge exists.
+  // The last step turns the coach on: a subscription purchase, and nothing else
+  // on the builds a store reviews.
   setupStepOrder = (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING)
-    ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider']
-    : ['setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-provider'];
+    ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-access']
+    : ['setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-access'];
 
   // ---- Step: websites ----
   renderSetupDomains();
@@ -252,6 +173,12 @@ function showSetupView() {
     backBtn.disabled = n === 1;
     nextBtn.hidden = n === total;
     saveBtn.hidden = n !== total;
+    // Prices come from the store, so the paywall is only built once the user
+    // actually reaches it — and rebuilt each time, to pick up a purchase made
+    // and then backed out of.
+    if (setupStepOrder[n - 1] === 'setup-step-access') {
+      refreshAccessUI('setup-paywall', { compact: false });
+    }
   };
 
   backBtn.onclick = () => { if (setupStep > 1) showStep(setupStep - 1); };
@@ -269,66 +196,225 @@ function showSetupView() {
 
   showStep(1);
 
-  saveBtn.onclick = async () => {
-    const provider = providerSel.value;
-    const apiKey = apiKeyInput.value.trim();
-    const model = setupSelectedModel || modelInput.value.trim() || PROVIDERS[provider].defaultModel;
+  saveBtn.onclick = () => finishSetup();
+}
 
-    if (!provider || !apiKey) {
-      setStatus('setup-status', 'Choose a provider and enter an API key.');
-      return;
-    }
+// Commits everything the wizard collected. Called by "Finish Setup & Start",
+// and by the byok paywall's "Use your own API key", which has to land the user
+// in the real settings view before the advanced key field means anything.
+async function finishSetup() {
+  const projectsAns = document.getElementById('setup-projects-input').value.trim();
+  const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
 
-    const projectsAns = document.getElementById('setup-projects-input').value.trim();
-    const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
-
-    // Create user context
-    const userContext = `Goals and activities I want to focus on:
+  // Create user context
+  const userContext = `Goals and activities I want to focus on:
 ${projectsAns || '(not configured)'}
 
 How distracting sites make me feel and why I want to step away:
 ${reasonsAns || '(not configured)'}`;
 
-    // Build domain limits object
-    const domainLimits = {};
-    for (const d of setupBlockedDomains) {
-      domainLimits[d] = setupDomainLimits[d] || {
-        maxGrants: 3,
-        maxMinutes: 10
-      };
+  // Build domain limits object
+  const domainLimits = {};
+  for (const d of setupBlockedDomains) {
+    domainLimits[d] = setupDomainLimits[d] || {
+      maxGrants: 3,
+      maxMinutes: 10
+    };
+  }
+
+  // Build app limits object
+  const appLimits = {};
+  for (const p of setupBlockedApps) {
+    appLimits[p] = setupAppLimits[p] || {
+      maxGrants: 3,
+      maxMinutes: 10
+    };
+  }
+
+  setStatus('setup-status', 'Saving setup...', 'info');
+
+  // Save and finalize
+  await sendBg({
+    action: 'saveSetup',
+    config: {
+      userContext,
+      contextProjects: projectsAns,
+      contextReasons: reasonsAns,
+      blockedDomains: setupBlockedDomains,
+      domainLimits,
+      blockedApps: setupBlockedApps,
+      appLimits,
+      appLabels: setupAppLabels
     }
+  });
 
-    // Build app limits object
-    const appLimits = {};
-    for (const p of setupBlockedApps) {
-      appLimits[p] = setupAppLimits[p] || {
-        maxGrants: 3,
-        maxMinutes: 10
-      };
-    }
+  await renderCurrentView();
+}
 
-    setStatus('setup-status', 'Saving setup...', 'info');
+// ---------------------------------------------------------------------------
+// AI access: subscription purchase, restore, and the paywall
+// ---------------------------------------------------------------------------
 
-    // Save and finalize
-    await sendBg({
-      action: 'saveSetup',
-      config: {
-        provider,
-        apiKey,
-        model,
-        userContext,
-        contextProjects: projectsAns,
-        contextReasons: reasonsAns,
-        blockedDomains: setupBlockedDomains,
-        domainLimits,
-        blockedApps: setupBlockedApps,
-        appLimits,
-        appLabels: setupAppLabels
-      }
+function getAccessState() {
+  return sendBg({ action: 'getAccess' });
+}
+
+function persistEntitlement(entitlement) {
+  return sendBg({ action: 'saveEntitlement', entitlement });
+}
+
+async function currentBackendUrl() {
+  const state = await getConfig();
+  return state?.backendUrl || '';
+}
+
+// Hands the store's receipt to the backend, which checks it with Apple/Google
+// and mints the token coach calls are made with. A purchase we can't confirm
+// right now is kept (with its receipt) rather than thrown away, so the retry on
+// the next load can turn it into access without charging anyone twice.
+async function verifyAndStore(platform, receipt) {
+  const backendUrl = await currentBackendUrl();
+  try {
+    const entitlement = await verifyPurchase({ platform, receipt, backendUrl });
+    await persistEntitlement(entitlement);
+    return entitlement;
+  } catch (e) {
+    await persistEntitlement({
+      active: false,
+      source: platform,
+      receipt,
+      pendingVerification: true,
+      lastError: String(e.message || e)
     });
+    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically — reopen Settings to retry.");
+  }
+}
 
-    await renderCurrentView();
-  };
+// Re-checks a stored entitlement against the backend (renewal, cancellation,
+// refund, or a purchase that couldn't be verified when it was made).
+async function reconcileEntitlement(entitlement) {
+  if (!entitlement) return null;
+  const stale = entitlement.pendingVerification
+    || !entitlement.token
+    || (entitlement.expiresAt && Date.now() > Number(entitlement.expiresAt) - 12 * 60 * 60 * 1000);
+  if (!stale) return entitlement;
+  const backendUrl = await currentBackendUrl();
+  const refreshed = await refreshEntitlement(entitlement, backendUrl);
+  if (refreshed && entitlementSignature(refreshed) !== entitlementSignature(entitlement)) {
+    await persistEntitlement(refreshed);
+  }
+  return refreshed;
+}
+
+async function refreshAccessUI(containerId, { compact = false } = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const access = await getAccessState();
+  const entitlement = access?.entitlement || null;
+
+  const rerender = () => refreshAccessUI(containerId, { compact });
+
+  await renderPaywall(container, {
+    entitlement,
+    compact,
+    onPurchase: async (productId) => {
+      const result = await purchaseProduct(productId);
+      if (!result || result.status === 'cancelled') return;
+      if (result.status === 'pending') {
+        throw new Error('Your purchase is pending approval. It will unlock automatically once approved.');
+      }
+      if (result.status !== 'purchased') {
+        throw new Error(result.error || "The purchase didn't complete.");
+      }
+      await verifyAndStore(result.platform || storePlatform(), result.receipt);
+      await rerender();
+      await onAccessChanged();
+    },
+    onRestore: async () => {
+      const result = await restorePurchases();
+      if (!result || !result.receipt) {
+        throw new Error(result?.error || 'No previous purchase found on this account.');
+      }
+      await verifyAndStore(result.platform || storePlatform(), result.receipt);
+      await rerender();
+      await onAccessChanged();
+    },
+    onRedeem: async (code) => {
+      const backendUrl = await currentBackendUrl();
+      const entitlement = await redeemAccessCode(code, backendUrl);
+      if (!entitlementIsActive(entitlement)) throw new Error('That code isn\'t active.');
+      await persistEntitlement(entitlement);
+      await rerender();
+      await onAccessChanged();
+    },
+    onManage: () => openStoreSubscriptionManagement(),
+    onLinkBrowser: async () => {
+      const backendUrl = await currentBackendUrl();
+      return requestAccessCode(entitlement, backendUrl);
+    },
+    // Only offered where no store sells the subscription (Chrome/Firefox);
+    // elsewhere the key field exists solely in Settings -> Advanced.
+    onUseOwnKey: BYOK_IS_PRIMARY ? () => openAdvancedKeySection() : null
+  });
+
+  // A verified purchase that arrived while the app was closed, or a
+  // subscription that lapsed since last time, both settle here.
+  const reconciled = await reconcileEntitlement(entitlement);
+  if (entitlementSignature(reconciled) !== entitlementSignature(entitlement)) {
+    await refreshAccessUI(containerId, { compact });
+    await onAccessChanged();
+  }
+}
+
+function storePlatform() {
+  return HAS_APP_BLOCKING ? 'google' : 'apple';
+}
+
+// Called after any change that can flip the access route, so the settings view
+// stops offering a locked coach (or starts offering an unlocked one).
+async function onAccessChanged() {
+  const access = await getAccessState();
+  const modal = document.getElementById('paywall-modal');
+  if (access?.route !== 'locked' && modal && !modal.hidden) modal.hidden = true;
+}
+
+// The setup wizard and the settings view both need a way to send someone who
+// is locked out to the purchase flow without derailing what they were doing.
+async function openPaywallModal() {
+  const modal = document.getElementById('paywall-modal');
+  modal.hidden = false;
+  await refreshAccessUI('paywall-modal-body', { compact: true });
+}
+
+async function openAdvancedKeySection() {
+  // Reached from the onboarding paywall on browser builds: the advanced field
+  // lives in the settings view, so the wizard has to be committed first or the
+  // click would silently do nothing behind a hidden view.
+  if (!document.getElementById('setup-view').hidden) {
+    await finishSetup();
+  }
+  setSettingsSection('settings');
+  const advanced = document.getElementById('advanced-card');
+  const keyDetails = document.getElementById('custom-key-details');
+  const modal = document.getElementById('paywall-modal');
+  if (modal) modal.hidden = true;
+  if (advanced) advanced.open = true;
+  if (keyDetails) {
+    keyDetails.open = true;
+    keyDetails.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  document.getElementById('api-key-input-2')?.focus();
+}
+
+// Every coach entry point funnels through this: with no access, the paywall
+// opens instead of a conversation that would only fail at the LLM call.
+async function requireAccess() {
+  const access = await getAccessState();
+  if (access?.route === 'locked') {
+    await openPaywallModal();
+    return false;
+  }
+  return true;
 }
 
 function buildRecommendCard(meta, label, title, onAdd) {
@@ -814,10 +900,13 @@ async function showSettingsView(state) {
     setStatus('prompt-status', 'Reset to default.', 'success');
   });
 
+  await refreshAccessUI('access-paywall');
+
+  // ---- Advanced: custom API key (developer override) ----
   const provSel = document.getElementById('provider-select-2');
   const modelInput = document.getElementById('model-input-2');
   const keyInput = document.getElementById('api-key-input-2');
-  provSel.value = state.provider || 'anthropic';
+  provSel.value = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : 'anthropic';
   modelInput.value = state.model || '';
   keyInput.value = state.apiKey || '';
 
@@ -851,7 +940,16 @@ async function showSettingsView(state) {
     const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
     const apiKey = keyInput.value.trim();
     await sendBg({ action: 'saveSettings', config: { provider, model, apiKey } });
-    setStatus('provider-status', 'Saved.', 'success');
+    setStatus('provider-status', apiKey ? 'Saved. Custom key is now in use.' : 'Saved.', 'success');
+    await refreshAccessUI('access-paywall');
+  });
+
+  // Clearing the override drops straight back to the subscription route.
+  document.getElementById('clear-provider-btn').addEventListener('click', async () => {
+    keyInput.value = '';
+    await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
+    setStatus('provider-status', 'Custom key cleared.', 'success');
+    await refreshAccessUI('access-paywall');
   });
 
   renderDomains(state.blockedDomains || [], state.domainLimits || {});
@@ -871,8 +969,13 @@ async function showSettingsView(state) {
   renderStats(summary);
   await refreshUsageLog(state);
 
-  document.getElementById('open-coach-btn').addEventListener('click', openCoachModal);
+  document.getElementById('open-coach-btn').addEventListener('click', async () => {
+    if (await requireAccess()) openCoachModal();
+  });
   document.getElementById('close-coach-btn').addEventListener('click', closeCoachModal);
+  document.getElementById('paywall-close-btn').addEventListener('click', () => {
+    document.getElementById('paywall-modal').hidden = true;
+  });
 
   // Disabling all blocking is the biggest loosening of all — gate it.
   document.getElementById('disable-all-btn').addEventListener('click', async () => {
@@ -1401,6 +1504,13 @@ async function attemptCoachSend(text, messagesEl) {
   }
   if (resp.error) {
     thinking.remove();
+    // Access lapsed mid-conversation (expired, cancelled, refunded): the way
+    // out is the purchase flow, not a retry button.
+    if (resp.locked) {
+      await closeCoachModal();
+      await openPaywallModal();
+      return;
+    }
     const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
     showCoachRetryableError(messagesEl, message, text);
     return;
@@ -1460,7 +1570,11 @@ function typeCoachMsg(el, text) {
 let gateSending = false;
 let gateChange = null;
 
-function openGateModal({ changeType, domain, currentValue, newValue, title, subtitle, onApproved }) {
+// Loosening a rule has to be argued with the coach, so it needs the same AI
+// access a gate conversation does — without it, show the paywall rather than a
+// chat box that can only fail.
+async function openGateModal({ changeType, domain, currentValue, newValue, title, subtitle, onApproved }) {
+  if (!(await requireAccess())) return;
   gateChange = { changeType, domain, currentValue, newValue, onApproved };
   const modal = document.getElementById('gate-modal');
   modal.hidden = false;
@@ -1523,6 +1637,11 @@ async function attemptGateSend(text, messagesEl) {
   }
   if (resp.error) {
     thinking.remove();
+    if (resp.locked) {
+      await closeGateModal();
+      await openPaywallModal();
+      return;
+    }
     const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
     showGateRetryableError(messagesEl, message, text);
     return;

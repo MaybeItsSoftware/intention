@@ -66,6 +66,10 @@ const CONFIG_KEYS = [
   'provider', 'apiKey', 'model', 'userContext', 'contextProjects',
   'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits',
   'blockedApps', 'appLimits', 'appLabels',
+  // The subscription is bought in the app (StoreKit lives there, not in a
+  // Safari extension process), so the entitlement it mints has to reach the
+  // extension through this bridge or the extension's coach stays locked.
+  'entitlement',
   'setupComplete'
 ];
 const NATIVE_APP_ID = 'com.intention.app'; // ignored by Safari (single native host per app)

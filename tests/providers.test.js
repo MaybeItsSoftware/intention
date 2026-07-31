@@ -181,10 +181,15 @@ describe('callLLM dispatch', () => {
     await expect(ctx.callLLM({ provider: 'nope', apiKey: 'k', messages: MESSAGES })).rejects.toThrow(/Unknown provider/);
   });
 
-  it('PROVIDERS const exposes the four providers with default models', () => {
+  it('PROVIDERS const exposes the hosted provider plus the four key-based ones', () => {
     const { ctx } = loadProviders({ fetch: makeMockFetch({}) });
-    expect(Object.keys(ctx.PROVIDERS).sort()).toEqual(['anthropic', 'gemini', 'groq', 'openai']);
+    expect(Object.keys(ctx.PROVIDERS).sort()).toEqual(['anthropic', 'gemini', 'groq', 'intention', 'openai']);
     expect(ctx.PROVIDERS.anthropic.defaultModel).toBeTruthy();
+    // The hosted provider is not a bring-your-own-key choice: it carries no
+    // model list, and the options UI filters it out of the provider dropdown.
+    expect(ctx.PROVIDERS.intention.hosted).toBe(true);
+    expect(Object.entries(ctx.PROVIDERS).filter(([, cfg]) => !cfg.hosted).map(([k]) => k).sort())
+      .toEqual(['anthropic', 'gemini', 'groq', 'openai']);
   });
 });
 
@@ -213,5 +218,102 @@ describe('isNetworkError', () => {
     }
     expect(caught).toBeDefined();
     expect(ctx.isNetworkError(caught)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The hosted provider (Intention's own backend)
+// ---------------------------------------------------------------------------
+
+describe('callIntentionHosted', () => {
+  const HOSTED = { provider: 'intention', accessToken: 'tok', messages: MESSAGES };
+
+  it('posts to /v1/chat with the entitlement token and no API key', async () => {
+    const fetch = makeMockFetch({ text: 'hi', toolCalls: [] });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callLLM({ ...HOSTED, system: 'sys', tools: [{ name: 't', description: 'd', schema: { type: 'object' } }] });
+    const call = fetch.calls[0];
+    expect(call.url).toBe('https://api.intention.maybeitssoftware.uk/v1/chat');
+    expect(call.init.headers.authorization).toBe('Bearer tok');
+    expect(call.init.headers['x-api-key']).toBeUndefined();
+    const body = JSON.parse(call.init.body);
+    expect(body.system).toBe('sys');
+    expect(body.tools[0].schema).toEqual({ type: 'object' });
+  });
+
+  it('honours a backend override and trims its trailing slashes', async () => {
+    const fetch = makeMockFetch({ text: '', toolCalls: [] });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callLLM({ ...HOSTED, backendUrl: 'http://localhost:8787//' });
+    expect(fetch.calls[0].url).toBe('http://localhost:8787/v1/chat');
+  });
+
+  it('returns the same { text, toolCalls } shape the key-based adapters do', async () => {
+    const fetch = makeMockFetch({ text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }] });
+    const { ctx } = loadProviders({ fetch });
+    const res = await ctx.callLLM(HOSTED);
+    expect(res).toEqual({ text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }] });
+  });
+
+  it('refuses without a token, before making any request', async () => {
+    const fetch = makeMockFetch({});
+    const { ctx } = loadProviders({ fetch });
+    await expect(ctx.callLLM({ provider: 'intention', messages: MESSAGES })).rejects.toThrow(/subscription/i);
+    expect(fetch.calls.length).toBe(0);
+  });
+
+  it('surfaces entitlement problems with a code the caller can act on', async () => {
+    const fetch = makeMockFetch({ status: 402, json: { code: 'entitlement_expired', error: 'gone' } });
+    const { ctx } = loadProviders({ fetch });
+    const error = await ctx.callLLM(HOSTED).catch(e => e);
+    expect(error.code).toBe('entitlement_expired');
+    expect(ctx.isEntitlementError(error)).toBe(true);
+    // The user sees our copy, not the backend's raw message.
+    expect(error.message).toMatch(/subscription has ended/i);
+  });
+
+  it('treats a bare 401 as an entitlement problem even without a code', async () => {
+    const fetch = makeMockFetch({ status: 401, json: {} });
+    const { ctx } = loadProviders({ fetch });
+    const error = await ctx.callLLM(HOSTED).catch(e => e);
+    expect(ctx.isEntitlementError(error)).toBe(true);
+  });
+
+  it('does not treat a quota or server error as a lapsed subscription', async () => {
+    const { ctx: quotaCtx } = loadProviders({ fetch: makeMockFetch({ status: 429, json: { code: 'quota_exceeded' } }) });
+    const quotaError = await quotaCtx.callLLM(HOSTED).catch(e => e);
+    expect(quotaCtx.isEntitlementError(quotaError)).toBe(false);
+    expect(quotaError.message).toMatch(/today's coaching messages/i);
+
+    const { ctx: serverCtx } = loadProviders({ fetch: makeMockFetch({ status: 500, json: {} }) });
+    const serverError = await serverCtx.callLLM(HOSTED).catch(e => e);
+    expect(serverCtx.isEntitlementError(serverError)).toBe(false);
+  });
+});
+
+describe('entitlementIsActive', () => {
+  const { ctx } = loadProviders();
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('accepts an active subscription with time left', () => {
+    expect(ctx.entitlementIsActive({ active: true, expiresAt: Date.now() + DAY })).toBe(true);
+  });
+
+  it('accepts an active entitlement with no expiry at all', () => {
+    expect(ctx.entitlementIsActive({ active: true, expiresAt: null })).toBe(true);
+  });
+
+  it('rejects an inactive entitlement even if the date is in the future', () => {
+    expect(ctx.entitlementIsActive({ active: false, expiresAt: Date.now() + DAY })).toBe(false);
+  });
+
+  it('rejects nothing at all', () => {
+    expect(ctx.entitlementIsActive(null)).toBe(false);
+    expect(ctx.entitlementIsActive(undefined)).toBe(false);
+  });
+
+  it('allows a grace period past expiry, but not indefinitely', () => {
+    expect(ctx.entitlementIsActive({ active: true, expiresAt: Date.now() - 1000 })).toBe(true);
+    expect(ctx.entitlementIsActive({ active: true, expiresAt: Date.now() - 2 * DAY })).toBe(false);
   });
 });

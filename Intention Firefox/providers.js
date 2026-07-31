@@ -1,4 +1,30 @@
+// The built-in coach. Requests go to Intention's own backend, which holds the
+// LLM provider key and is paid for through the platform's in-app purchase
+// system; the client authenticates with the entitlement token minted when that
+// purchase was verified. No user-supplied key is involved on this path, and it
+// is the default everywhere — see resolveAIRoute() in background.js.
+const HOSTED_PROVIDER = 'intention';
+const DEFAULT_INTENTION_BACKEND_URL = 'https://api.intention.maybeitssoftware.uk';
+
+// Renewals can land a little after the old expiry, and a device with a skewed
+// clock shouldn't lock a paying user out — hold access briefly past expiry and
+// let the next backend refresh settle it.
+const ENTITLEMENT_GRACE_MS = 24 * 60 * 60 * 1000;
+
+function entitlementIsActive(entitlement) {
+  if (!entitlement || !entitlement.active) return false;
+  if (!entitlement.expiresAt) return true;
+  return Date.now() < Number(entitlement.expiresAt) + ENTITLEMENT_GRACE_MS;
+}
+
 const PROVIDERS = {
+  intention: {
+    label: 'Intention AI',
+    hosted: true,
+    defaultModel: '',
+    models: [],
+    modelPlaceholder: ''
+  },
   anthropic: {
     label: 'Anthropic (Claude)',
     defaultModel: 'claude-sonnet-5',
@@ -36,8 +62,12 @@ function isNetworkError(e) {
   return /failed to fetch|networkerror|load failed|network request failed|internet connection/i.test(e.message || '');
 }
 
-async function callLLM({ provider, apiKey, model, system, messages, tools }) {
+async function callLLM({ provider, apiKey, model, system, messages, tools, accessToken, backendUrl }) {
   if (!provider) throw new Error('No provider configured');
+  // The hosted path authenticates with the entitlement token instead of a key.
+  if (provider === HOSTED_PROVIDER) {
+    return callIntentionHosted({ accessToken, backendUrl, model, system, messages, tools });
+  }
   if (!apiKey) throw new Error('No API key configured');
   const resolvedModel = model || PROVIDERS[provider]?.defaultModel;
   if (!resolvedModel) throw new Error(`Unknown provider: ${provider}`);
@@ -54,6 +84,60 @@ async function callLLM({ provider, apiKey, model, system, messages, tools }) {
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }
+}
+
+// Talks to Intention's own backend, which applies the subscription's quota and
+// forwards the conversation to the LLM provider under Intention's key. The
+// response shape is the same { text, toolCalls } every adapter below returns,
+// so nothing downstream knows which route it came from.
+//
+// Entitlement problems are surfaced with a `code` so background.js can mark the
+// stored entitlement stale and put the paywall back up, rather than showing the
+// user a bare HTTP error.
+async function callIntentionHosted({ accessToken, backendUrl, model, system, messages, tools }) {
+  if (!accessToken) {
+    const err = new Error('No active subscription');
+    err.code = 'entitlement_invalid';
+    throw err;
+  }
+  const base = (backendUrl || DEFAULT_INTENTION_BACKEND_URL).replace(/\/+$/, '');
+  const body = {
+    system,
+    messages: messages.map(m => ({ role: m.role, content: m.content }))
+  };
+  if (model) body.model = model;
+  if (tools && tools.length) {
+    body.tools = tools.map(t => ({ name: t.name, description: t.description, schema: t.schema }));
+  }
+  const res = await fetch(`${base}/v1/chat`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': `Bearer ${accessToken}`
+    },
+    body: JSON.stringify(body)
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) {
+    const code = (data && data.code) || (res.status === 401 || res.status === 402 ? 'entitlement_invalid' : 'backend_error');
+    const err = new Error(HOSTED_ERROR_MESSAGES[code] || (data && data.error) || `Intention AI ${res.status}`);
+    err.code = code;
+    throw err;
+  }
+  return { text: (data && data.text) || '', toolCalls: (data && data.toolCalls) || [] };
+}
+
+const HOSTED_ERROR_MESSAGES = {
+  entitlement_invalid: 'Your subscription could not be verified. Open Settings to restore it.',
+  entitlement_expired: 'Your subscription has ended. Renew it to keep talking to your coach.',
+  quota_exceeded: "You've used all of today's coaching messages. They reset tomorrow."
+};
+
+// Whether an error should send the user back to the paywall rather than just
+// offering a retry.
+function isEntitlementError(e) {
+  return !!e && (e.code === 'entitlement_invalid' || e.code === 'entitlement_expired');
 }
 
 async function callAnthropic({ apiKey, model, system, messages, tools }) {

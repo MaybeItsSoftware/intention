@@ -1,0 +1,73 @@
+{
+  "identifier" : "A1B2C3D4",
+  "nonRenewingSubscriptions" : [
+  ],
+  "products" : [
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_storeKitErrors" : [
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21520756",
+      "localizations" : [
+      ],
+      "name" : "Intention Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+          ],
+          "codeOffers" : [
+          ],
+          "displayPrice" : "3.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21520757",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Your AI coach on every site and app you block.",
+              "displayName" : "Intention Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "uk.co.maybeitssoftware.intention.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Intention Pro Monthly",
+          "subscriptionGroupID" : "21520756",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+          ],
+          "codeOffers" : [
+          ],
+          "displayPrice" : "34.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21520758",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Your AI coach on every site and app you block. Two months free.",
+              "displayName" : "Intention Pro Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "uk.co.maybeitssoftware.intention.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Intention Pro Yearly",
+          "subscriptionGroupID" : "21520756",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

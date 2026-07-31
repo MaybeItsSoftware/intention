@@ -45,6 +45,7 @@ DerivedData
 *.ipa
 *.xcuserstate
 .env
+server/.env
 env.txt
 
 # Android / Gradle

@@ -63,6 +63,27 @@
     }
   };
 
+  // In-app purchases (Google Play Billing, BillingManager.kt). The presence of
+  // this object is what puts billing.js into 'store' mode: the subscription is
+  // the only thing on offer, and it can only be bought through Play.
+  window.intentionBilling = {
+    products: function(callback) {
+      AndroidInterface.billingProducts(window.AndroidCallbacks.register(callback));
+    },
+    purchase: function(productId, callback) {
+      AndroidInterface.billingPurchase(productId, window.AndroidCallbacks.register(callback));
+    },
+    restore: function(callback) {
+      AndroidInterface.billingRestore(window.AndroidCallbacks.register(callback));
+    },
+    status: function(callback) {
+      AndroidInterface.billingStatus(window.AndroidCallbacks.register(callback));
+    },
+    manage: function(callback) {
+      AndroidInterface.billingManage(window.AndroidCallbacks.register(callback));
+    }
+  };
+
   // App-blocking helpers, only available on Android. Shared JS feature-detects
   // window.intentionApps to show the Apps UI and launch apps after a grant.
   window.intentionApps = {

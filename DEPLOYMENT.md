@@ -2,6 +2,8 @@
 
 How to ship Intention to the Chrome Web Store, Firefox Add-ons (AMO), the Apple App Store (Safari, macOS + iOS), and Google Play (Android). For local unpacked/temporary installs, see the [README](README.md#installation) instead — this doc is about store submission.
 
+Intention Pro is sold through In-App Purchase, so two things now have to be live before the mobile builds are submitted: the store products (below) and the [backend](server/README.md) that verifies them. See [In-App Purchase setup](#in-app-purchase-setup) for both.
+
 ## One-time setup per store
 
 | Store | Account | Cost | Where |
@@ -102,9 +104,50 @@ The very first release to Google Play must be created manually (upload the `.aab
 
 To build the signed bundle locally without CI: `cd "Intention Android" && ./gradlew bundleRelease` — output lands at `app/build/outputs/bundle/release/app-release.aab`, signed via the local `keystore.properties`.
 
+## In-App Purchase setup
+
+Intention was rejected under **Guideline 3.1.1** for unlocking its core feature with a user-supplied API key. The fix is structural: access to the coach is sold through Apple/Google, the provider key lives on Intention's backend, and the custom-key field is an unadvertised developer override in Settings → Advanced. All three parts have to be in place at submission.
+
+### 1. Deploy the backend
+
+`server/` verifies receipts and proxies coaching calls. Deploy it anywhere that runs Node 20+, behind TLS, then set:
+
+- `INTENTION_TOKEN_SECRET` — `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
+- `INTENTION_LLM_API_KEY` — Intention's own provider key
+- the Apple and Google credentials in the tables below
+
+Point the clients at it by editing `DEFAULT_INTENTION_BACKEND_URL` in `shared/providers.js` and running `scripts/sync.sh`. Full reference: [`server/README.md`](server/README.md).
+
+### 2. App Store Connect (iOS + macOS)
+
+1. **My Apps → Intention → Monetization → Subscriptions.** Create a subscription group named `Intention Pro` with two auto-renewable subscriptions:
+   - `uk.co.maybeitssoftware.intention.pro.monthly` (1 month)
+   - `uk.co.maybeitssoftware.intention.pro.yearly` (1 year)
+
+   The IDs must match `IntentionProduct` in `Intention Apple/Shared (App)/IntentionStore.swift` and `APPLE_PRODUCT_IDS` on the backend. Each needs a localized display name, description, price, and a review screenshot, and must reach **Ready to Submit** — a subscription still in "Missing Metadata" won't load in the app, and review will see an empty paywall.
+2. **Users and Access → Integrations → In-App Purchase → generate a key.** Its Issuer ID, Key ID, and `.p8` become `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`. Set `APPLE_ENVIRONMENT=sandbox` while testing with a sandbox Apple Account.
+3. **Attach the subscriptions to the version** being submitted (App Store Connect asks for this on the version page — first submissions review the app and its IAPs together).
+4. **App Groups.** The subscription is bought in the app but the coach also runs inside the Safari extension, so the entitlement crosses via the App Group. Enable **App Groups** under Signing & Capabilities on all four targets (iOS App, iOS Extension, macOS App, macOS Extension) with the same group as `AppGroupConfig.identifier`. macOS groups need the Team ID prefix (`6NQNU5YSC2.group.uk.co.maybeitssoftware.intention`); without it the Mac extension will never see the subscription.
+
+Local testing needs no App Store Connect round-trip: `Intention Apple/Shared (App)/Intention.storekit` is wired into both shared schemes, so Debug runs against local StoreKit products.
+
+### 3. Google Play
+
+1. **Monetize → Products → Subscriptions**: create `intention_pro_monthly` and `intention_pro_yearly`, each with a base plan and an active price. These must match `BillingManager.PRODUCT_MONTHLY`/`PRODUCT_YEARLY` and `GOOGLE_PRODUCT_IDS`.
+2. Reuse the `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` service account (see the Play section above) for the backend's `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY`; it needs "View financial data" in Play Console to read subscription state.
+3. Subscriptions only become purchasable once a build containing the Billing library has been through a release track, so push an internal-track build before testing the paywall.
+
+### 4. What review sees
+
+- A fresh install can subscribe and use the coach without ever meeting an API key field: onboarding's last step is the purchase, and it lists Apple's own products.
+- **Restore purchases** is on the paywall, and **Manage subscription** appears once active — both required.
+- No link out of the app to a website, and no mention of any external LLM provider, appears anywhere in onboarding, the paywall, or marketing copy.
+- The custom-key field lives at Settings → Advanced → Custom API key, is not referenced anywhere else, and is labelled as a developer option. If review asks about it: it points the app at the reviewer's own LLM account and sells nothing.
+
 ## Store listing checklist (first submission, all stores)
 
-- **Privacy policy URL** — link to [`PRIVACY.md`](PRIVACY.md) (raw GitHub URL or hosted via GitHub Pages). Required by Chrome Web Store and AMO because of the `<all_urls>` host permission and third-party LLM calls.
+- **Privacy policy URL** — link to [`PRIVACY.md`](PRIVACY.md) (raw GitHub URL or hosted via GitHub Pages). Required by Chrome Web Store and AMO because of the `<all_urls>` host permission and third-party LLM calls, and by Apple/Google because subscriptions send conversations to Intention's backend.
+- **Subscription disclosures** (Apple and Google both require these in the listing, and Apple also wants them reachable from the paywall): title, length, and price of each subscription, plus links to the Terms of Use (Apple accepts the standard EULA) and the privacy policy.
 - **Permission justification** (Chrome Web Store asks for this explicitly in the listing form):
   - `<all_urls>` / host permissions — needed to detect and overlay any domain the user adds to their own blocklist; the extension has no fixed list of sites.
   - `tabs` — needed to detect which tab/URL is active and pause it.

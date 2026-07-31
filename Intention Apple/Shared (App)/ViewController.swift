@@ -57,6 +57,11 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         ])
         setUpIOSBridge()
         BackgroundJSHost.shared.start()
+        // Listen for renewals / Ask-to-Buy approvals for as long as the app is
+        // alive, or StoreKit never finishes those transactions.
+        if #available(iOS 15.0, *) {
+            Task { await IntentionStore.shared.start() }
+        }
         loadOptionsPage()
         setUpExtensionBanner()
         NotificationCenter.default.addObserver(
@@ -67,6 +72,13 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         )
 #elseif os(macOS)
         self.webView.configuration.userContentController.add(self, name: "controller")
+        // Same bridge name the iOS options page uses, so Script.js can drive
+        // the StoreKit purchase flow from the Mac app's own window — the Mac
+        // App Store build must sell Intention Pro through StoreKit too.
+        self.webView.configuration.userContentController.add(self, name: "intentionNative")
+        if #available(macOS 12.0, *) {
+            Task { await IntentionStore.shared.start() }
+        }
         self.webView.loadFileURL(Bundle.main.url(forResource: "Main", withExtension: "html")!, allowingReadAccessTo: Bundle.main.resourceURL!)
 #endif
     }
@@ -124,8 +136,18 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         guard message.name == "intentionNative" else { return }
         handleBridgeMessage(message.body)
 #elseif os(macOS)
+        if message.name == "intentionNative" {
+            guard let dict = message.body as? [String: Any],
+                  dict["type"] as? String == "billing" else { return }
+            handleBillingMessage(
+                action: dict["action"] as? String ?? "",
+                dict: dict,
+                callbackId: dict["callbackId"] as? String ?? ""
+            )
+            return
+        }
         guard message.name == "controller" else { return }
-        if (message.body as! String != "open-preferences") {
+        guard let body = message.body as? String, body == "open-preferences" else {
             return
         }
 
@@ -179,6 +201,10 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             let action = dict["action"] as? String ?? ""
             let callbackId = dict["callbackId"] as? String ?? ""
             handleScreenTimeMessage(action: action, dict: dict, callbackId: callbackId)
+        case "billing":
+            let action = dict["action"] as? String ?? ""
+            let callbackId = dict["callbackId"] as? String ?? ""
+            handleBillingMessage(action: action, dict: dict, callbackId: callbackId)
         default:
             break
         }
@@ -256,14 +282,6 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 #else
         invokeBridgeCallback(callbackId, result: ["available": false])
 #endif
-    }
-
-    private func invokeBridgeCallback(_ callbackId: String, result: Any?) {
-        guard !callbackId.isEmpty, let resultB64 = JSBridgeCodec.encode(result) else { return }
-        webView.evaluateJavaScript(
-            "window.IntentionCallbacks.invoke('\(callbackId)', atob('\(resultB64)'))",
-            completionHandler: nil
-        )
     }
 
     // MARK: - Extension enablement banner
@@ -395,5 +413,61 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         }
     }
 #endif
+
+    // MARK: - In-app purchase bridge
+    //
+    // Intention Pro is sold through StoreKit and nothing else. The web layer
+    // (billing.js) can list products, buy one, restore, read status, and open
+    // Apple's own subscription management sheet — every one of those is a
+    // StoreKit call made here, in the app.
+
+    private func handleBillingMessage(action: String, dict: [String: Any], callbackId: String) {
+        guard #available(iOS 15.0, macOS 12.0, *) else {
+            invokeBridgeCallback(callbackId, result: ["available": false, "error": "In-app purchases need a newer OS version."])
+            return
+        }
+        let store = IntentionStore.shared
+        switch action {
+        case "products":
+            Task {
+                let products = await store.products()
+                self.invokeBridgeCallback(callbackId, result: [
+                    "available": true,
+                    "products": products
+                ])
+            }
+        case "purchase":
+            let productId = dict["productId"] as? String ?? ""
+            Task {
+                let result = await store.purchase(productID: productId)
+                self.invokeBridgeCallback(callbackId, result: result)
+            }
+        case "restore":
+            Task {
+                let result = await store.restore()
+                self.invokeBridgeCallback(callbackId, result: result)
+            }
+        case "status":
+            Task {
+                let result = await store.status()
+                self.invokeBridgeCallback(callbackId, result: result)
+            }
+        case "manage":
+            Task { @MainActor in
+                await IntentionStore.openManageSubscriptions()
+                self.invokeBridgeCallback(callbackId, result: ["ok": true])
+            }
+        default:
+            invokeBridgeCallback(callbackId, result: ["error": "unknown billing action: \(action)"])
+        }
+    }
+
+    private func invokeBridgeCallback(_ callbackId: String, result: Any?) {
+        guard !callbackId.isEmpty, let resultB64 = JSBridgeCodec.encode(result) else { return }
+        webView.evaluateJavaScript(
+            "window.IntentionCallbacks.invoke('\(callbackId)', atob('\(resultB64)'))",
+            completionHandler: nil
+        )
+    }
 
 }

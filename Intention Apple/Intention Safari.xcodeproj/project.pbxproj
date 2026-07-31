@@ -7,9 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BA10C0DE00000000000000B1 /* IntentionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA10C0DE000000000000FE01 /* IntentionStore.swift */; };
+		BA10C0DE00000000000000B2 /* IntentionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA10C0DE000000000000FE01 /* IntentionStore.swift */; };
+		BA10C0DE00000000000000C2 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		BA10C0DE00000000000000C3 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
+		BA10C0DE00000000000000C4 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		BA10C0DE00000000000000C5 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		125A0D90AB57B28FE647ACAB /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		1EDF5969600008746A5F0B50 /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		BB10C0DE00000000000000B1 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
+		BB10C0DE00000000000000B2 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
+		BB10C0DE00000000000000B3 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
+		BC10C0DE00000000000000B1 /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
+		BC10C0DE00000000000000B2 /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
+		BC10C0DE00000000000000B3 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
 		3A17ECA87CF0BC7FC6F1C80E /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
 		4EEBFA67CC1061C2552E484E /* background.html in Resources */ = {isa = PBXBuildFile; fileRef = F7AA81643104FBF47EF49C27 /* background.html */; };
 		5EEE962544C952A6A70D7462 /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
@@ -179,6 +191,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BA10C0DE000000000000FE01 /* IntentionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentionStore.swift; sourceTree = "<group>"; };
+		BA10C0DE000000000000FE02 /* Intention.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Intention.storekit; sourceTree = "<group>"; };
 		1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupConfig.swift; sourceTree = "<group>"; };
 		2BE36CEA3FB8DD72FFBE228A /* iOS (App).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "iOS (App).entitlements"; sourceTree = "<group>"; };
 		66B8D0122FE985EE00BC0D7F /* Base */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = Base; path = Base.lproj/Main.html; sourceTree = "<group>"; };
@@ -213,6 +227,7 @@
 		66B8D0732FE985EF00BC0D7F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
 		66B8D0742FE985EF00BC0D7F /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = "../../Intention Chrome/options.html"; sourceTree = "<group>"; };
 		66B8D0752FE985EF00BC0D7F /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = "../../Intention Chrome/content.js"; sourceTree = "<group>"; };
+		BB10C0DE000000000000FE01 /* billing.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = billing.js; path = "../../Intention Chrome/billing.js"; sourceTree = "<group>"; };
 		66B8D0762FE985EF00BC0D7F /* providers.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = providers.js; path = "../../Intention Chrome/providers.js"; sourceTree = "<group>"; };
 		66B8D0772FE985EF00BC0D7F /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = "../../Intention Chrome/options.css"; sourceTree = "<group>"; };
 		66B8D0782FE985EF00BC0D7F /* icon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon32.png; path = "../../Intention Chrome/icon32.png"; sourceTree = "<group>"; };
@@ -327,6 +342,8 @@
 			isa = PBXGroup;
 			children = (
 				66B8D0162FE985EE00BC0D7F /* ViewController.swift */,
+				BA10C0DE000000000000FE01 /* IntentionStore.swift */,
+				BA10C0DE000000000000FE02 /* Intention.storekit */,
 				66B8D0172FE985EE00BC0D7F /* Assets.xcassets */,
 				66B8D0102FE985EE00BC0D7F /* Resources */,
 			);
@@ -425,6 +442,7 @@
 				66B8D0742FE985EF00BC0D7F /* options.html */,
 				66B8D0752FE985EF00BC0D7F /* content.js */,
 				66B8D0762FE985EF00BC0D7F /* providers.js */,
+				BB10C0DE000000000000FE01 /* billing.js */,
 				66B8D0772FE985EF00BC0D7F /* options.css */,
 				66B8D0782FE985EF00BC0D7F /* icon32.png */,
 				66B8D0FE2FE985EF00BC0D7F /* env.txt */,
@@ -704,6 +722,10 @@
 				C11391A3091DB42063A78CA3 /* options.js in Resources */,
 				B3D5D21070C5C5FB7732D8D1 /* options.css in Resources */,
 				3A17ECA87CF0BC7FC6F1C80E /* providers.js in Resources */,
+				BB10C0DE00000000000000B1 /* billing.js in Resources */,
+				BC10C0DE00000000000000B1 /* coaching.html in Resources */,
+				BC10C0DE00000000000000B2 /* coaching.js in Resources */,
+				BC10C0DE00000000000000B3 /* content.css in Resources */,
 				1EDF5969600008746A5F0B50 /* prompts.js in Resources */,
 				863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */,
 				79E816C9538AF8290B28BE79 /* background.js in Resources */,
@@ -740,6 +762,7 @@
 				66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */,
 				66B8D0902FE985EF00BC0D7F /* options.html in Resources */,
 				66B8D0922FE985EF00BC0D7F /* providers.js in Resources */,
+				BB10C0DE00000000000000B2 /* billing.js in Resources */,
 				66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */,
 				66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */,
@@ -765,6 +788,7 @@
 				66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */,
 				66B8D0822FE985EF00BC0D7F /* options.html in Resources */,
 				66B8D0842FE985EF00BC0D7F /* providers.js in Resources */,
+				BB10C0DE00000000000000B3 /* billing.js in Resources */,
 				66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */,
 				66B8D1002FE985EF00BC0D7F /* env.txt in Resources */,
@@ -812,6 +836,7 @@
 				66B8D0542FE985EF00BC0D7F /* ViewController.swift in Sources */,
 				66B8D0222FE985EE00BC0D7F /* AppDelegate.swift in Sources */,
 				66B8D0242FE985EE00BC0D7F /* SceneDelegate.swift in Sources */,
+				BA10C0DE00000000000000B1 /* IntentionStore.swift in Sources */,
 				0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */,
 				C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */,
 				CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */,
@@ -826,6 +851,9 @@
 			files = (
 				66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */,
 				66B8D0332FE985EF00BC0D7F /* AppDelegate.swift in Sources */,
+				BA10C0DE00000000000000B2 /* IntentionStore.swift in Sources */,
+				BA10C0DE00000000000000C2 /* AppGroupConfig.swift in Sources */,
+				BA10C0DE00000000000000C3 /* AppGroupStorage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -844,6 +872,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				66B8D0592FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */,
+				BA10C0DE00000000000000C4 /* AppGroupConfig.swift in Sources */,
+				BA10C0DE00000000000000C5 /* AppGroupStorage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -16,5 +16,17 @@
     <p class="platform-mac state-on">Intention Safari’s extension is currently on. You can turn it off in Safari Extensions preferences.</p>
     <p class="platform-mac state-off">Intention Safari’s extension is currently off. You can turn it on in Safari Extensions preferences.</p>
     <button class="platform-mac open-preferences">Quit and Open Safari Extensions Preferences…</button>
+
+    <!-- Intention Pro, sold through StoreKit (IntentionStore.swift). The Mac
+         App Store build has to offer the subscription in-app just as the iOS
+         one does; this section is the only place it is sold. -->
+    <section class="platform-mac billing" id="billing">
+        <h2 id="billing-title">Intention Pro</h2>
+        <p id="billing-status">Checking your subscription…</p>
+        <div id="billing-plans"></div>
+        <button id="billing-restore" hidden>Restore purchases</button>
+        <button id="billing-manage" hidden>Manage subscription</button>
+        <p class="billing-error" id="billing-error" hidden></p>
+    </section>
 </body>
 </html>

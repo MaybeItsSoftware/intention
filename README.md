@@ -1,6 +1,8 @@
 # Intention
 
-**Intention** is a browser extension that puts an AI coach between you and the sites that pull you away from what you actually want to do. Instead of a hard block or a weak timer, every visit is a short conversation: why are you here, is there something you're avoiding, what would actually serve you right now? You bring your own LLM API key. Nothing leaves your machine except calls to that provider.
+**Intention** is a browser extension and mobile app that puts an AI coach between you and the sites and apps that pull you away from what you actually want to do. Instead of a hard block or a weak timer, every visit is a short conversation: why are you here, is there something you're avoiding, what would actually serve you right now?
+
+The coach runs on **Intention Pro**, a subscription bought through the App Store or Google Play — nothing to configure, no keys to fetch. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
 
 ## Get Intention
 
@@ -22,7 +24,8 @@
 ## Features
 
 - **AI gatekeeper**: the LLM decides whether to grant access, via a structured `grant_access` tool call — not free-text the page could spoof.
-- **Multi-provider, bring-your-own-key**: Anthropic (Claude), OpenAI, Groq, Google Gemini. You pick the provider and model.
+- **Subscription-powered coach**: Intention Pro is bought with Apple In-App Purchase / Google Play Billing and routes through Intention's backend, which holds the provider key.
+- **Optional custom key**: Settings → Advanced → Custom API key points the coach at your own Anthropic, OpenAI, Groq, or Gemini account instead, bypassing the subscription's limits.
 - **Context-via-chat guardrail**: the system prompt ("about you") is updated only through a conversation with the coach, using an `update_context` tool. Prevents trivial self-deception.
 - **Time awareness**: the AI sees minutes spent today on this site, today across all blocked sites, and across the past week.
 - **Exponential difficulty**: scaling skepticism per grant per day, plus a hard daily cap (3). Past the cap the chat continues for motivational support, but no more time is given out.
@@ -68,17 +71,32 @@ For development or manual installation:
 
 On first open, the options page walks you through:
 
-1. Choose a provider (Anthropic / OpenAI / Groq / Gemini) and paste an API key.
+1. Add starter domains (and, on mobile, apps) to the blocklist.
 2. Tell your coach about yourself — who you are, your work, your goals, what patterns you want to stay mindful of.
-3. Add starter domains to the blocklist.
+3. Turn the coach on with an Intention Pro subscription.
 
-After that, the options page only exposes the blocklist and provider settings directly. Updating your context is done through the **Talk with your coach** button — the coach decides when the context has improved enough to save a new version.
+After that, the options page only exposes the blocklist and access settings directly. Updating your context is done through the **Talk with your coach** button — the coach decides when the context has improved enough to save a new version.
+
+## AI access
+
+Three states, resolved by `resolveAIRoute()` in `background.js` on every coaching call:
+
+| State | When | Where calls go |
+|-------|------|----------------|
+| `hosted` | An Intention Pro subscription is active | Intention's backend (`server/`), which holds the provider key |
+| `byok` | A custom API key is set in Settings → Advanced | Straight from the device to that provider |
+| `locked` | Neither | Nowhere — the paywall replaces the chat, and the site stays blocked |
+
+The purchase itself is always the platform's own: StoreKit 2 on Apple (`Intention Apple/Shared (App)/IntentionStore.swift`), Play Billing on Android (`BillingManager.kt`). Browser builds, which have no store to buy through, unlock with a short-lived code minted by the mobile app.
+
+`server/` is the backend: it verifies App Store / Play receipts, mints entitlement tokens, and proxies coaching calls. It has no dependencies — `cd server && npm start`. See [`server/README.md`](server/README.md).
 
 ## Technology
 
 - Vanilla JavaScript, Manifest V3, HTML + CSS (glassmorphic)
 - `chrome.alarms`, `chrome.storage.local`, `chrome.tabs`, `chrome.runtime`
-- LLM adapters: Anthropic Messages API, OpenAI (+ Groq) Chat Completions, Gemini generateContent
+- StoreKit 2 (Apple) / Play Billing (Android) for in-app purchases
+- LLM adapters: Intention's hosted backend, Anthropic Messages API, OpenAI (+ Groq) Chat Completions, Gemini generateContent
 - Tool-use-based access grant and context update — no free-text commands
 
 ## Testing

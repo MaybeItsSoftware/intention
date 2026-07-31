@@ -315,6 +315,18 @@ function runCheck() {
               setupInterruptionListener();
             }
           });
+        } else if (response.accessRoute === "locked") {
+          // Blocked, with no coach to argue with. The site stays blocked —
+          // there's just nothing to say to it from here.
+          if (handled) return;
+          handled = true;
+          try {
+            ensureBodyAndStop();
+            injectOverlayStyle();
+            renderAccessNeededUI();
+          } catch (e) {
+            console.error(INT_LOG, "failed to render access needed UI:", e);
+          }
         } else {
           showGate("no active session (fail-safe)");
         }
@@ -367,21 +379,45 @@ function runWhenBodyExists(callback) {
 }
 
 function renderSetupNeededUI() {
+  renderInterstitial(
+    "Finish setup to enable your AI coach.",
+    "Open settings",
+  );
+}
+
+// No AI access on this device. A content script can't run a purchase — it has
+// no store bridge and lives inside an arbitrary web page — so it hands the user
+// to the settings page, which does. The site stays blocked either way.
+function renderAccessNeededUI() {
+  renderInterstitial(
+    "Intention Pro is needed to talk to your coach.",
+    "Open settings",
+  );
+}
+
+function renderInterstitial(subtitle, buttonLabel) {
+  const existing = document.getElementById("intention-root");
+  if (existing) existing.remove();
   const root = document.createElement("div");
   root.id = "intention-root";
-  root.innerHTML = `
-    <div class="int-column">
-      <h1>Intention</h1>
-      <p class="int-subtitle">Finish setup to enable your AI coach.</p>
-      <button id="int-open-options">Open settings</button>
-    </div>
-  `;
+  const column = document.createElement("div");
+  column.className = "int-column";
+  const heading = document.createElement("h1");
+  heading.textContent = "Intention";
+  const subtitleEl = document.createElement("p");
+  subtitleEl.className = "int-subtitle";
+  subtitleEl.textContent = subtitle;
+  const button = document.createElement("button");
+  button.id = "int-open-options";
+  button.textContent = buttonLabel;
+  column.appendChild(heading);
+  column.appendChild(subtitleEl);
+  column.appendChild(button);
+  root.appendChild(column);
   document.body.appendChild(root);
-  document
-    .getElementById("int-open-options")
-    .addEventListener("click", () => {
-      chrome.runtime.sendMessage({ action: "openOptions" });
-    });
+  button.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ action: "openOptions" });
+  });
 }
 
 function renderChatUI({ mode, domain }) {
@@ -513,6 +549,12 @@ function renderChatUI({ mode, domain }) {
     if (resp.error) {
       thinking.remove();
       sending = false;
+      // Access lapsed mid-conversation: retrying can't help, so swap the chat
+      // for the pointer to where a subscription can be sorted out.
+      if (resp.locked) {
+        renderAccessNeededUI();
+        return;
+      }
       const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
       showRetryableError(messagesEl, message, text);
       return;

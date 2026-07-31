@@ -45,8 +45,11 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     // pushConfigToNative()/syncConfigFromNative() (Apple platforms only — see
     // tracking.js). Falls back to the original echo behavior for any other
     // message shape, unchanged from before this bridge existed.
+    // Compiled on both platforms: the subscription is bought in the app, and
+    // the entitlement it mints reaches the extension's coach only through the
+    // App Group config keys this bridge carries. A macOS extension with no
+    // bridge would stay locked no matter what the user had paid for.
     private func handle(message: Any?) -> [String: Any] {
-#if os(iOS)
         guard let dict = message as? [String: Any], let action = dict["action"] as? String else {
             return [ "echo": message as Any ]
         }
@@ -65,9 +68,6 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
         default:
             return [ "echo": message as Any ]
         }
-#else
-        return [ "echo": message as Any ]
-#endif
     }
 
 }

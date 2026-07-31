@@ -1,5 +1,6 @@
 package uk.co.maybeitssoftware.intention
 
+import android.app.Activity
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -7,6 +8,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -65,6 +67,60 @@ class WebAppInterface(
         BackgroundJsHelper.sendMessage(messageJson) { response ->
             runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(response ?: "")})")
         }
+    }
+
+    // ---- In-app purchases (Google Play Billing) ----
+    //
+    // Mirrors the Apple bridge in ios-bridge.js: billing.js sees the same
+    // window.intentionBilling shape on both platforms, so the paywall itself is
+    // platform-agnostic. Purchases can only happen through Play from here.
+
+    @JavascriptInterface
+    fun billingProducts(callbackId: String) {
+        BillingManager.products { result -> respond(callbackId, result) }
+    }
+
+    @JavascriptInterface
+    fun billingPurchase(productId: String, callbackId: String) {
+        val activity = context as? Activity
+        if (activity == null) {
+            respond(callbackId, JSONObject().put("status", "failed")
+                .put("error", "Purchases can only be started from the Intention app."))
+            return
+        }
+        Handler(Looper.getMainLooper()).post {
+            BillingManager.purchase(activity, productId) { result -> respond(callbackId, result) }
+        }
+    }
+
+    @JavascriptInterface
+    fun billingRestore(callbackId: String) {
+        BillingManager.restore { result -> respond(callbackId, result) }
+    }
+
+    @JavascriptInterface
+    fun billingStatus(callbackId: String) {
+        BillingManager.status { result -> respond(callbackId, result) }
+    }
+
+    // Play has no in-app management sheet; its subscriptions centre is the
+    // documented destination, and Google requires apps to link users there.
+    @JavascriptInterface
+    fun billingManage(callbackId: String) {
+        try {
+            val intent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://play.google.com/store/account/subscriptions")
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("IntentionBilling", "Couldn't open Play subscriptions: ${e.message}")
+        }
+        respond(callbackId, JSONObject().put("ok", true))
+    }
+
+    private fun respond(callbackId: String, payload: JSONObject) {
+        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(payload.toString())})")
     }
 
     @JavascriptInterface
