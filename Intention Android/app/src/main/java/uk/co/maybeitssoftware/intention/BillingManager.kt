@@ -3,11 +3,11 @@ package uk.co.maybeitssoftware.intention
 import android.app.Activity
 import android.content.Context
 import android.util.Log
-import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.ConsumeParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
@@ -15,24 +15,34 @@ import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.UUID
 
 /**
- * Google Play Billing wrapper for Intention Pro — the subscription that turns
- * on the built-in coach.
+ * Google Play Billing wrapper for coaching credit — the consumable top-up
+ * that turns on the built-in coach.
  *
  * This mirrors IntentionStore.swift on Apple: the web layer (billing.js) sees
  * a `window.intentionBilling` object, and every purchase it can make goes
- * through Play. The purchase token that comes back is verified server-side
- * (Play Developer API) before any coaching call is allowed, so a tampered
- * client can't mint itself access.
+ * through Play. A purchase is verified-and-credited against the backend
+ * directly from here (not routed through the JS layer first) before it's
+ * consumed, so a tampered client can't mint itself access, and the product
+ * only becomes purchasable again once it's durably credited.
  */
 object BillingManager : PurchasesUpdatedListener {
 
     private const val TAG = "IntentionBilling"
 
-    const val PRODUCT_MONTHLY = "intention_pro_monthly"
-    const val PRODUCT_YEARLY = "intention_pro_yearly"
-    private val PRODUCT_IDS = listOf(PRODUCT_MONTHLY, PRODUCT_YEARLY)
+    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL.
+    private const val DEFAULT_BACKEND_URL = "https://api.intention.maybeitssoftware.uk"
+
+    // Must match server/src/config.js's topUps table and the Play Console
+    // product IDs.
+    const val PRODUCT_CREDIT_1 = "intention_coach_credit_1"
+    const val PRODUCT_CREDIT_2 = "intention_coach_credit_2"
+    const val PRODUCT_CREDIT_5 = "intention_coach_credit_5"
+    private val PRODUCT_IDS = listOf(PRODUCT_CREDIT_1, PRODUCT_CREDIT_2, PRODUCT_CREDIT_5)
 
     private var billingClient: BillingClient? = null
     private var productCache: List<ProductDetails> = emptyList()
@@ -88,29 +98,29 @@ object BillingManager : PurchasesUpdatedListener {
                 .setProductList(PRODUCT_IDS.map {
                     QueryProductDetailsParams.Product.newBuilder()
                         .setProductId(it)
-                        .setProductType(BillingClient.ProductType.SUBS)
+                        .setProductType(BillingClient.ProductType.INAPP)
                         .build()
                 })
                 .build()
             client.queryProductDetailsAsync(params) { result, details ->
                 if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                     callback(JSONObject().put("available", true)
-                        .put("error", "Plans are unavailable right now."))
+                        .put("error", "Top-ups are unavailable right now."))
                     return@queryProductDetailsAsync
                 }
                 productCache = details
                 val array = JSONArray()
+                // Cheapest first — the smallest top-up leads, per the "show
+                // the lowest amount first" decision.
                 for (product in details.sortedBy { priceMicrosOf(it) }) {
-                    val offer = product.subscriptionOfferDetails?.firstOrNull()
-                    val phase = offer?.pricingPhases?.pricingPhaseList?.firstOrNull()
+                    val offer = product.oneTimePurchaseOfferDetails
                     array.put(
                         JSONObject()
                             .put("id", product.productId)
                             .put("title", product.title)
                             .put("description", product.description)
-                            .put("price", phase?.formattedPrice ?: "")
-                            .put("period", periodLabel(phase?.billingPeriod))
-                            .put("type", "subscription")
+                            .put("price", offer?.formattedPrice ?: "")
+                            .put("type", "one-time")
                     )
                 }
                 callback(JSONObject().put("available", true).put("products", array))
@@ -119,25 +129,7 @@ object BillingManager : PurchasesUpdatedListener {
     }
 
     private fun priceMicrosOf(product: ProductDetails): Long =
-        product.subscriptionOfferDetails
-            ?.firstOrNull()
-            ?.pricingPhases?.pricingPhaseList?.firstOrNull()
-            ?.priceAmountMicros ?: Long.MAX_VALUE
-
-    // ISO-8601 billing periods ("P1M", "P1Y") read as gibberish in a paywall.
-    private fun periodLabel(period: String?): String {
-        if (period.isNullOrEmpty()) return ""
-        val match = Regex("^P(\\d+)([DWMY])$").find(period) ?: return ""
-        val count = match.groupValues[1].toIntOrNull() ?: return ""
-        val unit = when (match.groupValues[2]) {
-            "D" -> "day"
-            "W" -> "week"
-            "M" -> "month"
-            "Y" -> "year"
-            else -> return ""
-        }
-        return if (count == 1) unit else "$count ${unit}s"
-    }
+        product.oneTimePurchaseOfferDetails?.priceAmountMicros ?: Long.MAX_VALUE
 
     /**
      * Launches Play's purchase sheet. Resolves the same shape the Apple bridge
@@ -155,7 +147,7 @@ object BillingManager : PurchasesUpdatedListener {
                 // The cache is filled by products(); a cold call has to fill it first.
                 products {
                     val retry = productCache.firstOrNull { it.productId == productId }
-                    if (retry == null) callback(failed("That plan isn't available right now."))
+                    if (retry == null) callback(failed("That top-up isn't available right now."))
                     else launchFlow(activity, client, retry, callback)
                 }
                 return@connect
@@ -170,18 +162,15 @@ object BillingManager : PurchasesUpdatedListener {
         product: ProductDetails,
         callback: (JSONObject) -> Unit
     ) {
-        val offerToken = product.subscriptionOfferDetails?.firstOrNull()?.offerToken
-        if (offerToken == null) {
-            callback(failed("That plan isn't available right now."))
-            return
-        }
         pendingPurchaseCallback = callback
         val params = BillingFlowParams.newBuilder()
+            // A consumable's purchase token isn't stable across repeat buys —
+            // this is what the backend keys the credit balance by instead.
+            .setObfuscatedAccountId(stableAccountId(activity))
             .setProductDetailsParamsList(
                 listOf(
                     BillingFlowParams.ProductDetailsParams.newBuilder()
                         .setProductDetails(product)
-                        .setOfferToken(offerToken)
                         .build()
                 )
             )
@@ -203,12 +192,11 @@ object BillingManager : PurchasesUpdatedListener {
                     callback?.invoke(failed("No purchase was returned."))
                     return
                 }
-                acknowledge(purchase)
                 if (purchase.purchaseState == Purchase.PurchaseState.PENDING) {
                     callback?.invoke(JSONObject().put("status", "pending"))
-                } else {
-                    callback?.invoke(purchaseResult(purchase))
+                    return
                 }
+                creditThenConsume(purchase) { callback?.invoke(purchaseResult(purchase)) }
             }
             BillingClient.BillingResponseCode.USER_CANCELED ->
                 callback?.invoke(JSONObject().put("status", "cancelled"))
@@ -217,7 +205,12 @@ object BillingManager : PurchasesUpdatedListener {
         }
     }
 
-    /** Re-reads what this Google account already owns. */
+    /**
+     * Recovers a purchase that was bought but never durably credited (app
+     * killed, offline at the time) — the consumable-appropriate meaning of
+     * "restore," since Play's INAPP query only ever returns not-yet-consumed
+     * purchases, not an ongoing plan.
+     */
     fun restore(callback: (JSONObject) -> Unit) {
         connect { ready ->
             val client = billingClient
@@ -227,7 +220,7 @@ object BillingManager : PurchasesUpdatedListener {
                 return@connect
             }
             val params = QueryPurchasesParams.newBuilder()
-                .setProductType(BillingClient.ProductType.SUBS)
+                .setProductType(BillingClient.ProductType.INAPP)
                 .build()
             client.queryPurchasesAsync(params) { result, purchases ->
                 val purchase = purchases.firstOrNull {
@@ -236,40 +229,77 @@ object BillingManager : PurchasesUpdatedListener {
                 }
                 if (result.responseCode != BillingClient.BillingResponseCode.OK || purchase == null) {
                     callback(JSONObject().put("status", "none")
-                        .put("error", "No previous purchase found on this Google account."))
+                        .put("error", "No pending purchase found."))
                     return@queryPurchasesAsync
                 }
-                acknowledge(purchase)
-                callback(purchaseResult(purchase))
+                creditThenConsume(purchase) { callback(purchaseResult(purchase)) }
             }
         }
     }
 
-    /** Local view of the subscription; the backend stays the authority. */
+    /** Local view of billing state; the backend balance stays the authority. */
     fun status(callback: (JSONObject) -> Unit) {
-        restore { result ->
-            val entitled = result.optString("status") == "purchased"
-            val out = JSONObject().put("available", true).put("entitled", entitled)
-            if (entitled) {
-                out.put("platform", "google")
-                out.put("receipt", result.opt("receipt"))
-            }
-            callback(out)
+        callback(JSONObject().put("available", true).put("entitled", false))
+    }
+
+    // Verifies-and-credits against the backend first, then consumes only on
+    // success — required for a consumable, or the product can never be
+    // bought again by this user. If verification fails (offline, server
+    // hiccup), it's left unconsumed so restore() can retry it later.
+    private fun creditThenConsume(purchase: Purchase, onDone: () -> Unit) {
+        val productId = purchase.products.firstOrNull() ?: ""
+        verifyWithBackend(purchase, productId) { verified ->
+            if (verified) consume(purchase)
+            onDone()
         }
     }
 
-    // Play auto-refunds an unacknowledged purchase after three days, so this
-    // has to happen whether or not the backend verification round-trip works.
-    private fun acknowledge(purchase: Purchase) {
-        if (purchase.isAcknowledged || purchase.purchaseState != Purchase.PurchaseState.PURCHASED) return
-        val params = AcknowledgePurchaseParams.newBuilder()
+    private fun verifyWithBackend(purchase: Purchase, productId: String, onResult: (Boolean) -> Unit) {
+        Thread {
+            val ok = try {
+                val url = URL("$DEFAULT_BACKEND_URL/v1/entitlement/verify")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                val body = JSONObject()
+                    .put("platform", "google")
+                    .put(
+                        "receipt",
+                        JSONObject()
+                            .put("purchaseToken", purchase.purchaseToken)
+                            .put("productId", productId)
+                    )
+                connection.outputStream.use { it.write(body.toString().toByteArray()) }
+                connection.responseCode == 200
+            } catch (e: Exception) {
+                Log.w(TAG, "Backend verify failed: ${e.message}")
+                false
+            }
+            onResult(ok)
+        }.start()
+    }
+
+    // Both consumes and acknowledges in one call — required for a consumable
+    // (unlike a subscription, acknowledging alone leaves it permanently
+    // "owned" and unpurchasable again).
+    private fun consume(purchase: Purchase) {
+        val params = ConsumeParams.newBuilder()
             .setPurchaseToken(purchase.purchaseToken)
             .build()
-        billingClient?.acknowledgePurchase(params) { result ->
+        billingClient?.consumeAsync(params) { result, _ ->
             if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-                Log.w(TAG, "Acknowledge failed: ${result.debugMessage}")
+                Log.w(TAG, "Consume failed: ${result.debugMessage}")
             }
         }
+    }
+
+    private fun stableAccountId(context: Context): String {
+        val prefs = context.getSharedPreferences("intention_billing", Context.MODE_PRIVATE)
+        prefs.getString("account_id", null)?.let { return it }
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString("account_id", newId).apply()
+        return newId
     }
 
     private fun purchaseResult(purchase: Purchase): JSONObject =

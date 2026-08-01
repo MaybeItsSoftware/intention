@@ -8,7 +8,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
-import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -103,19 +102,11 @@ class WebAppInterface(
         BillingManager.status { result -> respond(callbackId, result) }
     }
 
-    // Play has no in-app management sheet; its subscriptions centre is the
-    // documented destination, and Google requires apps to link users there.
+    // No-op: a consumable top-up has nothing to manage/cancel. Kept as a stub
+    // purely so android-bridge.js/billing.js's `manage` call still resolves
+    // without needing a bridge contract change.
     @JavascriptInterface
     fun billingManage(callbackId: String) {
-        try {
-            val intent = Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse("https://play.google.com/store/account/subscriptions")
-            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            Log.w("IntentionBilling", "Couldn't open Play subscriptions: ${e.message}")
-        }
         respond(callbackId, JSONObject().put("ok", true))
     }
 

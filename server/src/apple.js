@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { config } from './config.js';
+import { config, findTopUp } from './config.js';
 
-// Apple receipt verification.
+// Apple receipt verification for a consumable coaching-credit top-up.
 //
 // The client sends the JWS representation of a StoreKit 2 signed transaction.
 // Two independent checks run against it:
@@ -10,10 +10,12 @@ import { config } from './config.js';
 //      each link is verified against the next, and the root has to be one of
 //      Apple's pinned root certificates. This alone proves Apple issued the
 //      transaction and nothing has been altered.
-//   2. Current status. If App Store Server API credentials are configured, the
-//      subscription is re-read from Apple, which is the only way to see a
-//      renewal, cancellation, or refund that happened after the receipt was
-//      minted.
+//   2. Current record. If App Store Server API credentials are configured,
+//      the transaction is re-read from Apple via Get Transaction Info — the
+//      only way to see a refund that happened after the receipt was minted.
+//      There is no "status" for a consumable the way there is for a
+//      subscription (no renewal/grace/billing-retry) — a transaction is
+//      either on record and not revoked, or it isn't.
 //
 // A receipt that fails (1) is rejected. (2) is skipped with a warning when the
 // credentials aren't configured — see assertBootConfig.
@@ -121,27 +123,26 @@ function appStoreJWT() {
   return `${signingInput}.${signature.toString('base64url')}`;
 }
 
-async function fetchSubscriptionStatus(originalTransactionId) {
+// Get Transaction Info — the consumable-appropriate authoritative check.
+// Returns a single transaction record; no ongoing status/renewal/grace
+// concept applies, unlike the subscription-status-group endpoint.
+async function fetchTransactionInfo(transactionId) {
   const res = await fetch(
-    `${appStoreBaseUrl()}/inApps/v1/subscriptions/${encodeURIComponent(originalTransactionId)}`,
+    `${appStoreBaseUrl()}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
     { headers: { authorization: `Bearer ${appStoreJWT()}` } }
   );
-  if (res.status === 404) throw new VerificationError('Apple has no record of that subscription');
+  if (res.status === 404) throw new VerificationError('Apple has no record of that transaction');
   if (!res.ok) {
-    // Apple being unavailable must not read as "not subscribed".
+    // Apple being unavailable must not read as "this purchase doesn't exist".
     throw new VerificationError(`App Store Server API ${res.status}`, 'upstream_unavailable');
   }
   return res.json();
 }
 
-// Apple's states: 1 active, 2 expired, 3 in billing retry, 4 grace period,
-// 5 revoked. Access is allowed while active or in grace; billing retry keeps
-// access too, since Apple is still trying to charge a paying customer.
-const ALLOWED_STATUSES = new Set([1, 4, 3]);
-
 /**
- * Verifies an Apple receipt and returns the entitlement it proves.
- * @returns {{ active, productId, expiresAt, originalTransactionId }}
+ * Verifies an Apple consumable-purchase receipt and returns what's needed to
+ * credit it.
+ * @returns {{ productId, creditId, appAccountToken }}
  */
 export async function verifyAppleReceipt(jws) {
   let payload;
@@ -154,36 +155,30 @@ export async function verifyAppleReceipt(jws) {
   if (payload.bundleId && payload.bundleId !== config.apple.bundleId) {
     throw new VerificationError('receipt is for a different app');
   }
-  if (payload.productId && !config.apple.productIds.includes(payload.productId)) {
+  if (payload.productId && !findTopUp('apple', payload.productId)) {
     throw new VerificationError('receipt is for an unknown product');
   }
 
-  const originalTransactionId = String(payload.originalTransactionId || payload.transactionId || '');
-  if (!originalTransactionId) throw new VerificationError('receipt has no transaction id');
+  const transactionId = String(payload.transactionId || '');
+  if (!transactionId) throw new VerificationError('receipt has no transaction id');
+  if (payload.revocationDate) throw new VerificationError('that purchase was refunded');
 
   let productId = payload.productId || '';
-  let expiresAt = payload.expiresDate ? Number(payload.expiresDate) : null;
-  let active = !expiresAt || expiresAt > Date.now();
-  if (payload.revocationDate) active = false;
+  let appAccountToken = payload.appAccountToken || '';
 
   // Authoritative pass, when we have the credentials for it.
   if (config.apple.issuerId && config.apple.privateKey && config.apple.keyId) {
-    const status = await fetchSubscriptionStatus(originalTransactionId);
-    const entry = (status.data || [])
-      .flatMap(group => group.lastTransactions || [])
-      .find(t => String(t.originalTransactionId) === originalTransactionId);
-    if (!entry) throw new VerificationError('Apple has no record of that subscription');
-
-    active = ALLOWED_STATUSES.has(Number(entry.status));
-    if (entry.signedTransactionInfo) {
-      const info = config.allowUnverifiedReceipts
-        ? decodeJWS(entry.signedTransactionInfo).payload
-        : verifyAppleJWS(entry.signedTransactionInfo);
-      productId = info.productId || productId;
-      expiresAt = info.expiresDate ? Number(info.expiresDate) : expiresAt;
-      if (info.revocationDate) active = false;
-    }
+    const record = await fetchTransactionInfo(transactionId);
+    if (!record.signedTransactionInfo) throw new VerificationError('Apple has no record of that transaction');
+    const info = config.allowUnverifiedReceipts
+      ? decodeJWS(record.signedTransactionInfo).payload
+      : verifyAppleJWS(record.signedTransactionInfo);
+    if (info.revocationDate) throw new VerificationError('that purchase was refunded');
+    productId = info.productId || productId;
+    appAccountToken = info.appAccountToken || appAccountToken;
   }
 
-  return { active, productId, expiresAt, originalTransactionId };
+  if (!appAccountToken) throw new VerificationError('receipt has no linked account token');
+
+  return { productId, creditId: transactionId, appAccountToken };
 }

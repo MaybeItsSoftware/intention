@@ -5,10 +5,10 @@
   "type": "module",
   "description": "Intention's hosted coach backend: verifies App Store / Play subscriptions and proxies coaching calls under Intention's own LLM key.",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12.0"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "NODE_ENV=development node --watch src/index.js"
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "NODE_ENV=development node --env-file-if-exists=.env --watch src/index.js"
   }
 }

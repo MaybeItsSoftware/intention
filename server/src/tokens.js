@@ -65,11 +65,15 @@ export function verifyToken(token, secret) {
   return payload;
 }
 
-// Stable, non-reversible identifier for a subscription, used as the quota key
-// so a raw store transaction id never becomes our primary key in logs.
-export function subjectFor(platform, originalTransactionId) {
+// Stable, non-reversible identifier for a purchasing account, used as the
+// balance key so a raw store account token never becomes our primary key in
+// logs. Keyed by the platform's stable per-account token (Apple's
+// appAccountToken / Google's obfuscatedExternalAccountId), not a
+// per-transaction id, so repeat top-ups by the same person accumulate into
+// one balance.
+export function subjectFor(platform, accountToken) {
   return crypto.createHash('sha256')
-    .update(`${platform}:${originalTransactionId}`)
+    .update(`${platform}:${accountToken}`)
     .digest('hex')
     .slice(0, 32);
 }

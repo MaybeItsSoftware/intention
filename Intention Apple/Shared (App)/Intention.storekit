@@ -3,6 +3,51 @@
   "nonRenewingSubscriptions" : [
   ],
   "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "21520757",
+      "localizations" : [
+        {
+          "description" : "Adds £1 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £1",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "uk.co.maybeitssoftware.intention.coach.credit1",
+      "referenceName" : "Coaching Credit £1",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "21520758",
+      "localizations" : [
+        {
+          "description" : "Adds £2 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £2",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "uk.co.maybeitssoftware.intention.coach.credit2",
+      "referenceName" : "Coaching Credit £2",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "21520759",
+      "localizations" : [
+        {
+          "description" : "Adds £5 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £5",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "uk.co.maybeitssoftware.intention.coach.credit5",
+      "referenceName" : "Coaching Credit £5",
+      "type" : "Consumable"
+    }
   ],
   "settings" : {
     "_askToBuyEnabled" : false,
@@ -11,60 +56,6 @@
     ]
   },
   "subscriptionGroups" : [
-    {
-      "id" : "21520756",
-      "localizations" : [
-      ],
-      "name" : "Intention Pro",
-      "subscriptions" : [
-        {
-          "adHocOffers" : [
-          ],
-          "codeOffers" : [
-          ],
-          "displayPrice" : "3.99",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "21520757",
-          "introductoryOffer" : null,
-          "localizations" : [
-            {
-              "description" : "Your AI coach on every site and app you block.",
-              "displayName" : "Intention Pro Monthly",
-              "locale" : "en_US"
-            }
-          ],
-          "productID" : "uk.co.maybeitssoftware.intention.pro.monthly",
-          "recurringSubscriptionPeriod" : "P1M",
-          "referenceName" : "Intention Pro Monthly",
-          "subscriptionGroupID" : "21520756",
-          "type" : "RecurringSubscription"
-        },
-        {
-          "adHocOffers" : [
-          ],
-          "codeOffers" : [
-          ],
-          "displayPrice" : "34.99",
-          "familyShareable" : false,
-          "groupNumber" : 1,
-          "internalID" : "21520758",
-          "introductoryOffer" : null,
-          "localizations" : [
-            {
-              "description" : "Your AI coach on every site and app you block. Two months free.",
-              "displayName" : "Intention Pro Yearly",
-              "locale" : "en_US"
-            }
-          ],
-          "productID" : "uk.co.maybeitssoftware.intention.pro.yearly",
-          "recurringSubscriptionPeriod" : "P1Y",
-          "referenceName" : "Intention Pro Yearly",
-          "subscriptionGroupID" : "21520756",
-          "type" : "RecurringSubscription"
-        }
-      ]
-    }
   ],
   "version" : {
     "major" : 4,

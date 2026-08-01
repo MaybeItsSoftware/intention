@@ -1,12 +1,16 @@
 import crypto from 'node:crypto';
-import { config } from './config.js';
+import { config, findTopUp } from './config.js';
 import { VerificationError } from './apple.js';
 
-// Google Play purchase verification via the Play Developer API.
+// Google Play purchase verification for a consumable coaching-credit top-up,
+// via the Play Developer API.
 //
 // The client sends { purchaseToken, productId } straight from Play Billing.
 // A purchase token means nothing on its own — it has to be exchanged with
-// Google for the subscription's real state, which is what this does.
+// Google for the purchase's real state, which is what this does. There is no
+// "subscription status" for a one-time product: Google's equivalent is the
+// one-time-products endpoint (purchaseState/consumptionState), not
+// subscriptionsv2.
 
 let cachedAccessToken = null;
 
@@ -54,38 +58,38 @@ async function accessToken() {
   return cachedAccessToken.value;
 }
 
-// subscriptionsv2 states that still mean "this person is paying".
-const ALLOWED_STATES = new Set([
-  'SUBSCRIPTION_STATE_ACTIVE',
-  'SUBSCRIPTION_STATE_IN_GRACE_PERIOD',
-  'SUBSCRIPTION_STATE_CANCELED' // cancelled but not yet expired — access runs to the end of the term
-]);
+function productsUrl(productId, purchaseToken) {
+  return `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/`
+    + `${encodeURIComponent(config.google.packageName)}/purchases/products/`
+    + `${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}`;
+}
+
+// purchaseState: 0 purchased, 1 canceled, 2 pending. Only a completed
+// purchase is creditable — a consumable has no renewal/grace concept.
+const CREDITABLE_PURCHASE_STATE = 0;
 
 /**
- * @returns {{ active, productId, expiresAt, originalTransactionId }}
+ * @returns {{ productId, creditId, purchaseToken, obfuscatedExternalAccountId }}
  */
 export async function verifyGooglePurchase(receipt) {
   const purchaseToken = receipt && receipt.purchaseToken;
   const productId = (receipt && receipt.productId) || '';
   if (!purchaseToken) throw new VerificationError('purchase token missing');
-  if (productId && !config.google.productIds.includes(productId)) {
+  if (!productId || !findTopUp('google', productId)) {
     throw new VerificationError('purchase is for an unknown product');
   }
 
   if (config.allowUnverifiedReceipts) {
     return {
-      active: true,
       productId,
-      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
-      originalTransactionId: purchaseToken.slice(0, 64)
+      creditId: purchaseToken.slice(0, 64),
+      purchaseToken,
+      obfuscatedExternalAccountId: `dev:${purchaseToken.slice(0, 32)}`
     };
   }
 
   const token = await accessToken();
-  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/`
-    + `${encodeURIComponent(config.google.packageName)}/purchases/subscriptionsv2/tokens/`
-    + `${encodeURIComponent(purchaseToken)}`;
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetch(productsUrl(productId, purchaseToken), { headers: { authorization: `Bearer ${token}` } });
   if (res.status === 404 || res.status === 410) {
     throw new VerificationError('Google has no record of that purchase');
   }
@@ -94,18 +98,32 @@ export async function verifyGooglePurchase(receipt) {
   }
   const data = await res.json();
 
-  const line = (data.lineItems || [])[0] || {};
-  const expiryTime = line.expiryTime || data.lineItems?.[0]?.expiryTime;
-  const expiresAt = expiryTime ? new Date(expiryTime).getTime() : null;
-  const active = ALLOWED_STATES.has(data.subscriptionState)
-    && (!expiresAt || expiresAt > Date.now());
+  if (Number(data.purchaseState) !== CREDITABLE_PURCHASE_STATE) {
+    throw new VerificationError('that purchase was cancelled or is still pending');
+  }
+  if (!data.obfuscatedExternalAccountId) {
+    throw new VerificationError('purchase has no linked account token');
+  }
 
   return {
-    active,
-    productId: line.productId || productId,
-    expiresAt,
-    // Play's linkedPurchaseToken chain means the token can change across
-    // upgrades; the order id is the stable handle for one subscription.
-    originalTransactionId: String(data.latestOrderId || purchaseToken).split('..')[0]
+    productId,
+    creditId: String(data.orderId || purchaseToken),
+    purchaseToken,
+    obfuscatedExternalAccountId: data.obfuscatedExternalAccountId
   };
+}
+
+// Marks a one-time product as consumed so it becomes purchasable again for
+// this user — Google's own authoritative "this token is spent" record.
+// Belt-and-braces alongside the server's own idempotency key, not the
+// primary guard against double-crediting (see store.js).
+export async function consumePurchase(productId, purchaseToken) {
+  const token = await accessToken();
+  const res = await fetch(`${productsUrl(productId, purchaseToken)}:consume`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) {
+    throw new VerificationError(`Play Developer API consume ${res.status}`, 'upstream_unavailable');
+  }
 }

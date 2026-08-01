@@ -74,10 +74,6 @@ function storeEntitlementStatus() {
   return sendBilling('status');
 }
 
-function openStoreSubscriptionManagement() {
-  return sendBilling('manage');
-}
-
 // ---- Backend verification --------------------------------------------------
 
 async function postBackend(backendUrl, path, body) {
@@ -105,9 +101,9 @@ async function verifyPurchase({ platform, receipt, backendUrl }) {
   return normalizeEntitlement({ ...data, source: platform, receipt });
 }
 
-// Re-checks a stored entitlement (renewals, cancellations, refunds). Falls back
-// to the entitlement we already hold if the backend can't be reached, so a
-// flaky connection never locks a paying user out mid-flight.
+// Re-checks a stored entitlement's live balance. Falls back to the entitlement
+// we already hold if the backend can't be reached, so a flaky connection never
+// locks a paying user out mid-flight.
 async function refreshEntitlement(entitlement, backendUrl) {
   if (!entitlement || (!entitlement.token && !entitlement.receipt)) return entitlement || null;
   try {
@@ -129,18 +125,18 @@ async function refreshEntitlement(entitlement, backendUrl) {
 }
 
 // Browser builds have no store to buy through. An access code, generated in
-// the mobile app for an existing subscription, links this browser to the same
-// plan — no payment happens here.
+// the mobile app for an existing balance, links this browser to the same
+// account — no payment happens here.
 async function redeemAccessCode(code, backendUrl) {
   const data = await postBackend(backendUrl, '/v1/entitlement/redeem', { code: String(code || '').trim() });
   return normalizeEntitlement({ ...data, source: 'code' });
 }
 
-// The other half of that: an app with a live subscription mints the code its
-// owner types into their browser. Nothing is sold here — it links a device to a
-// subscription that was already bought through the store.
+// The other half of that: an app with coaching credit mints the code its
+// owner types into their browser. Nothing is sold here — it links a device to
+// an account that already has credit bought through the store.
 async function requestAccessCode(entitlement, backendUrl) {
-  if (!entitlement || !entitlement.token) throw new Error('No active subscription on this device.');
+  if (!entitlement || !entitlement.token) throw new Error('No coaching credit on this device yet.');
   const base = (backendUrl || DEFAULT_INTENTION_BACKEND_URL).replace(/\/+$/, '');
   const res = await fetch(`${base}/v1/entitlement/code`, {
     method: 'POST',
@@ -161,11 +157,15 @@ function normalizeEntitlement(raw) {
   return {
     active: !!raw.active,
     productId: raw.productId || '',
+    // The server never sends this for a top-up (no renewal to expire) — kept
+    // as an always-falsy field so entitlementIsActive() (providers.js), which
+    // treats "no expiresAt" as active forever, needs no change.
     expiresAt: raw.expiresAt ? Number(raw.expiresAt) : null,
     source: raw.source || '',
     token: raw.token || '',
     receipt: raw.receipt || null,
-    plan: raw.plan || '',
+    balanceMicros: Number(raw.balanceMicros || 0),
+    balanceGbp: Number(raw.balanceGbp || 0),
     pendingVerification: !!raw.pendingVerification,
     lastError: raw.lastError || '',
     updatedAt: Date.now()
@@ -175,31 +175,32 @@ function normalizeEntitlement(raw) {
 // What actually matters about an entitlement, for "did this change?" checks.
 // A plain deep-compare is useless here: normalizeEntitlement re-stamps
 // `updatedAt` every time, so every refresh would look like a change and the
-// caller would re-render (and re-hit the backend) forever.
+// caller would re-render (and re-hit the backend) forever. balanceGbp
+// (rounded to pence) is included so a balance change after a chat message is
+// itself detected as a change, even when active/token/productId all hold.
 function entitlementSignature(entitlement) {
   if (!entitlement) return 'none';
   return [
     entitlement.active ? 1 : 0,
     entitlement.token || '',
-    entitlement.expiresAt || '',
     entitlement.productId || '',
+    entitlement.balanceGbp || 0,
     entitlement.pendingVerification ? 1 : 0
   ].join('|');
 }
 
-function formatRenewal(entitlement) {
-  if (!entitlement || !entitlement.expiresAt) return '';
-  const d = new Date(entitlement.expiresAt);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+function formatBalance(entitlement) {
+  if (!entitlement) return '';
+  const gbp = Number(entitlement.balanceGbp || 0);
+  return `You have £${gbp.toFixed(2)} of coaching credit.`;
 }
 
 // ---- Paywall ---------------------------------------------------------------
 
 const PAYWALL_BENEFITS = [
   'Your coach, on every blocked site and app',
-  'Nothing to configure — it works the moment you subscribe',
-  'Cancel any time from your account settings'
+  'Pay once for a set amount of credit — no recurring charge',
+  'Top up again any time your balance runs low'
 ];
 
 function el(tag, className, text) {
@@ -214,17 +215,22 @@ function el(tag, className, text) {
 // opts:
 //   entitlement   currently stored entitlement (may be null)
 //   onPurchase(productId)   -> Promise, called for a store purchase
-//   onRestore()             -> Promise
+//   onRestore()             -> Promise, recovers an interrupted purchase
 //   onRedeem(code)          -> Promise         (byok builds only)
 //   onUseOwnKey()           -> void, optional  (byok builds only)
-//   onManage()              -> void, optional
+//   onLinkBrowser()         -> Promise, optional (store builds only)
 //   compact                 tighter layout for the in-gate paywall
 //
 // Copy discipline, deliberately: on store/managed builds this never names an
 // LLM vendor, never mentions API keys, and never renders a link out of the app
 // — the only way to pay from here is the platform's own purchase sheet.
+//
+// A top-up is always repurchasable, so unlike the old subscription paywall
+// this never stops at "you're covered" — a positive balance still falls
+// through to the purchase buttons (as "add more"), it just leads with a
+// balance line instead of a lede.
 async function renderPaywall(container, opts = {}) {
-  const { entitlement, onPurchase, onRestore, onRedeem, onUseOwnKey, onManage, compact } = opts;
+  const { entitlement, onPurchase, onRestore, onRedeem, onUseOwnKey, compact } = opts;
   container.innerHTML = '';
   container.className = 'int-paywall' + (compact ? ' int-paywall-compact' : '');
 
@@ -250,19 +256,15 @@ async function renderPaywall(container, opts = {}) {
     }
   };
 
-  if (entitlement && entitlementIsActive(entitlement)) {
+  const active = entitlement && entitlementIsActive(entitlement);
+
+  if (active) {
     const status = el('div', 'int-pw-status');
-    status.appendChild(el('strong', null, 'Intention Pro is active'));
-    const renews = formatRenewal(entitlement);
-    if (renews) status.appendChild(el('p', 'int-pw-sub', `Renews ${renews}.`));
+    status.appendChild(el('strong', null, 'Coaching credit'));
+    status.appendChild(el('p', 'int-pw-sub', formatBalance(entitlement)));
     container.appendChild(status);
-    if (onManage && BILLING_MODE === 'store') {
-      const manageBtn = el('button', 'secondary int-pw-manage', 'Manage subscription');
-      manageBtn.type = 'button';
-      manageBtn.addEventListener('click', () => onManage());
-      container.appendChild(manageBtn);
-    }
-    // Same subscription, other devices: a browser has no store to buy through,
+
+    // Same balance, other devices: a browser has no store to buy through,
     // so it's linked with a short-lived code minted here instead.
     if (opts.onLinkBrowser && BILLING_MODE === 'store' && !compact) {
       const linkBtn = el('button', 'secondary int-pw-link', 'Link a browser');
@@ -285,40 +287,40 @@ async function renderPaywall(container, opts = {}) {
       container.appendChild(linkBtn);
       container.appendChild(codeOut);
     }
-    container.appendChild(errorEl);
-    return;
-  }
+  } else {
+    container.appendChild(el('p', 'int-pw-lede', compact
+      ? 'Buy coaching credit to talk to your coach.'
+      : 'Coaching credit turns on your coach. Pay once for a set amount — no recurring charge.'));
 
-  container.appendChild(el('p', 'int-pw-lede', compact
-    ? 'Subscribe to Intention Pro to talk to your coach.'
-    : 'Intention Pro turns on your coach. One subscription covers every site and app you block.'));
-
-  if (!compact) {
-    const list = el('ul', 'int-pw-benefits');
-    for (const benefit of PAYWALL_BENEFITS) list.appendChild(el('li', null, benefit));
-    container.appendChild(list);
+    if (!compact) {
+      const list = el('ul', 'int-pw-benefits');
+      for (const benefit of PAYWALL_BENEFITS) list.appendChild(el('li', null, benefit));
+      container.appendChild(list);
+    }
   }
 
   if (BILLING_MODE === 'managed') {
-    container.appendChild(el('p', 'int-pw-note',
-      'Open the Intention app on this device to start or check your subscription. It applies here automatically.'));
+    if (!active) {
+      container.appendChild(el('p', 'int-pw-note',
+        'Open the Intention app on this device to buy coaching credit. It applies here automatically.'));
+    }
     container.appendChild(errorEl);
     return;
   }
 
   if (BILLING_MODE === 'store') {
     const plansEl = el('div', 'int-pw-plans');
-    plansEl.appendChild(el('p', 'int-pw-sub', 'Loading plans…'));
+    plansEl.appendChild(el('p', 'int-pw-sub', 'Loading top-ups…'));
     container.appendChild(plansEl);
 
-    const restoreBtn = el('button', 'secondary int-pw-restore', 'Restore purchases');
+    const restoreBtn = el('button', 'secondary int-pw-restore', 'Recover an interrupted purchase');
     restoreBtn.type = 'button';
     container.appendChild(restoreBtn);
     container.appendChild(errorEl);
 
     restoreBtn.addEventListener('click', async () => {
       setError('');
-      busy(restoreBtn, true, 'Restoring…');
+      busy(restoreBtn, true, 'Checking…');
       try {
         await onRestore();
       } catch (e) {
@@ -333,19 +335,21 @@ async function renderPaywall(container, opts = {}) {
     const products = (result && result.products) || [];
     if (!products.length) {
       plansEl.appendChild(el('p', 'int-pw-sub',
-        (result && result.error) || 'Plans are unavailable right now. Please try again in a moment.'));
+        (result && result.error) || 'Top-ups are unavailable right now. Please try again in a moment.'));
       return;
+    }
+    if (active) {
+      plansEl.appendChild(el('p', 'int-pw-sub', 'Add more coaching credit:'));
     }
     for (const product of products) {
       const btn = el('button', 'primary int-pw-plan');
       btn.type = 'button';
-      btn.appendChild(el('span', 'int-pw-plan-title', product.title || 'Intention Pro'));
-      const priceLine = [product.price, product.period].filter(Boolean).join(' / ');
-      if (priceLine) btn.appendChild(el('span', 'int-pw-plan-price', priceLine));
+      btn.appendChild(el('span', 'int-pw-plan-title', product.title || 'Coaching credit'));
+      if (product.price) btn.appendChild(el('span', 'int-pw-plan-price', product.price));
       if (product.description) btn.appendChild(el('span', 'int-pw-plan-desc', product.description));
       btn.addEventListener('click', async () => {
         setError('');
-        busy(btn, true, 'Opening App Store…');
+        busy(btn, true, 'Opening store…');
         try {
           await onPurchase(product.id);
         } catch (e) {
@@ -359,9 +363,15 @@ async function renderPaywall(container, opts = {}) {
     return;
   }
 
-  // 'byok' — Chrome / Firefox.
+  // 'byok' — Chrome / Firefox. Already-linked credit has nothing further to
+  // show here; there's no purchase path in a browser extension either way.
+  if (active) {
+    container.appendChild(errorEl);
+    return;
+  }
+
   const codeWrap = el('div', 'int-pw-code');
-  codeWrap.appendChild(el('label', null, 'Already subscribed? Enter your access code'));
+  codeWrap.appendChild(el('label', null, 'Already have coaching credit? Enter your access code'));
   const codeRow = el('div', 'input-group');
   const codeInput = el('input');
   codeInput.type = 'text';

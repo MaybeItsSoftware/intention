@@ -386,8 +386,8 @@ async function getLimitsForDomain(domain) {
 //
 //   byok    a custom provider key is configured (Settings -> Advanced). Calls
 //           go straight from this device to that provider, and the hosted
-//           subscription's quota doesn't apply.
-//   hosted  an in-app-purchase entitlement is active. Calls go to Intention's
+//           coaching-credit balance doesn't apply.
+//   hosted  a coaching-credit balance is available. Calls go to Intention's
 //           backend, which holds the provider key. This is the default path.
 //   locked  neither — every coaching entry point shows the paywall instead of
 //           a chat.
@@ -436,7 +436,8 @@ async function saveEntitlement(entitlement) {
     source: String(entitlement.source || ''),
     token: String(entitlement.token || ''),
     receipt: entitlement.receipt || null,
-    plan: String(entitlement.plan || ''),
+    balanceMicros: Number(entitlement.balanceMicros || 0),
+    balanceGbp: Number(entitlement.balanceGbp || 0),
     pendingVerification: !!entitlement.pendingVerification,
     lastError: String(entitlement.lastError || ''),
     updatedAt: Date.now()
@@ -483,8 +484,8 @@ async function getFullConfig() {
 }
 
 // Setup no longer carries provider credentials: a fresh install finishes the
-// wizard with the hosted subscription (or nothing at all, which lands on the
-// paywall at the first gate). Any provider/apiKey here comes from the advanced
+// wizard on the hosted route (or nothing at all, which lands on the paywall
+// at the first gate). Any provider/apiKey here comes from the advanced
 // override and is passed through untouched.
 async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels }) {
   await setStorage({
@@ -517,7 +518,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   const { userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
   const access = await resolveAIRoute();
   if (access.route === 'locked') {
-    return { error: 'Intention Pro is needed to talk to your coach.', locked: true };
+    return { error: 'You need coaching credit to talk to your coach.', locked: true };
   }
 
   // For apps, `domain` is the storage/stats key (an Android package name, or
@@ -631,6 +632,20 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       return { error: e.message, locked: true };
     }
     return { error: e.message, networkError: isNetworkError(e) };
+  }
+
+  // Keeps a "credit remaining" indicator live after every message, rather
+  // than only updating the next time the settings page reconciles.
+  if (access.route === 'hosted') {
+    await mutateStorage('entitlement', (entitlement) => {
+      if (!entitlement || typeof entitlement !== 'object') return entitlement;
+      return {
+        ...entitlement,
+        balanceMicros: llmResponse.balanceMicros,
+        balanceGbp: llmResponse.balanceGbp,
+        updatedAt: Date.now()
+      };
+    }, null);
   }
 
   let grantedSession = null;

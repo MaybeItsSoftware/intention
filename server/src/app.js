@@ -1,8 +1,11 @@
-import { config } from './config.js';
+import { config, findTopUp } from './config.js';
 import { verifyAppleReceipt, VerificationError } from './apple.js';
-import { verifyGooglePurchase } from './google.js';
+import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, TokenError } from './tokens.js';
-import { consumeQuota, generateAccessCode, redeemAccessCode, store } from './store.js';
+import {
+  adjustBalance, getBalanceMicros, alreadyCredited, markCredited,
+  generateAccessCode, redeemAccessCode, store
+} from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 
 // Request handling, kept transport-agnostic: `handleRequest` takes a plain
@@ -24,8 +27,8 @@ export async function handleRequest({ method, path, headers = {}, body = null },
 
   try {
     switch (path) {
-      case '/v1/entitlement/verify': return await verifyEndpoint(body, deps);
-      case '/v1/entitlement/refresh': return await refreshEndpoint(body, deps);
+      case '/v1/entitlement/verify': return await verifyEndpoint(body, deps, backing);
+      case '/v1/entitlement/refresh': return refreshEndpoint(body, backing);
       case '/v1/entitlement/code': return codeEndpoint(headers, backing);
       case '/v1/entitlement/redeem': return redeemEndpoint(body, backing);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing);
@@ -49,7 +52,7 @@ export async function handleRequest({ method, path, headers = {}, body = null },
 
 // ---- Entitlement ----------------------------------------------------------
 
-async function verifyEndpoint(body, deps) {
+async function verifyEndpoint(body, deps, backing) {
   const platform = body?.platform;
   const receipt = body?.receipt;
   if (!platform || !receipt) {
@@ -65,67 +68,66 @@ async function verifyEndpoint(body, deps) {
     return json(400, { error: `Unknown platform: ${platform}`, code: 'bad_request' });
   }
 
-  return json(200, entitlementResponse(platform, result));
+  const accountToken = platform === 'apple' ? result.appAccountToken : result.obfuscatedExternalAccountId;
+  const subject = subjectFor(platform, accountToken);
+  await creditTopUp(platform, subject, result, backing, deps);
+  return json(200, entitlementResponse(subject, platform, result.productId, backing));
 }
 
-async function refreshEndpoint(body, deps) {
+// A refresh only proves the token is still valid and reports the current
+// balance — it never re-grants credit. Granting only ever happens once, at
+// verify time, guarded by the idempotency key in creditTopUp.
+function refreshEndpoint(body, backing) {
   const claims = verifyToken(body?.token, config.tokenSecret);
-  // A refresh has to go back to the store: the whole point is catching a
-  // renewal or a refund that happened since the token was minted. Without the
-  // original receipt to re-check, the token is simply re-issued at its
-  // existing expiry, which is bounded by tokenTtlMs anyway.
-  if (!claims.receipt) {
-    return json(200, entitlementResponse(claims.platform, {
-      active: true,
-      productId: claims.productId,
-      expiresAt: claims.subscriptionExpiresAt || null,
-      originalTransactionId: claims.originalTransactionId
-    }));
+  return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing));
+}
+
+// Credits a top-up exactly once per store purchase (keyed by the
+// transaction/order id, never combined with subject — the same account tops
+// up repeatedly, but each individual purchase is creditable only once).
+async function creditTopUp(platform, subject, result, backing, deps = {}) {
+  if (!alreadyCredited(platform, result.creditId, backing)) {
+    markCredited(platform, result.creditId, backing);
+    const topUp = findTopUp(platform, result.productId);
+    if (topUp) adjustBalance(subject, topUp.creditMicros, backing);
   }
-
-  const verify = claims.platform === 'apple'
-    ? (deps.verifyApple || verifyAppleReceipt)
-    : (deps.verifyGoogle || verifyGooglePurchase);
-  const result = await verify(claims.receipt);
-  return json(200, entitlementResponse(claims.platform, result));
+  if (platform === 'google') {
+    // Google's own authoritative "this token is spent" record — insurance
+    // alongside the idempotency key above, not the primary guard.
+    try {
+      await (deps.consumeGoogle || consumePurchase)(result.productId, result.purchaseToken);
+    } catch (e) {
+      console.error('[intention] Google consume failed (balance already credited)', e);
+    }
+  }
 }
 
-function entitlementResponse(platform, result) {
-  const subject = subjectFor(platform, result.originalTransactionId);
-  const payload = {
-    sub: subject,
-    platform,
-    productId: result.productId,
-    originalTransactionId: result.originalTransactionId,
-    subscriptionExpiresAt: result.expiresAt || null
-  };
-  // The token's own life is capped at tokenTtlMs, and never outlives the
-  // subscription it stands for — so a cancelled plan can't keep working for a
-  // week just because the token hadn't expired yet.
-  const ttl = result.expiresAt
-    ? Math.max(0, Math.min(config.tokenTtlMs, Number(result.expiresAt) - Date.now()))
-    : config.tokenTtlMs;
-
+function entitlementResponse(subject, platform, productId, backing) {
+  const balanceMicros = getBalanceMicros(subject, backing);
+  const payload = { sub: subject, platform, productId };
   return {
-    active: !!result.active,
-    productId: result.productId || '',
-    expiresAt: result.expiresAt || null,
-    plan: result.productId || '',
-    token: result.active ? signToken(payload, config.tokenSecret, ttl) : '',
-    quota: { daily: config.dailyMessageQuota }
+    active: balanceMicros > 0,
+    productId: productId || '',
+    balanceMicros,
+    balanceGbp: microsToGbp(balanceMicros),
+    // A token proves "known, verified purchaser," not "has balance" — it's
+    // always issued so a zero-balance account can still refresh/top up.
+    token: signToken(payload, config.tokenSecret, config.tokenTtlMs)
   };
 }
 
-// A signed-in mobile app mints a short-lived code so the same subscription can
-// unlock the browser extension, where there is no store to buy through.
+function microsToGbp(micros) {
+  return Math.round(micros / 10000) / 100;
+}
+
+// A signed-in mobile app mints a short-lived code so the same credit balance
+// can unlock the browser extension, where there is no store to buy through.
 function codeEndpoint(headers, backing) {
   const claims = verifyToken(bearer(headers), config.tokenSecret);
   const { code, expiresAt } = generateAccessCode({
     sub: claims.sub,
     platform: claims.platform,
-    productId: claims.productId,
-    originalTransactionId: claims.originalTransactionId,
-    subscriptionExpiresAt: claims.subscriptionExpiresAt || null
+    productId: claims.productId
   }, { backing });
   return json(200, { code, expiresAt });
 }
@@ -135,17 +137,7 @@ function redeemEndpoint(body, backing) {
   if (!claims) {
     return json(404, { error: 'That code is not valid or has already been used.', code: 'entitlement_invalid' });
   }
-  const ttl = claims.subscriptionExpiresAt
-    ? Math.max(0, Math.min(config.tokenTtlMs, Number(claims.subscriptionExpiresAt) - Date.now()))
-    : config.tokenTtlMs;
-  return json(200, {
-    active: ttl > 0,
-    productId: claims.productId || '',
-    expiresAt: claims.subscriptionExpiresAt || null,
-    plan: claims.productId || '',
-    token: ttl > 0 ? signToken(claims, config.tokenSecret, ttl) : '',
-    quota: { daily: config.dailyMessageQuota }
-  });
+  return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing));
 }
 
 // ---- Coaching proxy -------------------------------------------------------
@@ -169,12 +161,13 @@ async function chatEndpoint(headers, body, deps, backing) {
     }
   }
 
-  const quota = consumeQuota(claims.sub, config.dailyMessageQuota, backing);
-  if (!quota.allowed) {
-    return json(429, {
-      error: "You've used all of today's coaching messages.",
-      code: 'quota_exceeded',
-      quota
+  const balanceMicros = getBalanceMicros(claims.sub, backing);
+  if (balanceMicros <= 0) {
+    return json(402, {
+      error: "You're out of coaching credit. Buy more to keep talking to your coach.",
+      code: 'balance_exhausted',
+      balanceMicros: 0,
+      balanceGbp: 0
     });
   }
 
@@ -185,7 +178,22 @@ async function chatEndpoint(headers, body, deps, backing) {
     tools: Array.isArray(body.tools) ? body.tools : []
   });
 
-  return json(200, { text: result.text || '', toolCalls: result.toolCalls || [], quota });
+  // Deducted after the fact, from the real cost of what was just used — the
+  // balance is only checked (not reserved) up front, so one message can push
+  // it slightly negative; that's expected prepaid-metering behaviour and
+  // corrects itself on the next top-up.
+  const usage = result.usage || { inputTokens: 0, outputTokens: 0 };
+  const pricing = config.llm.pricing[config.llm.model] || config.llm.pricing.default;
+  const costUsd = (usage.inputTokens * pricing.inputPerMillionUsd + usage.outputTokens * pricing.outputPerMillionUsd) / 1_000_000;
+  const costMicros = Math.ceil(costUsd * config.llm.usdToGbpRate * config.llm.marginMultiplier * 1_000_000);
+  const newBalance = adjustBalance(claims.sub, -costMicros, backing);
+
+  return json(200, {
+    text: result.text || '',
+    toolCalls: result.toolCalls || [],
+    balanceMicros: newBalance,
+    balanceGbp: microsToGbp(newBalance)
+  });
 }
 
 // ---- helpers --------------------------------------------------------------

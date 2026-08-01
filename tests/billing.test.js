@@ -59,21 +59,24 @@ describe('entitlementSignature', () => {
   // re-render/re-verify loop.
   it('ignores updatedAt so a re-normalized entitlement compares equal', () => {
     const { ctx } = loadBilling();
-    const raw = { active: true, token: 't', productId: 'p', expiresAt: 123 };
+    const raw = { active: true, token: 't', productId: 'p', balanceGbp: 1 };
     const a = ctx.normalizeEntitlement(raw);
     const b = ctx.normalizeEntitlement({ ...raw });
     expect(b.updatedAt).toBeGreaterThanOrEqual(a.updatedAt);
     expect(ctx.entitlementSignature(a)).toBe(ctx.entitlementSignature(b));
   });
 
-  it('notices the changes that actually matter', () => {
+  it('notices the changes that actually matter, including a balance-only change', () => {
     const { ctx } = loadBilling();
-    const base = ctx.normalizeEntitlement({ active: true, token: 't', productId: 'p', expiresAt: 1 });
+    const base = ctx.normalizeEntitlement({ active: true, token: 't', productId: 'p', balanceGbp: 1 });
     const sig = ctx.entitlementSignature(base);
     expect(ctx.entitlementSignature({ ...base, active: false })).not.toBe(sig);
     expect(ctx.entitlementSignature({ ...base, token: 'other' })).not.toBe(sig);
-    expect(ctx.entitlementSignature({ ...base, expiresAt: 2 })).not.toBe(sig);
+    expect(ctx.entitlementSignature({ ...base, productId: 'other' })).not.toBe(sig);
     expect(ctx.entitlementSignature({ ...base, pendingVerification: true })).not.toBe(sig);
+    // The core regression this needs to catch: a balance change after a chat
+    // message, with active/token/productId all unchanged.
+    expect(ctx.entitlementSignature({ ...base, balanceGbp: 0.5 })).not.toBe(sig);
     expect(ctx.entitlementSignature(null)).toBe('none');
   });
 });
@@ -81,11 +84,18 @@ describe('entitlementSignature', () => {
 describe('normalizeEntitlement', () => {
   it('coerces a backend response into the stored shape', () => {
     const { ctx } = loadBilling();
-    const e = ctx.normalizeEntitlement({ active: 1, expiresAt: '1700000000000', source: 'apple', receipt: 'jws' });
+    const e = ctx.normalizeEntitlement({
+      active: 1, source: 'apple', receipt: 'jws', balanceMicros: 1000000, balanceGbp: 1
+    });
     expect(e.active).toBe(true);
-    expect(e.expiresAt).toBe(1700000000000);
+    // The server never sends this for a top-up — stays falsy so
+    // entitlementIsActive()'s "no expiresAt means active forever" branch
+    // needs no change.
+    expect(e.expiresAt).toBe(null);
     expect(e.productId).toBe('');
     expect(e.receipt).toBe('jws');
+    expect(e.balanceMicros).toBe(1000000);
+    expect(e.balanceGbp).toBe(1);
   });
 
   it('returns null for nothing', () => {
@@ -125,14 +135,22 @@ describe('verifyPurchase', () => {
 });
 
 describe('refreshEntitlement', () => {
-  const stored = { active: true, token: 'tok', source: 'apple', receipt: 'jws', expiresAt: 1 };
+  const stored = { active: true, token: 'tok', source: 'apple', receipt: 'jws' };
 
   it('re-checks through the refresh route when a token is held', async () => {
-    const fetch = makeMockFetch({ active: true, token: 'tok2', expiresAt: 2 });
+    const fetch = makeMockFetch({ active: true, token: 'tok2', balanceGbp: 2 });
     const { ctx } = loadBilling({ fetch });
     const refreshed = await ctx.refreshEntitlement(stored);
     expect(fetch.calls[0].url).toMatch(/\/v1\/entitlement\/refresh$/);
     expect(refreshed.token).toBe('tok2');
+  });
+
+  it('surfaces an updated balance without flipping active', async () => {
+    const fetch = makeMockFetch({ active: true, token: 'tok', balanceMicros: 500000, balanceGbp: 0.5 });
+    const { ctx } = loadBilling({ fetch });
+    const refreshed = await ctx.refreshEntitlement(stored);
+    expect(refreshed.active).toBe(true);
+    expect(refreshed.balanceGbp).toBe(0.5);
   });
 
   // A purchase that couldn't be confirmed at the time keeps its receipt, so the
@@ -189,10 +207,10 @@ describe('access codes', () => {
     expect(result.code).toBe('INT-AAAA-BBBB');
   });
 
-  it('refuses to mint one without a subscription on this device', async () => {
+  it('refuses to mint one without coaching credit on this device', async () => {
     const fetch = makeMockFetch({});
     const { ctx } = loadBilling({ fetch });
-    await expect(ctx.requestAccessCode(null)).rejects.toThrow(/No active subscription/);
+    await expect(ctx.requestAccessCode(null)).rejects.toThrow(/No coaching credit/);
     expect(fetch.calls.length).toBe(0);
   });
 });

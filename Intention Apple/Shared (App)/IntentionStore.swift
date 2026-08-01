@@ -2,31 +2,34 @@
 //  IntentionStore.swift
 //  Shared (App)
 //
-//  StoreKit 2 wrapper for Intention Pro, the subscription that turns on the
-//  built-in coach. Everything the web layer can buy goes through here: there is
-//  no other purchase path in the app, and no way to reach one from it.
+//  StoreKit 2 wrapper for coaching credit, the consumable top-up that turns on
+//  the built-in coach. Everything the web layer can buy goes through here:
+//  there is no other purchase path in the app, and no way to reach one from it.
 //
 //  The web layer (billing.js) talks to this through `window.intentionBilling`,
 //  injected by ios-bridge.js and answered in ViewController.handleBillingMessage.
 //
+//  Consumables behave differently from the subscription this used to be:
+//  StoreKit doesn't remember them once finished (`Transaction.currentEntitlements`
+//  excludes consumables entirely), so the backend's credit balance is the only
+//  source of truth for "how much does this person have" — this file's job is
+//  just buying, verifying-and-finishing, and recovering an interrupted buy.
+//
 
 import Foundation
 import StoreKit
-
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
+import Security
 
 @available(iOS 15.0, macOS 12.0, *)
 enum IntentionProduct {
     // Must match the product IDs configured in App Store Connect (and in
-    // Intention.storekit for local/sandbox testing).
-    static let monthly = "uk.co.maybeitssoftware.intention.pro.monthly"
-    static let yearly = "uk.co.maybeitssoftware.intention.pro.yearly"
+    // Intention.storekit for local/sandbox testing) and server/src/config.js's
+    // topUps table.
+    static let credit1 = "uk.co.maybeitssoftware.intention.coach.credit1"
+    static let credit2 = "uk.co.maybeitssoftware.intention.coach.credit2"
+    static let credit5 = "uk.co.maybeitssoftware.intention.coach.credit5"
 
-    static let all: [String] = [monthly, yearly]
+    static let all: [String] = [credit1, credit2, credit5]
 }
 
 @available(iOS 15.0, macOS 12.0, *)
@@ -34,22 +37,29 @@ actor IntentionStore {
 
     static let shared = IntentionStore()
 
+    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL. Purchases
+    // are verified-and-credited from here directly (not routed through the
+    // JS layer first) so a transaction can be finished as soon as the credit
+    // is durably recorded server-side, per Apple's consumable guidance.
+    private let defaultBackendURL = URL(string: "https://api.intention.maybeitssoftware.uk")!
+
     private var cachedProducts: [Product] = []
     private var updatesTask: Task<Void, Never>?
 
-    // StoreKit delivers renewals, Ask-to-Buy approvals and purchases made on
-    // another device through Transaction.updates, which has to be listened to
-    // for the whole app lifetime or those transactions are never finished.
+    // StoreKit delivers Ask-to-Buy approvals and other later-arriving updates
+    // through Transaction.updates, which has to be listened to for the whole
+    // app lifetime or those transactions are never finished.
     func start() {
         guard updatesTask == nil else { return }
         updatesTask = Task.detached(priority: .background) {
             for await update in Transaction.updates {
                 guard case .verified(let transaction) = update else { continue }
-                await transaction.finish()
-                await IntentionStore.shared.cacheEntitlementSnapshot()
+                if await IntentionStore.shared.verifyWithBackend(receipt: update.jwsRepresentation) {
+                    await transaction.finish()
+                }
             }
         }
-        Task { await cacheEntitlementSnapshot() }
+        Task { await recoverUnfinishedTransactions() }
     }
 
     // MARK: - Products
@@ -58,8 +68,8 @@ actor IntentionStore {
         if cachedProducts.isEmpty {
             cachedProducts = (try? await Product.products(for: IntentionProduct.all)) ?? []
         }
-        // Cheapest-per-period first so the monthly plan leads and the yearly
-        // one reads as the upgrade, rather than depending on StoreKit's order.
+        // Cheapest first — the smallest top-up leads, per the "show the
+        // lowest amount first" decision.
         return cachedProducts
             .sorted { $0.price < $1.price }
             .map { product in
@@ -68,47 +78,40 @@ actor IntentionStore {
                     "title": product.displayName,
                     "description": product.description,
                     "price": product.displayPrice,
-                    "period": Self.periodLabel(for: product),
-                    "type": product.type == .autoRenewable ? "subscription" : "one-time"
+                    "type": "one-time"
                 ]
             }
-    }
-
-    private static func periodLabel(for product: Product) -> String {
-        guard let period = product.subscription?.subscriptionPeriod else { return "" }
-        let unit: String
-        switch period.unit {
-        case .day: unit = "day"
-        case .week: unit = "week"
-        case .month: unit = "month"
-        case .year: unit = "year"
-        @unknown default: unit = ""
-        }
-        if unit.isEmpty { return "" }
-        return period.value == 1 ? unit : "\(period.value) \(unit)s"
     }
 
     // MARK: - Purchase
 
     // Returns the shape billing.js expects:
     //   { status: purchased | cancelled | pending | failed, receipt?, error? }
-    // `receipt` is the JWS representation of the signed transaction — exactly
-    // what the backend re-verifies with Apple before minting an access token.
+    // `receipt` is the JWS representation of the signed transaction. The JS
+    // layer also calls verifyPurchase() with it after this resolves — that
+    // call is idempotent and mostly just refreshes the JS-side balance/UI;
+    // the durable credit already happened in verifyWithBackend below.
     func purchase(productID: String) async -> [String: Any] {
         guard let product = cachedProducts.first(where: { $0.id == productID })
             ?? (try? await Product.products(for: [productID]))?.first else {
-            return ["status": "failed", "error": "That plan isn't available right now."]
+            return ["status": "failed", "error": "That top-up isn't available right now."]
         }
 
         do {
-            let result = try await product.purchase()
+            let result = try await product.purchase(options: [.appAccountToken(stableAccountToken())])
             switch result {
             case .success(let verification):
                 switch verification {
                 case .verified(let transaction):
-                    await transaction.finish()
-                    await cacheEntitlementSnapshot()
-                    return ["status": "purchased", "platform": "apple", "receipt": verification.jwsRepresentation]
+                    let jws = verification.jwsRepresentation
+                    // Only finish once the credit is durably recorded — if
+                    // this fails (offline, server hiccup), leave it
+                    // unfinished; the next start()/restore() sweep will
+                    // retry it via Transaction.unfinished.
+                    if await verifyWithBackend(receipt: jws) {
+                        await transaction.finish()
+                    }
+                    return ["status": "purchased", "platform": "apple", "receipt": jws]
                 case .unverified(_, let error):
                     // App Store signature check failed — never treat as paid.
                     return ["status": "failed", "error": "That purchase couldn't be verified (\(error.localizedDescription))."]
@@ -125,83 +128,95 @@ actor IntentionStore {
         }
     }
 
-    // MARK: - Restore
+    // MARK: - Restore (recovers an interrupted purchase, not an ongoing plan)
 
+    // A consumable has nothing to "restore" in the subscription sense — once
+    // finished, StoreKit forgets it. What this recovers is a purchase that
+    // was bought but never durably credited (app killed, offline at the
+    // time) — a real, useful operation, just a different one than before.
     func restore() async -> [String: Any] {
-        // Pulls anything bought on this Apple Account onto this device first,
-        // so a reinstall doesn't come up empty.
         try? await AppStore.sync()
-        guard let entitlement = await currentEntitlement() else {
-            return ["status": "none", "error": "No previous purchase found on this Apple Account."]
+        guard let jws = await recoverUnfinishedTransactions(), !jws.isEmpty else {
+            return ["status": "none", "error": "No pending purchase found."]
         }
-        return ["status": "purchased", "platform": "apple", "receipt": entitlement.jws]
+        return ["status": "purchased", "platform": "apple", "receipt": jws]
+    }
+
+    // Sweeps Transaction.unfinished — unlike currentEntitlements, this *does*
+    // include not-yet-finished consumables — verifying-and-crediting each one
+    // against the backend before finishing it. Returns the last recovered
+    // transaction's JWS, if any, so restore() can hand it to the JS layer.
+    @discardableResult
+    private func recoverUnfinishedTransactions() async -> String? {
+        var lastRecovered: String?
+        for await result in Transaction.unfinished {
+            guard case .verified(let transaction) = result,
+                  IntentionProduct.all.contains(transaction.productID) else { continue }
+            let jws = result.jwsRepresentation
+            if await verifyWithBackend(receipt: jws) {
+                await transaction.finish()
+                lastRecovered = jws
+            }
+        }
+        return lastRecovered
     }
 
     // MARK: - Status
 
-    struct EntitlementSnapshot {
-        let productID: String
-        let expiresAt: Date?
-        let jws: String
-    }
-
-    func currentEntitlement() async -> EntitlementSnapshot? {
-        for await result in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result,
-                  IntentionProduct.all.contains(transaction.productID),
-                  transaction.revocationDate == nil else { continue }
-            return EntitlementSnapshot(
-                productID: transaction.productID,
-                expiresAt: transaction.expirationDate,
-                jws: result.jwsRepresentation
-            )
-        }
-        return nil
-    }
-
+    // No local StoreKit truth to report for a consumable (see file header) —
+    // the backend's balance is authoritative. Kept as a stub purely so the
+    // ios-bridge.js/billing.js `status` action still resolves.
     func status() async -> [String: Any] {
-        guard let entitlement = await currentEntitlement() else {
-            return ["available": true, "entitled": false]
+        return ["available": true, "entitled": false]
+    }
+
+    // MARK: - Backend verification
+
+    private func verifyWithBackend(receipt: String) async -> Bool {
+        var request = URLRequest(url: defaultBackendURL.appendingPathComponent("v1/entitlement/verify"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["platform": "apple", "receipt": receipt])
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode == 200
+        } catch {
+            return false
         }
-        return [
-            "available": true,
-            "entitled": true,
-            "platform": "apple",
-            "productId": entitlement.productID,
-            "expiresAt": entitlement.expiresAt.map { $0.timeIntervalSince1970 * 1000 } as Any,
-            "receipt": entitlement.jws
+    }
+
+    // MARK: - Account token
+
+    // A consumable purchase's transaction id is never stable across repeat
+    // buys, so the backend keys a person's balance by this instead: a
+    // client-issued UUID, echoed back in the verified transaction as
+    // `appAccountToken`. Keychain (iCloud-synced) so it survives a reinstall
+    // on any device signed into the same Apple ID — a paid balance deserves
+    // that continuity.
+    private func stableAccountToken() -> UUID {
+        let service = "uk.co.maybeitssoftware.intention.accountToken"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: true,
+            kSecReturnData as String: true
         ]
-    }
-
-    // Mirrors the store's own view of the subscription into the App Group, so
-    // a renewal or lapse that StoreKit reports while the web layer isn't
-    // looking still reaches it (and the Safari extension) on the next read.
-    // The backend remains the authority on whether calls are allowed — this is
-    // only the local hint that a re-verify is worth doing.
-    private func cacheEntitlementSnapshot() async {
-        let entitlement = await currentEntitlement()
-        var payload: [String: Any] = ["storeEntitled": entitlement != nil]
-        if let entitlement {
-            payload["storeProductId"] = entitlement.productID
-            payload["storeExpiresAt"] = entitlement.expiresAt.map { $0.timeIntervalSince1970 * 1000 } ?? 0
+        var item: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let data = item as? Data,
+           let uuidString = String(data: data, encoding: .utf8),
+           let uuid = UUID(uuidString: uuidString) {
+            return uuid
         }
-        AppGroupStorage.set(["storeEntitlement": payload])
-    }
 
-    // MARK: - Manage
-
-    @MainActor
-    static func openManageSubscriptions() async {
-#if os(iOS)
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive }) else { return }
-        try? await AppStore.showManageSubscriptions(in: scene)
-#elseif os(macOS)
-        // No in-app sheet on macOS; the App Store app owns subscriptions there.
-        if let url = URL(string: "macappstore://apps.apple.com/account/subscriptions") {
-            NSWorkspace.shared.open(url)
-        }
-#endif
+        let newToken = UUID()
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: true,
+            kSecValueData as String: newToken.uuidString.data(using: .utf8)!
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+        return newToken
     }
 }

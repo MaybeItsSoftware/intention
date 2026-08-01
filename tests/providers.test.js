@@ -248,17 +248,25 @@ describe('callIntentionHosted', () => {
     expect(fetch.calls[0].url).toBe('http://localhost:8787/v1/chat');
   });
 
-  it('returns the same { text, toolCalls } shape the key-based adapters do', async () => {
-    const fetch = makeMockFetch({ text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }] });
+  it('returns the same { text, toolCalls } shape the key-based adapters do, plus the live balance', async () => {
+    const fetch = makeMockFetch({
+      text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }],
+      balanceMicros: 500000, balanceGbp: 0.5
+    });
     const { ctx } = loadProviders({ fetch });
     const res = await ctx.callLLM(HOSTED);
-    expect(res).toEqual({ text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }] });
+    expect(res).toEqual({
+      text: 'ok',
+      toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }],
+      balanceMicros: 500000,
+      balanceGbp: 0.5
+    });
   });
 
   it('refuses without a token, before making any request', async () => {
     const fetch = makeMockFetch({});
     const { ctx } = loadProviders({ fetch });
-    await expect(ctx.callLLM({ provider: 'intention', messages: MESSAGES })).rejects.toThrow(/subscription/i);
+    await expect(ctx.callLLM({ provider: 'intention', messages: MESSAGES })).rejects.toThrow(/coaching credit/i);
     expect(fetch.calls.length).toBe(0);
   });
 
@@ -269,7 +277,7 @@ describe('callIntentionHosted', () => {
     expect(error.code).toBe('entitlement_expired');
     expect(ctx.isEntitlementError(error)).toBe(true);
     // The user sees our copy, not the backend's raw message.
-    expect(error.message).toMatch(/subscription has ended/i);
+    expect(error.message).toMatch(/access has expired/i);
   });
 
   it('treats a bare 401 as an entitlement problem even without a code', async () => {
@@ -279,12 +287,16 @@ describe('callIntentionHosted', () => {
     expect(ctx.isEntitlementError(error)).toBe(true);
   });
 
-  it('does not treat a quota or server error as a lapsed subscription', async () => {
-    const { ctx: quotaCtx } = loadProviders({ fetch: makeMockFetch({ status: 429, json: { code: 'quota_exceeded' } }) });
-    const quotaError = await quotaCtx.callLLM(HOSTED).catch(e => e);
-    expect(quotaCtx.isEntitlementError(quotaError)).toBe(false);
-    expect(quotaError.message).toMatch(/today's coaching messages/i);
+  it('treats an exhausted balance as an entitlement problem, sent back to the paywall', async () => {
+    const fetch = makeMockFetch({ status: 402, json: { code: 'balance_exhausted' } });
+    const { ctx } = loadProviders({ fetch });
+    const error = await ctx.callLLM(HOSTED).catch(e => e);
+    expect(error.code).toBe('balance_exhausted');
+    expect(ctx.isEntitlementError(error)).toBe(true);
+    expect(error.message).toMatch(/out of coaching credit/i);
+  });
 
+  it('does not treat a server error as an entitlement problem', async () => {
     const { ctx: serverCtx } = loadProviders({ fetch: makeMockFetch({ status: 500, json: {} }) });
     const serverError = await serverCtx.callLLM(HOSTED).catch(e => e);
     expect(serverCtx.isEntitlementError(serverError)).toBe(false);
@@ -295,10 +307,11 @@ describe('entitlementIsActive', () => {
   const { ctx } = loadProviders();
   const DAY = 24 * 60 * 60 * 1000;
 
-  it('accepts an active subscription with time left', () => {
+  it('accepts an active entitlement with time left on a legacy expiry', () => {
     expect(ctx.entitlementIsActive({ active: true, expiresAt: Date.now() + DAY })).toBe(true);
   });
 
+  // The normal shape now: a coaching-credit entitlement never expires.
   it('accepts an active entitlement with no expiry at all', () => {
     expect(ctx.entitlementIsActive({ active: true, expiresAt: null })).toBe(true);
   });

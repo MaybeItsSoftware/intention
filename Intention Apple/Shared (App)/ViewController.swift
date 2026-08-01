@@ -74,7 +74,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         self.webView.configuration.userContentController.add(self, name: "controller")
         // Same bridge name the iOS options page uses, so Script.js can drive
         // the StoreKit purchase flow from the Mac app's own window — the Mac
-        // App Store build must sell Intention Pro through StoreKit too.
+        // App Store build must sell coaching credit through StoreKit too.
         self.webView.configuration.userContentController.add(self, name: "intentionNative")
         if #available(macOS 12.0, *) {
             Task { await IntentionStore.shared.start() }
@@ -416,10 +416,11 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
     // MARK: - In-app purchase bridge
     //
-    // Intention Pro is sold through StoreKit and nothing else. The web layer
-    // (billing.js) can list products, buy one, restore, read status, and open
-    // Apple's own subscription management sheet — every one of those is a
-    // StoreKit call made here, in the app.
+    // Coaching credit is sold through StoreKit and nothing else. The web layer
+    // (billing.js) can list products, buy one, restore (recover an interrupted
+    // purchase), or read status — every one of those is a StoreKit call made
+    // here, in the app. `manage` has no consumable equivalent and is a no-op
+    // stub, kept only for bridge compatibility.
 
     private func handleBillingMessage(action: String, dict: [String: Any], callbackId: String) {
         guard #available(iOS 15.0, macOS 12.0, *) else {
@@ -453,10 +454,10 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
                 self.invokeBridgeCallback(callbackId, result: result)
             }
         case "manage":
-            Task { @MainActor in
-                await IntentionStore.openManageSubscriptions()
-                self.invokeBridgeCallback(callbackId, result: ["ok": true])
-            }
+            // No-op: a consumable top-up has nothing to manage/cancel. Kept
+            // as a stub purely so ios-bridge.js/billing.js's `manage` call
+            // still resolves without needing a bridge contract change.
+            invokeBridgeCallback(callbackId, result: ["ok": true])
         default:
             invokeBridgeCallback(callbackId, result: ["error": "unknown billing action: \(action)"])
         }

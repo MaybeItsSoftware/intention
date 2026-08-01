@@ -40,7 +40,7 @@ async function renderCurrentView() {
 }
 
 // Only the bring-your-own-key providers are listed: the hosted provider isn't
-// something the user picks, it's what an active subscription routes to.
+// something the user picks, it's what a coaching-credit balance routes to.
 function populateProviderDropdowns() {
   for (const id of ['provider-select-2']) {
     const sel = document.getElementById(id);
@@ -139,7 +139,7 @@ function showSetupView() {
   document.getElementById('settings-view').hidden = true;
 
   // Apps get their own step, ahead of websites, wherever a native bridge exists.
-  // The last step turns the coach on: a subscription purchase, and nothing else
+  // The last step turns the coach on: buying coaching credit, and nothing else
   // on the builds a store reviews.
   setupStepOrder = (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING)
     ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-access']
@@ -252,7 +252,7 @@ ${reasonsAns || '(not configured)'}`;
 }
 
 // ---------------------------------------------------------------------------
-// AI access: subscription purchase, restore, and the paywall
+// AI access: coaching-credit purchase, restore, and the paywall
 // ---------------------------------------------------------------------------
 
 function getAccessState() {
@@ -290,13 +290,14 @@ async function verifyAndStore(platform, receipt) {
   }
 }
 
-// Re-checks a stored entitlement against the backend (renewal, cancellation,
-// refund, or a purchase that couldn't be verified when it was made).
+// Re-checks a stored entitlement against the backend — a purchase that
+// couldn't be verified when it was made, or (rarely) a stored token that's
+// simply missing. There's no renewal to pre-empt for a top-up, so unlike the
+// old subscription version, this only re-checks when something is actually
+// unresolved rather than on a timer.
 async function reconcileEntitlement(entitlement) {
   if (!entitlement) return null;
-  const stale = entitlement.pendingVerification
-    || !entitlement.token
-    || (entitlement.expiresAt && Date.now() > Number(entitlement.expiresAt) - 12 * 60 * 60 * 1000);
+  const stale = entitlement.pendingVerification || !entitlement.token;
   if (!stale) return entitlement;
   const backendUrl = await currentBackendUrl();
   const refreshed = await refreshEntitlement(entitlement, backendUrl);
@@ -333,7 +334,7 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
     onRestore: async () => {
       const result = await restorePurchases();
       if (!result || !result.receipt) {
-        throw new Error(result?.error || 'No previous purchase found on this account.');
+        throw new Error(result?.error || 'No pending purchase found.');
       }
       await verifyAndStore(result.platform || storePlatform(), result.receipt);
       await rerender();
@@ -347,18 +348,16 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       await rerender();
       await onAccessChanged();
     },
-    onManage: () => openStoreSubscriptionManagement(),
     onLinkBrowser: async () => {
       const backendUrl = await currentBackendUrl();
       return requestAccessCode(entitlement, backendUrl);
     },
-    // Only offered where no store sells the subscription (Chrome/Firefox);
-    // elsewhere the key field exists solely in Settings -> Advanced.
+    // Only offered where no store sells credit (Chrome/Firefox); elsewhere
+    // the key field exists solely in Settings -> Advanced.
     onUseOwnKey: BYOK_IS_PRIMARY ? () => openAdvancedKeySection() : null
   });
 
-  // A verified purchase that arrived while the app was closed, or a
-  // subscription that lapsed since last time, both settle here.
+  // A verified purchase that arrived while the app was closed settles here.
   const reconciled = await reconcileEntitlement(entitlement);
   if (entitlementSignature(reconciled) !== entitlementSignature(entitlement)) {
     await refreshAccessUI(containerId, { compact });
@@ -944,7 +943,7 @@ async function showSettingsView(state) {
     await refreshAccessUI('access-paywall');
   });
 
-  // Clearing the override drops straight back to the subscription route.
+  // Clearing the override drops straight back to the hosted/credit route.
   document.getElementById('clear-provider-btn').addEventListener('click', async () => {
     keyInput.value = '';
     await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });

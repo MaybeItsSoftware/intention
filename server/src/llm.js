@@ -59,7 +59,14 @@ async function callAnthropic({ system, messages, tools }, options) {
     if (block.type === 'text') text += block.text;
     else if (block.type === 'tool_use') toolCalls.push({ id: block.id, name: block.name, input: block.input });
   }
-  return { text, toolCalls };
+  return {
+    text,
+    toolCalls,
+    usage: {
+      inputTokens: data.usage?.input_tokens || 0,
+      outputTokens: data.usage?.output_tokens || 0
+    }
+  };
 }
 
 async function callOpenAI({ system, messages, tools }, options) {
@@ -93,5 +100,12 @@ async function callOpenAI({ system, messages, tools }, options) {
     try { input = JSON.parse(tc.function.arguments || '{}'); } catch (e) {}
     return { id: tc.id, name: tc.function.name, input };
   });
-  return { text: message.content || '', toolCalls };
+  return {
+    text: message.content || '',
+    toolCalls,
+    usage: {
+      inputTokens: data.usage?.prompt_tokens || 0,
+      outputTokens: data.usage?.completion_tokens || 0
+    }
+  };
 }

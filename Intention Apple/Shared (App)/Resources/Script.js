@@ -24,13 +24,17 @@ function openPreferences() {
 document.querySelector("button.open-preferences").addEventListener("click", openPreferences);
 
 // ---------------------------------------------------------------------------
-// Intention Pro (StoreKit)
+// Coaching credit (StoreKit)
 // ---------------------------------------------------------------------------
 //
-// The Mac app's window is where a Mac App Store user buys the subscription
-// that powers the coach — the Safari extension itself can't run StoreKit. Every
-// call here lands in ViewController.handleBillingMessage -> IntentionStore.
-// Deliberately: no link out, no mention of a key or a provider.
+// The Mac app's window is where a Mac App Store user buys the coaching-credit
+// top-up that powers the coach — the Safari extension itself can't run
+// StoreKit. Every call here lands in ViewController.handleBillingMessage ->
+// IntentionStore, which verifies-and-credits the purchase against the backend
+// directly (this window doesn't need to, and has no local balance to show —
+// the full paywall with a live balance lives in the extension's own
+// preferences page, via shared/billing.js). Deliberately: no link out, no
+// mention of a key or a provider.
 
 const billingCallbacks = {
     _nextId: 1,
@@ -77,42 +81,27 @@ async function refreshBilling() {
     const statusEl = document.getElementById("billing-status");
     const plansEl = document.getElementById("billing-plans");
     const restoreBtn = document.getElementById("billing-restore");
-    const manageBtn = document.getElementById("billing-manage");
     setBillingError("");
     plansEl.innerHTML = "";
 
-    const status = await billingCall("status");
-    if (status && status.available === false) {
-        statusEl.textContent = status.error || "In-app purchases aren't available on this Mac.";
-        restoreBtn.hidden = true;
-        manageBtn.hidden = true;
-        return;
-    }
-
-    if (status && status.entitled) {
-        const renews = status.expiresAt
-            ? ` Renews ${new Date(status.expiresAt).toLocaleDateString()}.`
-            : "";
-        statusEl.textContent = `Intention Pro is active.${renews}`;
-        restoreBtn.hidden = true;
-        manageBtn.hidden = false;
-        return;
-    }
-
-    statusEl.textContent = "Subscribe to turn on your coach in Safari.";
-    restoreBtn.hidden = false;
-    manageBtn.hidden = true;
-
     const result = await billingCall("products");
-    const products = (result && result.products) || [];
-    if (!products.length) {
-        setBillingError("Plans are unavailable right now. Please try again in a moment.");
+    if (result && result.available === false) {
+        statusEl.textContent = result.error || "In-app purchases aren't available on this Mac.";
+        restoreBtn.hidden = true;
         return;
     }
-    for (const product of products) {
+
+    statusEl.textContent = "Buy coaching credit to turn on your coach in Safari.";
+    restoreBtn.hidden = false;
+
+    const list = (result && result.products) || [];
+    if (!list.length) {
+        setBillingError("Top-ups are unavailable right now. Please try again in a moment.");
+        return;
+    }
+    for (const product of list) {
         const button = document.createElement("button");
-        const price = [product.price, product.period].filter(Boolean).join(" / ");
-        button.textContent = price ? `${product.title} — ${price}` : product.title;
+        button.textContent = product.price ? `${product.title} — ${product.price}` : product.title;
         button.addEventListener("click", () => purchase(product.id, button));
         plansEl.appendChild(button);
     }
@@ -139,12 +128,10 @@ document.getElementById("billing-restore").addEventListener("click", async () =>
     setBillingError("");
     const result = await billingCall("restore");
     if (!result || result.status !== "purchased") {
-        setBillingError(result?.error || "No previous purchase found on this Apple Account.");
+        setBillingError(result?.error || "No pending purchase found.");
         return;
     }
     await refreshBilling();
 });
-
-document.getElementById("billing-manage").addEventListener("click", () => billingCall("manage"));
 
 refreshBilling();

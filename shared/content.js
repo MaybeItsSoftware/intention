@@ -390,7 +390,7 @@ function renderSetupNeededUI() {
 // to the settings page, which does. The site stays blocked either way.
 function renderAccessNeededUI() {
   renderInterstitial(
-    "Intention Pro is needed to talk to your coach.",
+    "You need coaching credit to talk to your coach.",
     "Open settings",
   );
 }
@@ -550,7 +550,7 @@ function renderChatUI({ mode, domain }) {
       thinking.remove();
       sending = false;
       // Access lapsed mid-conversation: retrying can't help, so swap the chat
-      // for the pointer to where a subscription can be sorted out.
+      // for the pointer to where coaching credit can be sorted out.
       if (resp.locked) {
         renderAccessNeededUI();
         return;

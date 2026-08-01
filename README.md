@@ -2,7 +2,7 @@
 
 **Intention** is a browser extension and mobile app that puts an AI coach between you and the sites and apps that pull you away from what you actually want to do. Instead of a hard block or a weak timer, every visit is a short conversation: why are you here, is there something you're avoiding, what would actually serve you right now?
 
-The coach runs on **Intention Pro**, a subscription bought through the App Store or Google Play — nothing to configure, no keys to fetch. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
+The coach runs on **coaching credit**, a one-time top-up bought through the App Store or Google Play — nothing to configure, no keys to fetch, no recurring charge. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
 
 ## Get Intention
 
@@ -24,8 +24,8 @@ The coach runs on **Intention Pro**, a subscription bought through the App Store
 ## Features
 
 - **AI gatekeeper**: the LLM decides whether to grant access, via a structured `grant_access` tool call — not free-text the page could spoof.
-- **Subscription-powered coach**: Intention Pro is bought with Apple In-App Purchase / Google Play Billing and routes through Intention's backend, which holds the provider key.
-- **Optional custom key**: Settings → Advanced → Custom API key points the coach at your own Anthropic, OpenAI, Groq, or Gemini account instead, bypassing the subscription's limits.
+- **Credit-powered coach**: coaching credit is bought with Apple In-App Purchase / Google Play Billing as a repurchasable top-up and routes through Intention's backend, which holds the provider key.
+- **Optional custom key**: Settings → Advanced → Custom API key points the coach at your own Anthropic, OpenAI, Groq, or Gemini account instead, bypassing the coaching-credit balance.
 - **Context-via-chat guardrail**: the system prompt ("about you") is updated only through a conversation with the coach, using an `update_context` tool. Prevents trivial self-deception.
 - **Time awareness**: the AI sees minutes spent today on this site, today across all blocked sites, and across the past week.
 - **Exponential difficulty**: scaling skepticism per grant per day, plus a hard daily cap (3). Past the cap the chat continues for motivational support, but no more time is given out.
@@ -73,7 +73,7 @@ On first open, the options page walks you through:
 
 1. Add starter domains (and, on mobile, apps) to the blocklist.
 2. Tell your coach about yourself — who you are, your work, your goals, what patterns you want to stay mindful of.
-3. Turn the coach on with an Intention Pro subscription.
+3. Turn the coach on by buying coaching credit.
 
 After that, the options page only exposes the blocklist and access settings directly. Updating your context is done through the **Talk with your coach** button — the coach decides when the context has improved enough to save a new version.
 
@@ -83,7 +83,7 @@ Three states, resolved by `resolveAIRoute()` in `background.js` on every coachin
 
 | State | When | Where calls go |
 |-------|------|----------------|
-| `hosted` | An Intention Pro subscription is active | Intention's backend (`server/`), which holds the provider key |
+| `hosted` | A coaching-credit balance is available | Intention's backend (`server/`), which holds the provider key |
 | `byok` | A custom API key is set in Settings → Advanced | Straight from the device to that provider |
 | `locked` | Neither | Nowhere — the paywall replaces the chat, and the site stays blocked |
 

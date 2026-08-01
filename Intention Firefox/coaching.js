@@ -78,7 +78,7 @@ async function showPaywall() {
   // `hidden` would be ignored.
   document.getElementById('int-messages').style.display = 'none';
   document.getElementById('int-stats-row').style.display = 'none';
-  document.getElementById('int-heading').textContent = 'Intention Pro';
+  document.getElementById('int-heading').textContent = 'Coaching Credit';
   // The composer goes (there's nobody to talk to), but the close button stays:
   // inside the app's WebView it is the only way off this page. `hidden` alone
   // wouldn't do it — .int-composer's own `display: flex` outranks it.
@@ -117,7 +117,7 @@ async function showPaywall() {
     },
     onRestore: async () => {
       const result = await restorePurchases();
-      if (!result || !result.receipt) throw new Error(result?.error || 'No previous purchase found on this account.');
+      if (!result || !result.receipt) throw new Error(result?.error || 'No pending purchase found.');
       const entitlement = await verifyPurchase({
         platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
         receipt: result.receipt,
@@ -129,8 +129,7 @@ async function showPaywall() {
       const entitlement = await redeemAccessCode(code, config?.backendUrl);
       if (!entitlementIsActive(entitlement)) throw new Error("That code isn't active.");
       await afterUnlock(entitlement);
-    },
-    onManage: () => openStoreSubscriptionManagement()
+    }
   });
 }
 

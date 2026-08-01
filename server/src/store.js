@@ -1,10 +1,12 @@
-// Small pieces of server state: the daily message quota, and the one-time
-// codes that link a browser to a subscription bought in a mobile app.
+// Small pieces of server state: the coaching-credit balance ledger, the
+// idempotency record that stops a top-up being credited twice, and the
+// one-time codes that link a browser to credit bought in a mobile app.
 //
-// Both are in-memory by design — a single process is enough to run this, and
-// neither is worth a database on its own. Swap MemoryStore for a Redis/KV
+// All in-memory by design — a single process is enough to run this, and none
+// of it is worth a database on its own. Swap MemoryStore for a Redis/KV
 // implementation of the same four methods when running more than one instance;
-// nothing else has to change.
+// nothing else has to change (the balance and idempotency keys move with it
+// for free — they're just get/set).
 
 export class MemoryStore {
   constructor() {
@@ -41,18 +43,44 @@ export class MemoryStore {
 
 export const store = new MemoryStore();
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+// ---- Coaching-credit balance ----------------------------------------------
+//
+// Balance is microGBP (1,000,000 = £1.00) and never expires — unlike the old
+// daily quota, there's no calendar window to reset. Can go negative by the
+// cost of one message (the exact cost isn't known until the LLM responds);
+// that's expected prepaid-metering behaviour, not a bug.
 
-export function quotaKey(subject, now = new Date()) {
-  const day = now.toISOString().slice(0, 10);
-  return `quota:${day}:${subject}`;
+export function balanceKey(subject) {
+  return `balance:${subject}`;
 }
 
-// Returns { allowed, used, limit }.
-export function consumeQuota(subject, limit, backing = store) {
-  const key = quotaKey(subject);
-  const used = backing.increment(key, DAY_MS);
-  return { allowed: used <= limit, used, limit };
+export function getBalanceMicros(subject, backing = store) {
+  return Number(backing.get(balanceKey(subject)) || 0);
+}
+
+export function adjustBalance(subject, deltaMicros, backing = store) {
+  const next = Number(backing.get(balanceKey(subject)) || 0) + deltaMicros;
+  backing.set(balanceKey(subject), next, null);
+  return next;
+}
+
+// ---- Purchase idempotency --------------------------------------------------
+//
+// Keyed by the store transaction/order id alone, never combined with subject:
+// the same account legitimately tops up repeatedly, but each individual
+// purchase must be creditable exactly once. Check-then-set with no await in
+// between (both are synchronous Map ops) so nothing can interleave.
+
+export function creditKey(platform, creditId) {
+  return `credited:${platform}:${creditId}`;
+}
+
+export function alreadyCredited(platform, creditId, backing = store) {
+  return Boolean(backing.get(creditKey(platform, creditId)));
+}
+
+export function markCredited(platform, creditId, backing = store) {
+  backing.set(creditKey(platform, creditId), true, null);
 }
 
 // ---- Browser access codes -------------------------------------------------
