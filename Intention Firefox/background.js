@@ -55,16 +55,9 @@ async function syncBlockingRules() {
     const { blockedDomains = [] } = await getStorage(['blockedDomains']);
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
-    
-    const isSafari = typeof navigator !== 'undefined' && 
-                     navigator.userAgent && 
-                     navigator.userAgent.includes('Safari') && 
-                     !navigator.userAgent.includes('Chrome') && 
-                     !navigator.userAgent.includes('Chromium');
 
-    const addRules = isSafari ? [] : blockedDomains.map((domain, index) => {
+    const addRules = blockedDomains.map((domain, index) => {
       const ruleId = 1000 + index;
-      const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
       return {
         id: ruleId,
         priority: 1,
@@ -75,7 +68,7 @@ async function syncBlockingRules() {
           }
         },
         condition: {
-          regexFilter: `^https?://(?:[^/]*\\.)?${escaped}(?:/.*)?$`,
+          urlFilter: `||${domain}^`,
           resourceTypes: ['main_frame']
         }
       };
@@ -117,7 +110,6 @@ async function syncBlockingRules() {
 async function registerSessionRule(tabId, domain, minutes) {
   try {
     const ruleId = tabId;
-    const escaped = domain.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
     const addRules = [{
       id: ruleId,
       priority: 2,
@@ -125,7 +117,7 @@ async function registerSessionRule(tabId, domain, minutes) {
         type: 'allow'
       },
       condition: {
-        regexFilter: `^https?://(?:[^/]*\\.)?${escaped}(?:/.*)?$`,
+        urlFilter: `||${domain}^`,
         tabIds: [tabId],
         resourceTypes: ['main_frame']
       }
