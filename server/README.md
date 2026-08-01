@@ -22,9 +22,14 @@ npm start               # or: npm run dev
    pinned to Apple's, and then re-read through the App Store Server API's Get
    Transaction Info for a refund. Play tokens are exchanged with the Play
    Developer API's one-time-products endpoint. Each purchase is credited
-   exactly once (keyed by the transaction/order id), and the credited amount is
-   a fixed server-side constant per product tier (`server/src/config.js`'s
-   `topUps` table) — never derived from what the store reports as paid.
+   exactly once (keyed by the transaction/order id). The credited amount is
+   never the store price 1:1 — `creditMicrosForTopUp()` in
+   `server/src/config.js` nets out the store's commission
+   (`storeCommission.apple`/`.google`) and Intention's own margin
+   (`topUpSkimRate`) first, so the store's cut is never handed out as free
+   coaching credit. The balance is shown to users as "coaching tokens"
+   (`tokensPerGbp`), not a £ figure — a currency amount would look like a
+   broken conversion once it no longer matches the price paid 1:1.
 2. **Mints an entitlement token.** A short HMAC-signed statement — account
    subject and product — that the client sends on every coaching call. It
    proves "known, verified purchaser," not "has balance": balance is always
@@ -68,6 +73,15 @@ constants used to compute a deduction all live in `server/src/config.js` —
 see the `topUps`/`llm.pricing`/`llm.usdToGbpRate`/`llm.marginMultiplier`
 fields there; override via `INTENTION_TOPUPS`/`INTENTION_USD_TO_GBP_RATE`/
 `INTENTION_MARGIN_MULTIPLIER` if the defaults ever need to change.
+
+What a top-up actually credits is a second, separate calculation from what a
+chat message deducts. `storeCommission.apple`/`.google` (default 15%/15% —
+override via `INTENTION_APPLE_COMMISSION_RATE`/`INTENTION_GOOGLE_COMMISSION_RATE`)
+and `topUpSkimRate` (default 20% — `INTENTION_TOPUP_SKIM_RATE`) both come off
+a top-up's face price before any of it becomes spendable balance; see
+`creditMicrosForTopUp()`. `tokensPerGbp` (default 1000 —
+`INTENTION_TOKENS_PER_GBP`) is display-only, converting that spendable
+balance into the token count shown on the paywall.
 
 `INTENTION_ALLOW_UNVERIFIED_RECEIPTS=1` skips store verification for local work.
 It is ignored unless `NODE_ENV=development`, and it is logged loudly at boot.

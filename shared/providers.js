@@ -93,8 +93,8 @@ async function callLLM({ provider, apiKey, model, system, messages, tools, acces
 // coaching-credit balance and forwards the conversation to the LLM provider
 // under Intention's key. `text`/`toolCalls` match the shape every adapter
 // below returns, so nothing downstream knows which route it came from;
-// `balanceMicros`/`balanceGbp` are hosted-route-only, for the UI to show the
-// remaining balance after each message.
+// `balanceMicros`/`balanceGbp`/`balanceTokens` are hosted-route-only, for the
+// UI to show the remaining balance after each message.
 //
 // Entitlement problems are surfaced with a `code` so background.js can mark the
 // stored entitlement stale and put the paywall back up, rather than showing the
@@ -134,7 +134,8 @@ async function callIntentionHosted({ accessToken, backendUrl, model, system, mes
     text: (data && data.text) || '',
     toolCalls: (data && data.toolCalls) || [],
     balanceMicros: Number((data && data.balanceMicros) || 0),
-    balanceGbp: Number((data && data.balanceGbp) || 0)
+    balanceGbp: Number((data && data.balanceGbp) || 0),
+    balanceTokens: Number((data && data.balanceTokens) || 0)
   };
 }
 

@@ -50,8 +50,31 @@ export const config = {
     marginMultiplier: Number(process.env.INTENTION_MARGIN_MULTIPLIER || 1.15)
   },
 
+  // The cut each store takes off a top-up's face price before Intention ever
+  // sees the money. Apple: 15% under the App Store Small Business Program
+  // (net proceeds under $1M/yr — enroll in App Store Connect), else 30%.
+  // Google: 15% is the automatic rate on the first $1M/yr, 30% above it.
+  // A top-up must never credit the face price 1:1 against these — that gives
+  // away the store's cut as free coaching credit on every purchase.
+  storeCommission: {
+    apple: Number(process.env.INTENTION_APPLE_COMMISSION_RATE || 0.15),
+    google: Number(process.env.INTENTION_GOOGLE_COMMISSION_RATE || 0.15)
+  },
+  // Intention's own margin, skimmed off what's left of a top-up after the
+  // store's cut. Unlike llm.marginMultiplier (drift buffer, kept small), this
+  // is a deliberate profit margin.
+  topUpSkimRate: Number(process.env.INTENTION_TOPUP_SKIM_RATE || 0.20),
+  // Display unit only: how many "coaching tokens" a user is shown per £1 of
+  // spendable balance. The ledger itself stays in microGBP-equivalent
+  // internally (server/src/store.js) — this constant never changes what a
+  // message actually costs, only the number printed on the paywall.
+  tokensPerGbp: Number(process.env.INTENTION_TOKENS_PER_GBP || 1000),
+
   // The three coaching-credit top-up tiers, one consumable SKU per platform
-  // per tier. Override with INTENTION_TOPUPS="amountGbp:appleId:googleId,...".
+  // per tier. `priceGbp` is the face price charged in the store — what
+  // actually gets credited is computed by creditMicrosForTopUp() below, after
+  // storeCommission and topUpSkimRate both come off. Override with
+  // INTENTION_TOPUPS="priceGbp:appleId:googleId,...".
   topUps: parseTopUps(),
 
   apple: {
@@ -82,20 +105,35 @@ export function findTopUp(platform, productId) {
   return config.topUps.find(t => t[field] === productId) || null;
 }
 
+// What a top-up's face price actually credits, once the store's commission
+// and Intention's own skim both come off. Computed per-platform (not baked
+// into the topUps table) because Apple and Google commission rates can
+// differ even for the same nominal price.
+export function creditMicrosForTopUp(platform, priceGbp) {
+  const commissionRate = config.storeCommission[platform] ?? 0.15;
+  const netProceedsGbp = priceGbp * (1 - commissionRate);
+  const spendableGbp = netProceedsGbp * (1 - config.topUpSkimRate);
+  return Math.round(spendableGbp * 1_000_000);
+}
+
+// Display-only conversion from the ledger's microGBP-equivalent balance to
+// the "coaching tokens" figure shown in the UI.
+export function microsToTokens(micros) {
+  return Math.round((micros / 1_000_000) * config.tokensPerGbp);
+}
+
 function parseTopUps() {
   const DEFAULTS = [
-    { amountGbp: 1, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit1', googleProductId: 'intention_coach_credit_1' },
-    { amountGbp: 2, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit2', googleProductId: 'intention_coach_credit_2' },
-    { amountGbp: 5, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit5', googleProductId: 'intention_coach_credit_5' }
+    { priceGbp: 1, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit1', googleProductId: 'intention_coach_credit_1' },
+    { priceGbp: 2, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit2', googleProductId: 'intention_coach_credit_2' },
+    { priceGbp: 5, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit5', googleProductId: 'intention_coach_credit_5' }
   ];
   const raw = process.env.INTENTION_TOPUPS;
-  const tiers = raw
-    ? raw.split(',').map(entry => {
-        const [amountGbp, appleProductId, googleProductId] = entry.split(':').map(s => s.trim());
-        return { amountGbp: Number(amountGbp), appleProductId, googleProductId };
-      })
-    : DEFAULTS;
-  return tiers.map(t => ({ ...t, creditMicros: Math.round(t.amountGbp * 1_000_000) }));
+  if (!raw) return DEFAULTS;
+  return raw.split(',').map(entry => {
+    const [priceGbp, appleProductId, googleProductId] = entry.split(':').map(s => s.trim());
+    return { priceGbp: Number(priceGbp), appleProductId, googleProductId };
+  });
 }
 
 export function assertBootConfig(log = console) {

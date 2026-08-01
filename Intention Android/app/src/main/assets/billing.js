@@ -166,6 +166,7 @@ function normalizeEntitlement(raw) {
     receipt: raw.receipt || null,
     balanceMicros: Number(raw.balanceMicros || 0),
     balanceGbp: Number(raw.balanceGbp || 0),
+    balanceTokens: Number(raw.balanceTokens || 0),
     pendingVerification: !!raw.pendingVerification,
     lastError: raw.lastError || '',
     updatedAt: Date.now()
@@ -175,24 +176,29 @@ function normalizeEntitlement(raw) {
 // What actually matters about an entitlement, for "did this change?" checks.
 // A plain deep-compare is useless here: normalizeEntitlement re-stamps
 // `updatedAt` every time, so every refresh would look like a change and the
-// caller would re-render (and re-hit the backend) forever. balanceGbp
-// (rounded to pence) is included so a balance change after a chat message is
-// itself detected as a change, even when active/token/productId all hold.
+// caller would re-render (and re-hit the backend) forever. balanceTokens is
+// included so a balance change after a chat message is itself detected as a
+// change, even when active/token/productId all hold.
 function entitlementSignature(entitlement) {
   if (!entitlement) return 'none';
   return [
     entitlement.active ? 1 : 0,
     entitlement.token || '',
     entitlement.productId || '',
-    entitlement.balanceGbp || 0,
+    entitlement.balanceTokens || 0,
     entitlement.pendingVerification ? 1 : 0
   ].join('|');
 }
 
+// Deliberately shown as "tokens," not a £ figure: what a top-up actually
+// credits is net of the store's commission and Intention's own margin
+// (server/src/config.js's creditMicrosForTopUp), so a currency amount here
+// would look like a broken conversion rather than the game-currency balance
+// it actually is.
 function formatBalance(entitlement) {
   if (!entitlement) return '';
-  const gbp = Number(entitlement.balanceGbp || 0);
-  return `You have £${gbp.toFixed(2)} of coaching credit.`;
+  const tokens = Number(entitlement.balanceTokens || 0);
+  return `You have ${tokens.toLocaleString()} coaching tokens.`;
 }
 
 // ---- Paywall ---------------------------------------------------------------

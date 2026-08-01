@@ -438,6 +438,7 @@ async function saveEntitlement(entitlement) {
     receipt: entitlement.receipt || null,
     balanceMicros: Number(entitlement.balanceMicros || 0),
     balanceGbp: Number(entitlement.balanceGbp || 0),
+    balanceTokens: Number(entitlement.balanceTokens || 0),
     pendingVerification: !!entitlement.pendingVerification,
     lastError: String(entitlement.lastError || ''),
     updatedAt: Date.now()
@@ -643,6 +644,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         ...entitlement,
         balanceMicros: llmResponse.balanceMicros,
         balanceGbp: llmResponse.balanceGbp,
+        balanceTokens: llmResponse.balanceTokens,
         updatedAt: Date.now()
       };
     }, null);

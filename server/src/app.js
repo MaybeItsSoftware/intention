@@ -1,4 +1,4 @@
-import { config, findTopUp } from './config.js';
+import { config, findTopUp, creditMicrosForTopUp, microsToTokens } from './config.js';
 import { verifyAppleReceipt, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, TokenError } from './tokens.js';
@@ -89,7 +89,7 @@ async function creditTopUp(platform, subject, result, backing, deps = {}) {
   if (!alreadyCredited(platform, result.creditId, backing)) {
     markCredited(platform, result.creditId, backing);
     const topUp = findTopUp(platform, result.productId);
-    if (topUp) adjustBalance(subject, topUp.creditMicros, backing);
+    if (topUp) adjustBalance(subject, creditMicrosForTopUp(platform, topUp.priceGbp), backing);
   }
   if (platform === 'google') {
     // Google's own authoritative "this token is spent" record — insurance
@@ -110,6 +110,7 @@ function entitlementResponse(subject, platform, productId, backing) {
     productId: productId || '',
     balanceMicros,
     balanceGbp: microsToGbp(balanceMicros),
+    balanceTokens: microsToTokens(balanceMicros),
     // A token proves "known, verified purchaser," not "has balance" — it's
     // always issued so a zero-balance account can still refresh/top up.
     token: signToken(payload, config.tokenSecret, config.tokenTtlMs)
@@ -167,7 +168,8 @@ async function chatEndpoint(headers, body, deps, backing) {
       error: "You're out of coaching credit. Buy more to keep talking to your coach.",
       code: 'balance_exhausted',
       balanceMicros: 0,
-      balanceGbp: 0
+      balanceGbp: 0,
+      balanceTokens: 0
     });
   }
 
@@ -192,7 +194,8 @@ async function chatEndpoint(headers, body, deps, backing) {
     text: result.text || '',
     toolCalls: result.toolCalls || [],
     balanceMicros: newBalance,
-    balanceGbp: microsToGbp(newBalance)
+    balanceGbp: microsToGbp(newBalance),
+    balanceTokens: microsToTokens(newBalance)
   });
 }
 

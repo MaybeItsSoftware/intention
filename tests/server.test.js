@@ -24,8 +24,13 @@ const {
 } = await import('../server/src/store.js');
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
+const { creditMicrosForTopUp } = await import('../server/src/config.js');
 
 const SECRET = 'test-secret-do-not-use';
+
+// What the £1 tier actually credits once the default store commission (15%)
+// and top-up skim (20%) both come off — not the £1 face value 1:1.
+const CREDIT1 = creditMicrosForTopUp('apple', 1);
 
 // Matches config.js's default topUps table (£1 tier).
 const appleResult = {
@@ -101,8 +106,8 @@ describe('POST /v1/entitlement/verify', () => {
     expect(res.status).toBe(200);
     expect(res.body.active).toBe(true);
     expect(res.body.productId).toBe(appleResult.productId);
-    expect(res.body.balanceMicros).toBe(1_000_000);
-    expect(res.body.balanceGbp).toBe(1);
+    expect(res.body.balanceMicros).toBe(CREDIT1);
+    expect(res.body.balanceGbp).toBeLessThan(1); // net of store commission + skim, not the £1 face value
     expect(verifyToken(res.body.token, SECRET).platform).toBe('apple');
   });
 
@@ -110,7 +115,7 @@ describe('POST /v1/entitlement/verify', () => {
     const d = deps();
     await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
     const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
-    expect(res.body.balanceMicros).toBe(1_000_000); // not 2,000,000 — same creditId
+    expect(res.body.balanceMicros).toBe(CREDIT1); // not 2x — same creditId
   });
 
   it('accumulates balance across different purchases from the same account', async () => {
@@ -118,7 +123,7 @@ describe('POST /v1/entitlement/verify', () => {
     await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-1' }, {}, d);
     const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-2' }, {},
       deps({ store: d.store, verifyApple: async () => ({ ...appleResult, creditId: 'txn-2' }) }));
-    expect(res.body.balanceMicros).toBe(2_000_000);
+    expect(res.body.balanceMicros).toBe(CREDIT1 * 2);
   });
 
   it('always issues a token, even once the balance runs out', async () => {
@@ -161,7 +166,7 @@ describe('POST /v1/entitlement/refresh', () => {
     const d = deps();
     const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
     const refreshed = await post('/v1/entitlement/refresh', { token: verified.body.token }, {}, d);
-    expect(refreshed.body.balanceMicros).toBe(1_000_000);
+    expect(refreshed.body.balanceMicros).toBe(CREDIT1);
   });
 
   it('reflects a balance changed by an intervening /v1/chat call', async () => {
@@ -170,7 +175,7 @@ describe('POST /v1/entitlement/refresh', () => {
     await post('/v1/chat', { messages: [{ role: 'user', content: 'hi' }] },
       { authorization: `Bearer ${verified.body.token}` }, d);
     const refreshed = await post('/v1/entitlement/refresh', { token: verified.body.token }, {}, d);
-    expect(refreshed.body.balanceMicros).toBeLessThan(1_000_000);
+    expect(refreshed.body.balanceMicros).toBeLessThan(CREDIT1);
   });
 
   it('rejects a forged token', async () => {
@@ -190,7 +195,7 @@ describe('browser access codes', () => {
 
     const redeemed = await post('/v1/entitlement/redeem', { code: issued.body.code }, {}, d);
     expect(redeemed.status).toBe(200);
-    expect(redeemed.body.balanceMicros).toBe(1_000_000);
+    expect(redeemed.body.balanceMicros).toBe(CREDIT1);
     expect(verifyToken(redeemed.body.token, SECRET).sub).toBe(verifyToken(verified.body.token, SECRET).sub);
 
     // Single use: the second attempt finds nothing.
