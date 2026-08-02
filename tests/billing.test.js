@@ -59,7 +59,7 @@ describe('entitlementSignature', () => {
   // re-render/re-verify loop.
   it('ignores updatedAt so a re-normalized entitlement compares equal', () => {
     const { ctx } = loadBilling();
-    const raw = { active: true, token: 't', productId: 'p', balanceTokens: 680 };
+    const raw = { active: true, token: 't', productId: 'p', balanceCredits: 680 };
     const a = ctx.normalizeEntitlement(raw);
     const b = ctx.normalizeEntitlement({ ...raw });
     expect(b.updatedAt).toBeGreaterThanOrEqual(a.updatedAt);
@@ -68,7 +68,7 @@ describe('entitlementSignature', () => {
 
   it('notices the changes that actually matter, including a balance-only change', () => {
     const { ctx } = loadBilling();
-    const base = ctx.normalizeEntitlement({ active: true, token: 't', productId: 'p', balanceTokens: 680 });
+    const base = ctx.normalizeEntitlement({ active: true, token: 't', productId: 'p', balanceCredits: 680 });
     const sig = ctx.entitlementSignature(base);
     expect(ctx.entitlementSignature({ ...base, active: false })).not.toBe(sig);
     expect(ctx.entitlementSignature({ ...base, token: 'other' })).not.toBe(sig);
@@ -76,7 +76,7 @@ describe('entitlementSignature', () => {
     expect(ctx.entitlementSignature({ ...base, pendingVerification: true })).not.toBe(sig);
     // The core regression this needs to catch: a balance change after a chat
     // message, with active/token/productId all unchanged.
-    expect(ctx.entitlementSignature({ ...base, balanceTokens: 340 })).not.toBe(sig);
+    expect(ctx.entitlementSignature({ ...base, balanceCredits: 340 })).not.toBe(sig);
     expect(ctx.entitlementSignature(null)).toBe('none');
   });
 });
@@ -85,7 +85,7 @@ describe('normalizeEntitlement', () => {
   it('coerces a backend response into the stored shape', () => {
     const { ctx } = loadBilling();
     const e = ctx.normalizeEntitlement({
-      active: 1, source: 'apple', receipt: 'jws', balanceMicros: 1000000, balanceGbp: 1, balanceTokens: 1000
+      active: 1, source: 'apple', receipt: 'jws', balanceMicros: 1000000, balanceGbp: 1, balanceCredits: 1000
     });
     expect(e.active).toBe(true);
     // The server never sends this for a top-up — stays falsy so
@@ -96,7 +96,7 @@ describe('normalizeEntitlement', () => {
     expect(e.receipt).toBe('jws');
     expect(e.balanceMicros).toBe(1000000);
     expect(e.balanceGbp).toBe(1);
-    expect(e.balanceTokens).toBe(1000);
+    expect(e.balanceCredits).toBe(1000);
   });
 
   it('returns null for nothing', () => {

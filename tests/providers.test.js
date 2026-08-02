@@ -251,7 +251,7 @@ describe('callIntentionHosted', () => {
   it('returns the same { text, toolCalls } shape the key-based adapters do, plus the live balance', async () => {
     const fetch = makeMockFetch({
       text: 'ok', toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }],
-      balanceMicros: 500000, balanceGbp: 0.5, balanceTokens: 500
+      balanceMicros: 500000, balanceGbp: 0.5, balanceCredits: 500
     });
     const { ctx } = loadProviders({ fetch });
     const res = await ctx.callLLM(HOSTED);
@@ -260,7 +260,7 @@ describe('callIntentionHosted', () => {
       toolCalls: [{ id: '1', name: 'grant_access', input: { minutes: 5 } }],
       balanceMicros: 500000,
       balanceGbp: 0.5,
-      balanceTokens: 500
+      balanceCredits: 500
     });
   });
 

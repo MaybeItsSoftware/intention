@@ -64,11 +64,11 @@ export const config = {
   // store's cut. Unlike llm.marginMultiplier (drift buffer, kept small), this
   // is a deliberate profit margin.
   topUpSkimRate: Number(process.env.INTENTION_TOPUP_SKIM_RATE || 0.20),
-  // Display unit only: how many "coaching tokens" a user is shown per £1 of
+  // Display unit only: how many "coaching credits" a user is shown per £1 of
   // spendable balance. The ledger itself stays in microGBP-equivalent
   // internally (server/src/store.js) — this constant never changes what a
   // message actually costs, only the number printed on the paywall.
-  tokensPerGbp: Number(process.env.INTENTION_TOKENS_PER_GBP || 1000),
+  creditsPerGbp: Number(process.env.INTENTION_CREDITS_PER_GBP || 1000),
 
   // The three coaching-credit top-up tiers, one consumable SKU per platform
   // per tier. `priceGbp` is the face price charged in the store — what
@@ -117,9 +117,9 @@ export function creditMicrosForTopUp(platform, priceGbp) {
 }
 
 // Display-only conversion from the ledger's microGBP-equivalent balance to
-// the "coaching tokens" figure shown in the UI.
-export function microsToTokens(micros) {
-  return Math.round((micros / 1_000_000) * config.tokensPerGbp);
+// the "coaching credits" figure shown in the UI.
+export function microsToCredits(micros) {
+  return Math.round((micros / 1_000_000) * config.creditsPerGbp);
 }
 
 function parseTopUps() {

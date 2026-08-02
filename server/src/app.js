@@ -1,4 +1,4 @@
-import { config, findTopUp, creditMicrosForTopUp, microsToTokens } from './config.js';
+import { config, findTopUp, creditMicrosForTopUp, microsToCredits } from './config.js';
 import { verifyAppleReceipt, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, TokenError } from './tokens.js';
@@ -110,7 +110,7 @@ function entitlementResponse(subject, platform, productId, backing) {
     productId: productId || '',
     balanceMicros,
     balanceGbp: microsToGbp(balanceMicros),
-    balanceTokens: microsToTokens(balanceMicros),
+    balanceCredits: microsToCredits(balanceMicros),
     // A token proves "known, verified purchaser," not "has balance" — it's
     // always issued so a zero-balance account can still refresh/top up.
     token: signToken(payload, config.tokenSecret, config.tokenTtlMs)
@@ -169,7 +169,7 @@ async function chatEndpoint(headers, body, deps, backing) {
       code: 'balance_exhausted',
       balanceMicros: 0,
       balanceGbp: 0,
-      balanceTokens: 0
+      balanceCredits: 0
     });
   }
 
@@ -195,7 +195,7 @@ async function chatEndpoint(headers, body, deps, backing) {
     toolCalls: result.toolCalls || [],
     balanceMicros: newBalance,
     balanceGbp: microsToGbp(newBalance),
-    balanceTokens: microsToTokens(newBalance)
+    balanceCredits: microsToCredits(newBalance)
   });
 }
 

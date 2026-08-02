@@ -166,7 +166,7 @@ function normalizeEntitlement(raw) {
     receipt: raw.receipt || null,
     balanceMicros: Number(raw.balanceMicros || 0),
     balanceGbp: Number(raw.balanceGbp || 0),
-    balanceTokens: Number(raw.balanceTokens || 0),
+    balanceCredits: Number(raw.balanceCredits || 0),
     pendingVerification: !!raw.pendingVerification,
     lastError: raw.lastError || '',
     updatedAt: Date.now()
@@ -176,7 +176,7 @@ function normalizeEntitlement(raw) {
 // What actually matters about an entitlement, for "did this change?" checks.
 // A plain deep-compare is useless here: normalizeEntitlement re-stamps
 // `updatedAt` every time, so every refresh would look like a change and the
-// caller would re-render (and re-hit the backend) forever. balanceTokens is
+// caller would re-render (and re-hit the backend) forever. balanceCredits is
 // included so a balance change after a chat message is itself detected as a
 // change, even when active/token/productId all hold.
 function entitlementSignature(entitlement) {
@@ -185,7 +185,7 @@ function entitlementSignature(entitlement) {
     entitlement.active ? 1 : 0,
     entitlement.token || '',
     entitlement.productId || '',
-    entitlement.balanceTokens || 0,
+    entitlement.balanceCredits || 0,
     entitlement.pendingVerification ? 1 : 0
   ].join('|');
 }
@@ -197,8 +197,8 @@ function entitlementSignature(entitlement) {
 // it actually is.
 function formatBalance(entitlement) {
   if (!entitlement) return '';
-  const tokens = Number(entitlement.balanceTokens || 0);
-  return `You have ${tokens.toLocaleString()} coaching tokens.`;
+  const credits = Number(entitlement.balanceCredits || 0);
+  return `You have ${credits.toLocaleString()} coaching credits.`;
 }
 
 // ---- Paywall ---------------------------------------------------------------

@@ -27,8 +27,8 @@ npm start               # or: npm run dev
    `server/src/config.js` nets out the store's commission
    (`storeCommission.apple`/`.google`) and Intention's own margin
    (`topUpSkimRate`) first, so the store's cut is never handed out as free
-   coaching credit. The balance is shown to users as "coaching tokens"
-   (`tokensPerGbp`), not a £ figure — a currency amount would look like a
+   coaching credit. The balance is shown to users as "coaching credits"
+   (`creditsPerGbp`), not a £ figure — a currency amount would look like a
    broken conversion once it no longer matches the price paid 1:1.
 2. **Mints an entitlement token.** A short HMAC-signed statement — account
    subject and product — that the client sends on every coaching call. It
@@ -79,8 +79,8 @@ chat message deducts. `storeCommission.apple`/`.google` (default 15%/15% —
 override via `INTENTION_APPLE_COMMISSION_RATE`/`INTENTION_GOOGLE_COMMISSION_RATE`)
 and `topUpSkimRate` (default 20% — `INTENTION_TOPUP_SKIM_RATE`) both come off
 a top-up's face price before any of it becomes spendable balance; see
-`creditMicrosForTopUp()`. `tokensPerGbp` (default 1000 —
-`INTENTION_TOKENS_PER_GBP`) is display-only, converting that spendable
+`creditMicrosForTopUp()`. `creditsPerGbp` (default 1000 —
+`INTENTION_CREDITS_PER_GBP`) is display-only, converting that spendable
 balance into the token count shown on the paywall.
 
 `INTENTION_ALLOW_UNVERIFIED_RECEIPTS=1` skips store verification for local work.
