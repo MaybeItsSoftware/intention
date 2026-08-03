@@ -18,6 +18,38 @@
         <span id="setup-progress-label" class="setup-progress-label">Step 1 of 4</span>
       </div>
 
+      <section class="card setup-step" id="setup-step-mode" hidden>
+        <h3>How should blocking work?</h3>
+        <p class="subtitle">You can change this later, or set it per site or app.</p>
+        <div class="mode-choice-grid">
+          <button type="button" class="mode-choice-card" id="setup-mode-coach-btn" data-mode="coach">
+            <strong>Coach (AI-guided)</strong>
+            <span>Talk to an AI coach to get through a block or change your rules. Needs your own LLM API key.</span>
+          </button>
+          <button type="button" class="mode-choice-card" id="setup-mode-simple-btn" data-mode="simple">
+            <strong>Simple (no AI)</strong>
+            <span>No API key needed. Choose a hard block or a self-serve timed pass.</span>
+          </button>
+        </div>
+        <div id="setup-simple-options" hidden>
+          <label>When you hit a block</label>
+          <div class="mode-choice-grid">
+            <button type="button" class="mode-choice-card" id="setup-simple-hard-btn" data-behavior="hard">
+              <strong>Hard block</strong>
+              <span>No self-serve unlock. You'd need to change settings to get through.</span>
+            </button>
+            <button type="button" class="mode-choice-card" id="setup-simple-pass-btn" data-behavior="pass">
+              <strong>Timed pass</strong>
+              <span>A "Take N minutes" button grants yourself limited access.</span>
+            </button>
+          </div>
+          <div id="setup-simple-minutes-group" class="input-group" hidden>
+            <label for="setup-simple-minutes-input">Minutes per pass</label>
+            <input type="number" id="setup-simple-minutes-input" min="1" max="180" value="10">
+          </div>
+        </div>
+      </section>
+
       <section class="card setup-step" id="setup-step-apps" hidden>
         <h3>Which apps pull you in?</h3>
         <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
@@ -104,6 +136,40 @@
         </div>
 
         <div class="settings-column">
+          <section class="card" id="blocking-mode-card" data-section="blocking">
+            <h2>Blocking mode</h2>
+            <p class="subtitle">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
+            <div class="mode-choice-grid">
+              <button type="button" class="mode-choice-card" id="settings-mode-coach-btn" data-mode="coach">
+                <strong>Coach (AI-guided)</strong>
+                <span>Talk to your coach to get through a block or change rules.</span>
+              </button>
+              <button type="button" class="mode-choice-card" id="settings-mode-simple-btn" data-mode="simple">
+                <strong>Simple (no AI)</strong>
+                <span>No API key needed.</span>
+              </button>
+            </div>
+            <div id="settings-simple-options" hidden>
+              <label>Default behavior when you hit a block</label>
+              <div class="mode-choice-grid">
+                <button type="button" class="mode-choice-card" id="settings-simple-hard-btn" data-behavior="hard">
+                  <strong>Hard block</strong>
+                  <span>No self-serve unlock.</span>
+                </button>
+                <button type="button" class="mode-choice-card" id="settings-simple-pass-btn" data-behavior="pass">
+                  <strong>Timed pass</strong>
+                  <span>"Take N minutes" self-serve button.</span>
+                </button>
+              </div>
+              <div id="settings-simple-minutes-group" class="input-group" hidden>
+                <label for="settings-simple-minutes-input">Minutes per pass</label>
+                <input type="number" id="settings-simple-minutes-input" min="1" max="180" value="10">
+              </div>
+            </div>
+            <button id="save-blocking-mode-btn" class="secondary" style="width: 100%; margin-top: 10px;">Save</button>
+            <div id="blocking-mode-status" class="status"></div>
+          </section>
+
           <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
             <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
             <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>

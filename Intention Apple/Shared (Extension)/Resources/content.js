@@ -136,6 +136,22 @@ const OVERLAY_CSS = `
 
 #intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
 
+#intention-root .int-primary-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #e7e7ea;
+  font-size: 15px;
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root .int-primary-btn:hover { background: rgba(255, 255, 255, 0.06); }
+#intention-root .int-primary-btn:disabled { opacity: 0.6; cursor: default; }
+
 #intention-root .int-retry-row { margin-top: 4px; }
 
 #intention-root .int-retry-btn {
@@ -244,6 +260,7 @@ function injectOverlayStyle() {
 
 let currentSession = null;
 let matchedDomain = null;
+let matchedBlockConfig = null;
 let handled = false;
 
 function showGate(why) {
@@ -256,6 +273,7 @@ function showGate(why) {
     renderChatUI({
       mode: "gate",
       domain: matchedDomain || window.location.hostname,
+      blockConfig: matchedBlockConfig,
     });
   } catch (e) {
     console.error(INT_LOG, "failed to render gate:", e);
@@ -300,6 +318,7 @@ function runCheck() {
         }
 
         matchedDomain = response.matchedDomain;
+        matchedBlockConfig = response.blockConfig || null;
 
         if (response.session) {
           if (handled) return;
@@ -420,10 +439,16 @@ function renderInterstitial(subtitle, buttonLabel) {
   });
 }
 
-function renderChatUI({ mode, domain }) {
+function renderChatUI({ mode, domain, blockConfig }) {
   if (document.getElementById("intention-root")) {
     document.getElementById("intention-root").remove();
   }
+
+  if (blockConfig && blockConfig.mode === "simple") {
+    renderSimpleGateUI({ mode, domain, blockConfig });
+    return;
+  }
+
   const seed =
     mode === "gate"
       ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
@@ -611,6 +636,84 @@ function renderChatUI({ mode, domain }) {
   inputEl.focus();
 }
 
+// No-AI counterpart to renderChatUI's coach transcript: just a message plus a
+// button, since there's no LLM to talk to in simple mode.
+function renderSimpleGateUI({ mode, domain, blockConfig }) {
+  const isPass = blockConfig.behavior !== "hard";
+  const message =
+    mode === "gate"
+      ? isPass
+        ? `${domain} is blocked. Take ${blockConfig.passMinutes} minutes if you need it, or close this tab.`
+        : `${domain} is blocked. Open settings to change this.`
+      : isPass
+        ? `Your time on ${domain} is up. Take ${blockConfig.passMinutes} more minutes, or you're done.`
+        : `Your time on ${domain} is up.`;
+
+  const subtitle = mode === "gate" ? `${domain} — blocked` : `${domain} — time's up`;
+
+  const root = document.createElement("div");
+  root.id = "intention-root";
+  root.innerHTML = `
+    <div class="int-column">
+      <h1>Intention</h1>
+      <p class="int-subtitle"></p>
+      <div class="int-messages" id="int-messages"></div>
+      <div class="int-close-row" id="int-simple-actions"></div>
+    </div>
+  `;
+  root.querySelector(".int-subtitle").textContent = subtitle;
+  document.body.appendChild(root);
+
+  const messagesEl = document.getElementById("int-messages");
+  const actionsEl = document.getElementById("int-simple-actions");
+  addMessage(messagesEl, "assistant", message);
+
+  if (isPass) {
+    const passBtn = document.createElement("button");
+    passBtn.type = "button";
+    passBtn.className = "int-primary-btn";
+    passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
+    passBtn.addEventListener("click", () => {
+      passBtn.disabled = true;
+      passBtn.textContent = "…";
+      chrome.runtime.sendMessage(
+        { action: "simpleGrant", domain, isApp: false },
+        (resp) => {
+          if (resp && resp.grantedSession) {
+            window.location.reload();
+            return;
+          }
+          passBtn.disabled = false;
+          passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
+          addMessage(
+            messagesEl,
+            "assistant",
+            (resp && resp.denied) || "Couldn't grant a pass — try again.",
+          );
+        },
+      );
+    });
+    actionsEl.appendChild(passBtn);
+  }
+
+  const secondaryBtn = document.createElement("button");
+  secondaryBtn.type = "button";
+  secondaryBtn.className = "int-secondary";
+  if (isPass) secondaryBtn.style.marginLeft = "14px";
+  secondaryBtn.textContent = isPass ? "Not now" : "Open settings";
+  secondaryBtn.addEventListener("click", () => {
+    if (!isPass) {
+      chrome.runtime.sendMessage({ action: "openOptions" });
+      return;
+    }
+    if (mode === "checkin") {
+      chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
+    }
+    window.close();
+  });
+  actionsEl.appendChild(secondaryBtn);
+}
+
 function addMessage(container, role, text, isThinking) {
   const div = document.createElement("div");
   div.className =
@@ -711,6 +814,7 @@ function setupInterruptionListener() {
           mode: "checkin",
           domain:
             currentSession?.domain || matchedDomain || window.location.hostname,
+          blockConfig: matchedBlockConfig,
         });
       }
     }

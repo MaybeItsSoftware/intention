@@ -287,6 +287,16 @@ async function handleMessage(message, sender) {
       return clearChatHistory(message.historyKey || sessionKeyFor(tabId, message.domain));
     case 'endSession':
       return endSession({ tabId, domain: message.domain, reason: message.reason });
+    case 'simpleGrant':
+      return simpleGrant({ tabId, domain: message.domain, isApp: message.isApp });
+    case 'applySettingChange':
+      return applySettingChange({
+        changeType: message.changeType,
+        domain: message.domain,
+        newValue: message.newValue
+      });
+    case 'getBlockInfo':
+      return { blockConfig: await getEffectiveMode(message.domain) };
     // Sent by the native hosts (Android BackgroundJsHelper / BootReceiver, iOS
     // BackgroundJSHost) once the background page is up, since a device restart
     // leaves them with sessions in storage but no timers. Not used by the
@@ -343,12 +353,14 @@ async function checkPageMatch(host, tabId) {
   const sessionKey = sessionKeyFor(tabId, matchedDomain);
   const session = sessionKey ? activeSession(activeSessions[sessionKey]) : null;
   const access = await resolveAIRoute();
+  const blockConfig = matchedDomain ? await getEffectiveMode(matchedDomain) : null;
   return {
     isBlocked: !!matchedDomain,
     matchedDomain,
     setupComplete: !!setupComplete,
     accessRoute: access.route,
-    session
+    session,
+    blockConfig
   };
 }
 
@@ -452,6 +464,22 @@ async function getAccess() {
 
 async function getFullConfig() {
   const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'entitlement', 'backendUrl'];
+=======
+// Per-item mode/behavior override falls back to the global default, so most
+// domains carry no mode/behavior/passMinutes fields at all.
+async function getEffectiveMode(domain) {
+  const { blockingMode = 'coach', simpleBehavior = 'pass', simplePassMinutes = 10, domainLimits = {}, appLimits = {} } = await getStorage(['blockingMode', 'simpleBehavior', 'simplePassMinutes', 'domainLimits', 'appLimits']);
+  const entry = domain ? (domainLimits[domain] || appLimits[domain]) : null;
+  const mode = entry?.mode || blockingMode || 'coach';
+  const behavior = entry?.behavior || simpleBehavior || 'pass';
+  const globalPassMinutes = Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10;
+  const passMinutes = Number(entry?.passMinutes) > 0 ? Number(entry.passMinutes) : globalPassMinutes;
+  return { mode, behavior, passMinutes };
+}
+
+async function getFullConfig() {
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'blockingMode', 'simpleBehavior', 'simplePassMinutes'];
+>>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -472,15 +500,14 @@ async function getFullConfig() {
     blockedApps: stored.blockedApps || [],
     appLimits: stored.appLimits || {},
     appLabels: stored.appLabels || {},
+    blockingMode: stored.blockingMode || 'coach',
+    simpleBehavior: stored.simpleBehavior || 'pass',
+    simplePassMinutes: Number(stored.simplePassMinutes) > 0 ? Number(stored.simplePassMinutes) : 10,
     providers: PROVIDERS
   };
 }
 
-// Setup no longer carries provider credentials: a fresh install finishes the
-// wizard on the hosted route (or nothing at all, which lands on the paywall
-// at the first gate). Any provider/apiKey here comes from the advanced
-// override and is passed through untouched.
-async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels }) {
+async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels, blockingMode, simpleBehavior, simplePassMinutes }) {
   await setStorage({
     provider: provider || '',
     apiKey: apiKey || '',
@@ -493,6 +520,9 @@ async function saveSetup({ provider, apiKey, model, userContext, contextProjects
     blockedApps: blockedApps || [],
     appLimits: appLimits || {},
     appLabels: appLabels || {},
+    blockingMode: blockingMode || 'coach',
+    simpleBehavior: simpleBehavior === 'hard' ? 'hard' : 'pass',
+    simplePassMinutes: Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10,
     setupComplete: true
   });
   await syncBlockingRules();
@@ -679,26 +709,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       }
       
       const reason = String(tc.input.reason || '').slice(0, 240);
-      await recordGrant(domain, minutes, reason);
-
-      // Granting replaces whatever session held this key (a check-in extending
-      // time, or a native port reusing the target's slot), so bank the old
-      // one's minutes before it's overwritten and lost.
-      const { activeSessions = {} } = await getStorage(['activeSessions']);
-      const previous = activeSessions[sessionKey];
-      if (previous && !isBanked(previous)) {
-        const elapsed = (Date.now() - previous.startTime) / 60000;
-        await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
-      }
-
-      const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
-      await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
-      chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
-      // Apps have no network rules to allow — the Android accessibility
-      // service reads activeSessions directly to let the app through — and
-      // neither do the native ports, which have no tab to scope a rule to.
-      if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
-      grantedSession = session;
+      grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason });
     } else if (tc.name === 'update_context' && mode === 'context') {
       const newContext = String(tc.input.new_context || '').slice(0, 5000).trim();
       if (newContext) {
@@ -813,6 +824,57 @@ async function applySettingChange({ domain, changeType, newValue }) {
   }
 
   return null;
+}
+
+// Shared by the LLM's grant_access tool call and the no-AI simpleGrant path:
+// records the grant, banks whatever session previously held this key, opens
+// the new session, and arms the check-in alarm / DNR rule.
+async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason }) {
+  await recordGrant(domain, minutes, reason);
+
+  // Granting replaces whatever session held this key (a check-in extending
+  // time, or a native port reusing the target's slot), so bank the old
+  // one's minutes before it's overwritten and lost.
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const previous = activeSessions[sessionKey];
+  if (previous && !isBanked(previous)) {
+    const elapsed = (Date.now() - previous.startTime) / 60000;
+    await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
+  }
+
+  const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
+  await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
+  chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
+  // Apps have no network rules to allow — the Android accessibility
+  // service reads activeSessions directly to let the app through — and
+  // neither do the native ports, which have no tab to scope a rule to.
+  if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+  return session;
+}
+
+// No-AI equivalent of the grant_access tool call: same limits and bookkeeping,
+// just without a coach conversation. Used by simple-mode gate/checkin UIs.
+async function simpleGrant({ tabId, domain, isApp }) {
+  const sessionKey = sessionKeyFor(tabId, domain);
+  if (!sessionKey) return { denied: 'no session target' };
+
+  const stats = await getStatsForDomain(domain);
+  const limits = await getLimitsForDomain(domain);
+  const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
+  const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
+  if (grantsLimitReached || minutesLimitReached) {
+    return { denied: grantsLimitReached ? 'daily grant cap reached' : `absolute max of ${limits.maxMinutes} minutes reached` };
+  }
+
+  const { passMinutes } = await getEffectiveMode(domain);
+  let minutes = Math.max(1, Math.round(passMinutes));
+  if (limits.maxMinutes > 0) {
+    minutes = Math.min(minutes, Math.max(0, limits.maxMinutes - stats.minutesToday));
+  }
+  if (minutes <= 0) return { denied: 'absolute max reached' };
+
+  const grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason: 'simple mode pass' });
+  return { grantedSession };
 }
 
 async function clearChatHistory(historyKey) {
