@@ -414,6 +414,8 @@ ${reasonsAns || '(not configured)'}`;
 
     await renderCurrentView();
   };
+}
+
 
 // ---------------------------------------------------------------------------
 // AI access: coaching-credit purchase, restore, and the paywall
