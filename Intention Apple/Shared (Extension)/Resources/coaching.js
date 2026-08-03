@@ -133,11 +133,90 @@ async function showPaywall() {
   });
 }
 
-// Show initial coaching prompt
-const seed = mode === 'checkin'
-  ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
-  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
-addMessage(messagesEl, 'assistant', seed);
+// Decide coach vs simple-mode UI based on the effective blocking mode, then render.
+init();
+
+async function init() {
+  let blockConfig = null;
+  try {
+    const resp = await sendChatMessage({ action: 'getBlockInfo', domain, isApp });
+    blockConfig = resp?.blockConfig || null;
+  } catch (e) {
+    blockConfig = null;
+  }
+
+  if (blockConfig && blockConfig.mode === 'simple') {
+    renderSimpleUI(blockConfig);
+  } else {
+    renderCoachUI();
+  }
+}
+
+function renderCoachUI() {
+  const seed = mode === 'checkin'
+    ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
+    : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
+  addMessage(messagesEl, 'assistant', seed);
+
+  sendBtn.addEventListener('click', send);
+  inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  inputEl.focus();
+}
+
+// No-AI counterpart to renderCoachUI: a message plus a single action button,
+// since simple mode has no LLM to converse with.
+function renderSimpleUI(blockConfig) {
+  const isPass = blockConfig.behavior !== 'hard';
+  const message = mode === 'checkin'
+    ? (isPass
+        ? `Your time on ${displayName} is up. Take ${blockConfig.passMinutes} more minutes, or you're done.`
+        : `Your time on ${displayName} is up.`)
+    : (isPass
+        ? `${displayName} is blocked. Take ${blockConfig.passMinutes} minutes if you need it.`
+        : `${displayName} is blocked. Open settings to change this.`);
+  addMessage(messagesEl, 'assistant', message);
+
+  const composer = document.querySelector('.int-composer');
+  if (composer) composer.style.display = 'none';
+
+  if (isPass) {
+    const passBtn = document.createElement('button');
+    passBtn.type = 'button';
+    passBtn.className = 'int-retry-btn';
+    passBtn.style.marginRight = '10px';
+    passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
+    passBtn.addEventListener('click', async () => {
+      passBtn.disabled = true;
+      passBtn.textContent = '…';
+      let resp;
+      try {
+        resp = await sendChatMessage({ action: 'simpleGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
+      } catch (e) {
+        resp = null;
+      }
+      if (resp && resp.grantedSession) {
+        addMessage(messagesEl, 'assistant', 'Granted.');
+        followGrantedSession(resp.grantedSession, 900);
+      } else {
+        passBtn.disabled = false;
+        passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
+        addMessage(messagesEl, 'assistant', (resp && resp.denied) || "Couldn't grant a pass — try again.");
+      }
+    });
+    closeBtn.insertAdjacentElement('beforebegin', passBtn);
+  } else {
+    const settingsBtn = document.createElement('button');
+    settingsBtn.type = 'button';
+    settingsBtn.className = 'int-retry-btn';
+    settingsBtn.style.marginRight = '10px';
+    settingsBtn.textContent = 'Open settings';
+    settingsBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ action: 'openOptions' });
+    });
+    closeBtn.insertAdjacentElement('beforebegin', settingsBtn);
+  }
+}
+>>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
 
 // Locked before a word is typed: don't seed a conversation that can't happen.
 try {
@@ -251,26 +330,32 @@ async function attemptSend(text) {
   typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
     sending = false;
     if (resp.grantedSession) {
-      setTimeout(() => {
-        if (isApp && window.intentionApps) {
-          // Android: launch the granted app; the native bridge closes this overlay.
-          window.intentionApps.launchApp(domain);
-        } else if (isApp && window.intentionScreenTime) {
-          // iOS: lift the Screen Time shields for the granted window.
-          window.intentionScreenTime.grantPass(resp.grantedSession.intervalMinutes, () => {
-            window.location.href = 'options.html';
-          });
-        } else if (!isApp && window.intentionApps && browserPackage) {
-          // Android website: bring the real browser (which still holds the
-          // blocked tab) back to the foreground and close this overlay.
-          window.intentionApps.launchApp(browserPackage);
-        } else {
-          // Chrome/Firefox/Safari: coaching.html IS the blocked tab, so redirect it.
-          window.location.href = `https://${domain}`;
-        }
-      }, 2200);
+      followGrantedSession(resp.grantedSession);
     }
   });
+}
+
+// Shared by the coach chat flow and the no-AI simple-mode pass button: once a
+// session is granted, get the user through to what they asked for.
+function followGrantedSession(grantedSession, delayMs = 2200) {
+  setTimeout(() => {
+    if (isApp && window.intentionApps) {
+      // Android: launch the granted app; the native bridge closes this overlay.
+      window.intentionApps.launchApp(domain);
+    } else if (isApp && window.intentionScreenTime) {
+      // iOS: lift the Screen Time shields for the granted window.
+      window.intentionScreenTime.grantPass(grantedSession.intervalMinutes, () => {
+        window.location.href = 'options.html';
+      });
+    } else if (!isApp && window.intentionApps && browserPackage) {
+      // Android website: bring the real browser (which still holds the
+      // blocked tab) back to the foreground and close this overlay.
+      window.intentionApps.launchApp(browserPackage);
+    } else {
+      // Chrome/Firefox/Safari: coaching.html IS the blocked tab, so redirect it.
+      window.location.href = `https://${domain}`;
+    }
+  }, delayMs);
 }
 
 function showRetryableError(container, message, text) {
@@ -298,8 +383,6 @@ function addRetryButton(container, onRetry) {
   return row;
 }
 
-sendBtn.addEventListener('click', send);
-inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 closeBtn.addEventListener('click', () => {
   // End session and close the current tab (extensions) or hand off to the
   // native bridge, which opens a blank tab over the blocked one and dismisses
@@ -314,7 +397,6 @@ closeBtn.addEventListener('click', () => {
   }
   window.close();
 });
-inputEl.focus();
 
 function addMessage(container, role, text, isThinking) {
   const div = document.createElement('div');

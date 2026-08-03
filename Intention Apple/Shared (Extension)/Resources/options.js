@@ -121,6 +121,9 @@ let setupAppLimits = {};
 let setupAppLabels = {};
 let setupStep = 1;
 let setupStepOrder = []; // computed per-render — apps step only exists where the native bridge does
+let setupBlockingMode = 'coach';
+let setupSimpleBehavior = 'pass';
+let setupSimplePassMinutes = 10;
 
 let installedAppsCache = null;
 
@@ -138,12 +141,136 @@ function showSetupView() {
   document.getElementById('setup-view').hidden = false;
   document.getElementById('settings-view').hidden = true;
 
-  // Apps get their own step, ahead of websites, wherever a native bridge exists.
-  // The last step turns the coach on: buying coaching credit, and nothing else
-  // on the builds a store reviews.
-  setupStepOrder = (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING)
-    ? ['setup-step-apps', 'setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-access']
-    : ['setup-step-sites', 'setup-step-projects', 'setup-step-reasons', 'setup-step-access'];
+  const providerSel = document.getElementById('provider-select');
+  const modelInput = document.getElementById('model-input');
+  const apiKeyInput = document.getElementById('api-key-input');
+
+  const syncPlaceholder = () => {
+    const p = PROVIDERS[providerSel.value];
+    modelInput.placeholder = p ? p.modelPlaceholder : '';
+  };
+
+  // Select the pill matching `model`, or fall back to the Custom pill.
+  const setModelSelection = (model) => {
+    const p = PROVIDERS[providerSel.value];
+    if (model && p && (p.models || []).includes(model)) {
+      setupSelectedModel = model;
+    } else if (model) {
+      setupSelectedModel = null;
+      modelInput.value = model;
+    } else {
+      setupSelectedModel = p ? p.defaultModel : null;
+    }
+    renderModelPills();
+  };
+
+  function renderModelPills() {
+    const container = document.getElementById('setup-model-pills');
+    const customGroup = document.getElementById('setup-custom-model-group');
+    container.innerHTML = '';
+    const p = PROVIDERS[providerSel.value];
+    for (const m of (p ? p.models : []) || []) {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'pill' + (setupSelectedModel === m ? ' selected' : '');
+      pill.textContent = m + (p.defaultModel === m ? ' (default)' : '');
+      pill.addEventListener('click', () => {
+        setupSelectedModel = m;
+        renderModelPills();
+      });
+      container.appendChild(pill);
+    }
+    const custom = document.createElement('button');
+    custom.type = 'button';
+    custom.className = 'pill' + (setupSelectedModel === null ? ' selected' : '');
+    custom.textContent = 'Custom…';
+    custom.addEventListener('click', () => {
+      setupSelectedModel = null;
+      renderModelPills();
+      modelInput.focus();
+    });
+    container.appendChild(custom);
+    customGroup.hidden = setupSelectedModel !== null;
+  }
+
+  let env = {};
+  const syncEnvFields = () => {
+    const provider = providerSel.value;
+    const providerKey = `${provider.toUpperCase()}_API_KEY`;
+    const modelKey = `${provider.toUpperCase()}_MODEL`;
+
+    const apiKey = env[providerKey] || env.API_KEY || '';
+    if (apiKey) apiKeyInput.value = apiKey;
+    else apiKeyInput.value = '';
+
+    const model = env[modelKey] || env.DEFAULT_MODEL || '';
+    modelInput.value = '';
+    setModelSelection(model);
+  };
+
+  providerSel.addEventListener('change', () => {
+    syncPlaceholder();
+    syncEnvFields();
+  });
+  syncPlaceholder();
+  setModelSelection('');
+
+  loadEnv().then(parsedEnv => {
+    env = parsedEnv;
+    if (env.DEFAULT_PROVIDER && PROVIDERS[env.DEFAULT_PROVIDER]) {
+      providerSel.value = env.DEFAULT_PROVIDER;
+      syncPlaceholder();
+    }
+    syncEnvFields();
+  });
+
+  // Mode step goes first; apps get their own step ahead of websites wherever a
+  // native bridge exists; the provider step only exists in coach mode.
+  const computeStepOrder = () => {
+    const order = ['setup-step-mode'];
+    if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
+    order.push('setup-step-sites', 'setup-step-projects', 'setup-step-reasons');
+    if (setupBlockingMode !== 'simple') order.push('setup-step-provider');
+    return order;
+  };
+  setupStepOrder = computeStepOrder();
+
+  // ---- Step: mode ----
+  const modeCoachBtn = document.getElementById('setup-mode-coach-btn');
+  const modeSimpleBtn = document.getElementById('setup-mode-simple-btn');
+  const simpleOptions = document.getElementById('setup-simple-options');
+  const simpleHardBtn = document.getElementById('setup-simple-hard-btn');
+  const simplePassBtn = document.getElementById('setup-simple-pass-btn');
+  const simpleMinutesGroup = document.getElementById('setup-simple-minutes-group');
+  const simpleMinutesInput = document.getElementById('setup-simple-minutes-input');
+
+  const renderModeStep = () => {
+    modeCoachBtn.classList.toggle('selected', setupBlockingMode === 'coach');
+    modeSimpleBtn.classList.toggle('selected', setupBlockingMode === 'simple');
+    simpleOptions.hidden = setupBlockingMode !== 'simple';
+    simpleHardBtn.classList.toggle('selected', setupSimpleBehavior === 'hard');
+    simplePassBtn.classList.toggle('selected', setupSimpleBehavior === 'pass');
+    simpleMinutesGroup.hidden = setupSimpleBehavior !== 'pass';
+  };
+
+  modeCoachBtn.onclick = () => {
+    setupBlockingMode = 'coach';
+    renderModeStep();
+    setupStepOrder = computeStepOrder();
+  };
+  modeSimpleBtn.onclick = () => {
+    setupBlockingMode = 'simple';
+    renderModeStep();
+    setupStepOrder = computeStepOrder();
+  };
+  simpleHardBtn.onclick = () => { setupSimpleBehavior = 'hard'; renderModeStep(); };
+  simplePassBtn.onclick = () => { setupSimpleBehavior = 'pass'; renderModeStep(); };
+  simpleMinutesInput.oninput = () => {
+    setupSimplePassMinutes = Number(simpleMinutesInput.value) > 0 ? Number(simpleMinutesInput.value) : 10;
+  };
+
+  renderModeStep();
+>>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
 
   // ---- Step: websites ----
   renderSetupDomains();
@@ -196,60 +323,74 @@ function showSetupView() {
 
   showStep(1);
 
-  saveBtn.onclick = () => finishSetup();
-}
+  saveBtn.onclick = async () => {
+    const isSimple = setupBlockingMode === 'simple';
+    const provider = providerSel.value;
+    const apiKey = apiKeyInput.value.trim();
+    const model = setupSelectedModel || modelInput.value.trim() || (PROVIDERS[provider] ? PROVIDERS[provider].defaultModel : '');
 
-// Commits everything the wizard collected. Called by "Finish Setup & Start",
-// and by the byok paywall's "Use your own API key", which has to land the user
-// in the real settings view before the advanced key field means anything.
-async function finishSetup() {
-  const projectsAns = document.getElementById('setup-projects-input').value.trim();
-  const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
+    if (!isSimple && (!provider || !apiKey)) {
+      setStatus('setup-status', 'Choose a provider and enter an API key.');
+      return;
+    }
 
-  // Create user context
-  const userContext = `Goals and activities I want to focus on:
+    const projectsAns = document.getElementById('setup-projects-input').value.trim();
+    const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
+
+    // Create user context
+    const userContext = `Goals and activities I want to focus on:
 ${projectsAns || '(not configured)'}
 
 How distracting sites make me feel and why I want to step away:
 ${reasonsAns || '(not configured)'}`;
 
-  // Build domain limits object
-  const domainLimits = {};
-  for (const d of setupBlockedDomains) {
-    domainLimits[d] = setupDomainLimits[d] || {
-      maxGrants: 3,
-      maxMinutes: 10
-    };
-  }
+    const simpleOverrides = isSimple ? { behavior: setupSimpleBehavior, passMinutes: setupSimplePassMinutes } : {};
 
-  // Build app limits object
-  const appLimits = {};
-  for (const p of setupBlockedApps) {
-    appLimits[p] = setupAppLimits[p] || {
-      maxGrants: 3,
-      maxMinutes: 10
-    };
-  }
-
-  setStatus('setup-status', 'Saving setup...', 'info');
-
-  // Save and finalize
-  await sendBg({
-    action: 'saveSetup',
-    config: {
-      userContext,
-      contextProjects: projectsAns,
-      contextReasons: reasonsAns,
-      blockedDomains: setupBlockedDomains,
-      domainLimits,
-      blockedApps: setupBlockedApps,
-      appLimits,
-      appLabels: setupAppLabels
+    // Build domain limits object
+    const domainLimits = {};
+    for (const d of setupBlockedDomains) {
+      domainLimits[d] = setupDomainLimits[d] || {
+        maxGrants: 3,
+        maxMinutes: 10,
+        ...simpleOverrides
+      };
     }
-  });
 
-  await renderCurrentView();
-}
+    // Build app limits object
+    const appLimits = {};
+    for (const p of setupBlockedApps) {
+      appLimits[p] = setupAppLimits[p] || {
+        maxGrants: 3,
+        maxMinutes: 10,
+        ...simpleOverrides
+      };
+    }
+
+    setStatus('setup-status', 'Saving setup...', 'info');
+
+    // Save and finalize
+    await sendBg({
+      action: 'saveSetup',
+      config: {
+        provider: isSimple ? '' : provider,
+        apiKey: isSimple ? '' : apiKey,
+        model: isSimple ? '' : model,
+        userContext,
+        contextProjects: projectsAns,
+        contextReasons: reasonsAns,
+        blockedDomains: setupBlockedDomains,
+        domainLimits,
+        blockedApps: setupBlockedApps,
+        appLimits,
+        appLabels: setupAppLabels,
+        blockingMode: setupBlockingMode,
+        simpleBehavior: setupSimpleBehavior,
+        simplePassMinutes: setupSimplePassMinutes
+      }
+    });
+
+    await renderCurrentView();
+  };
 
 // ---------------------------------------------------------------------------
 // AI access: coaching-credit purchase, restore, and the paywall
@@ -285,6 +426,27 @@ async function verifyAndStore(platform, receipt) {
       receipt,
       pendingVerification: true,
       lastError: String(e.message || e)
+=======
+    // Save and finalize
+    await sendBg({
+      action: 'saveSetup',
+      config: {
+        provider: isSimple ? '' : provider,
+        apiKey: isSimple ? '' : apiKey,
+        model: isSimple ? '' : model,
+        userContext,
+        contextProjects: projectsAns,
+        contextReasons: reasonsAns,
+        blockedDomains: setupBlockedDomains,
+        domainLimits,
+        blockedApps: setupBlockedApps,
+        appLimits,
+        appLabels: setupAppLabels,
+        blockingMode: setupBlockingMode,
+        simpleBehavior: setupSimpleBehavior,
+        simplePassMinutes: setupSimplePassMinutes
+      }
+>>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
     });
     throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically — reopen Settings to retry.");
   }
@@ -857,6 +1019,50 @@ function renderContextCard(userContext) {
   }
 }
 
+// Global blocking-mode card in Settings: Coach vs Simple, and (for Simple) the
+// default hard/pass behavior + pass length. Per-row controls (buildRowModeControl)
+// let individual sites/apps override this global default.
+function wireBlockingModeCard(state) {
+  const coachBtn = document.getElementById('settings-mode-coach-btn');
+  const simpleBtn = document.getElementById('settings-mode-simple-btn');
+  const simpleOptions = document.getElementById('settings-simple-options');
+  const hardBtn = document.getElementById('settings-simple-hard-btn');
+  const passBtn = document.getElementById('settings-simple-pass-btn');
+  const minutesGroup = document.getElementById('settings-simple-minutes-group');
+  const minutesInput = document.getElementById('settings-simple-minutes-input');
+  const saveBtn = document.getElementById('save-blocking-mode-btn');
+
+  let mode = state.blockingMode || 'coach';
+  let behavior = state.simpleBehavior || 'pass';
+  minutesInput.value = state.simplePassMinutes || 10;
+
+  function render() {
+    coachBtn.classList.toggle('selected', mode === 'coach');
+    simpleBtn.classList.toggle('selected', mode === 'simple');
+    simpleOptions.hidden = mode !== 'simple';
+    hardBtn.classList.toggle('selected', behavior === 'hard');
+    passBtn.classList.toggle('selected', behavior === 'pass');
+    minutesGroup.hidden = behavior !== 'pass';
+  }
+  render();
+
+  coachBtn.onclick = () => { mode = 'coach'; render(); };
+  simpleBtn.onclick = () => { mode = 'simple'; render(); };
+  hardBtn.onclick = () => { behavior = 'hard'; render(); };
+  passBtn.onclick = () => { behavior = 'pass'; render(); };
+
+  saveBtn.onclick = async () => {
+    const simplePassMinutes = Number(minutesInput.value) > 0 ? Number(minutesInput.value) : 10;
+    await sendBg({ action: 'saveSettings', config: { blockingMode: mode, simpleBehavior: behavior, simplePassMinutes } });
+    setStatus('blocking-mode-status', 'Saved.', 'success');
+    const fresh = await getConfig();
+    renderDomains(fresh.blockedDomains || [], fresh.domainLimits || {}, fresh.blockingMode);
+    if (HAS_APP_BLOCKING) {
+      renderApps(fresh.blockedApps || [], fresh.appLimits || {}, fresh.appLabels || {}, fresh.blockingMode);
+    }
+  };
+}
+
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
@@ -951,12 +1157,14 @@ async function showSettingsView(state) {
     await refreshAccessUI('access-paywall');
   });
 
-  renderDomains(state.blockedDomains || [], state.domainLimits || {});
+  wireBlockingModeCard(state);
+
+  renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
   wireAddModals();
 
   if (HAS_APP_BLOCKING) {
     document.getElementById('apps-card').hidden = false;
-    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {});
+    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
   } else if (HAS_IOS_APP_BLOCKING) {
     wireIOSAppsCard();
   }
@@ -985,16 +1193,17 @@ async function showSettingsView(state) {
       setStatus('prompt-status', 'Nothing is blocked right now.', '');
       return;
     }
-    openGateModal({
+    applyOrGate({
+      isSimple: (cfg.blockingMode || 'coach') === 'simple',
       changeType: 'disable_all',
       domain: null,
       title: 'Disable all blocking?',
       subtitle: 'This turns off blocking for every site and app on your list. Convince your coach this is what you really want.',
       onApproved: async () => {
         const state = await getConfig();
-        renderDomains(state.blockedDomains || [], state.domainLimits || {});
+        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
         if (HAS_APP_BLOCKING) {
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {});
+          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
         }
         if (HAS_IOS_APP_BLOCKING) {
           window.intentionScreenTime.clear(() => refreshIOSAppsCard());
@@ -1093,7 +1302,7 @@ async function addDomainToBlocklist(domain, limit) {
     domains.push(domain);
     limits[domain] = { maxGrants: 3, maxMinutes: limit };
     await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
-    renderDomains(domains, limits);
+    renderDomains(domains, limits, state.blockingMode);
   }
 }
 
@@ -1114,21 +1323,39 @@ async function addDomain() {
   }
 }
 
-// Removing a site loosens the rules, so it must be approved by the coach first.
-function removeDomain(d) {
-  openGateModal({
+// A per-item `mode` override on a domain/app limit entry wins; otherwise the
+// global blockingMode applies. Mirrors getEffectiveMode() in background.js.
+function effectiveModeFor(entry, globalMode) {
+  return (entry && entry.mode) || globalMode || 'coach';
+}
+
+// Loosening a rule (removing a block, raising a limit, disabling everything)
+// normally requires convincing the AI coach via openGateModal. In simple mode
+// there's no AI, so the change just applies immediately instead.
+async function applyOrGate({ isSimple, changeType, domain, newValue, currentValue, title, subtitle, onApproved }) {
+  if (isSimple) {
+    await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+    await onApproved();
+    return;
+  }
+  openGateModal({ changeType, domain, currentValue, newValue, title, subtitle, onApproved });
+}
+
+function removeDomain(d, isSimple) {
+  applyOrGate({
+    isSimple,
     changeType: 'remove',
     domain: d,
     title: `Remove ${d}?`,
     subtitle: `Removing ${d} means it won't be blocked anymore. Convince your coach this is the right call.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderDomains(state.blockedDomains || [], state.domainLimits || {});
+      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
     }
   });
 }
 
-function renderDomains(domains, limits = {}) {
+function renderDomains(domains, limits = {}, globalMode = 'coach') {
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   for (const d of domains) {
@@ -1176,9 +1403,11 @@ function renderDomains(domains, limits = {}) {
         return;
       }
 
-      // Increasing the limit loosens the rule — must be approved by the coach.
+      // Increasing the limit loosens the rule — must be approved by the coach
+      // (or applied outright, if this domain is in simple mode).
       e.target.value = currentMins; // revert until/unless approved
-      openGateModal({
+      applyOrGate({
+        isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
         changeType: 'increase_limit',
         domain: d,
         currentValue: currentlyUnlimited ? -1 : curMaxMinutes,
@@ -1187,7 +1416,7 @@ function renderDomains(domains, limits = {}) {
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${d}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
-          renderDomains(state.blockedDomains || [], state.domainLimits || {});
+          renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
         }
       });
     });
@@ -1195,16 +1424,84 @@ function renderDomains(domains, limits = {}) {
     limitSpan.appendChild(inlineInput);
     limitSpan.appendChild(document.createTextNode(' min/day'));
     infoContainer.appendChild(limitSpan);
-    
+
+    infoContainer.appendChild(buildRowModeControl(d, limitInfo, globalMode, async () => {
+      const state = await getConfig();
+      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+    }));
+
     li.appendChild(infoContainer);
-    
+
     const btn = document.createElement('button');
     btn.textContent = 'Remove';
     btn.className = 'delete-btn';
-    btn.addEventListener('click', () => removeDomain(d));
+    btn.addEventListener('click', () => removeDomain(d, effectiveModeFor(limitInfo, globalMode) === 'simple'));
     li.appendChild(btn);
     list.appendChild(li);
   }
+}
+
+// Builds the "Use default / Coach / Simple" row control shown under each
+// blocked domain/app, letting a single site or app override the global mode.
+// `persistKey` picks domainLimits vs appLimits; `onSaved` re-renders the list.
+function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = 'domainLimits') {
+  const row = document.createElement('div');
+  row.className = 'row-mode-control';
+
+  const modeSelect = document.createElement('select');
+  modeSelect.className = 'row-mode-select';
+  modeSelect.innerHTML = `
+    <option value="">Use default (${globalMode === 'simple' ? 'Simple' : 'Coach'})</option>
+    <option value="coach">Coach</option>
+    <option value="simple">Simple</option>
+  `;
+  modeSelect.value = limitInfo.mode || '';
+
+  const behaviorSelect = document.createElement('select');
+  behaviorSelect.className = 'row-behavior-select';
+  behaviorSelect.innerHTML = `<option value="pass">Timed pass</option><option value="hard">Hard block</option>`;
+  behaviorSelect.value = limitInfo.behavior || 'pass';
+
+  const minutesInput = document.createElement('input');
+  minutesInput.type = 'number';
+  minutesInput.min = '1';
+  minutesInput.max = '180';
+  minutesInput.className = 'row-minutes-input inline-limit-input';
+  minutesInput.value = limitInfo.passMinutes || 10;
+
+  const updateVisibility = () => {
+    const effMode = modeSelect.value || globalMode;
+    const show = effMode === 'simple';
+    behaviorSelect.hidden = !show;
+    minutesInput.hidden = !show || behaviorSelect.value !== 'pass';
+  };
+  updateVisibility();
+
+  const persist = async () => {
+    const state = await getConfig();
+    const currentLimits = state[persistKey] || {};
+    if (!currentLimits[key]) currentLimits[key] = { maxGrants: 3 };
+    if (modeSelect.value) currentLimits[key].mode = modeSelect.value;
+    else delete currentLimits[key].mode;
+    if (modeSelect.value === 'simple') {
+      currentLimits[key].behavior = behaviorSelect.value;
+      currentLimits[key].passMinutes = parseInt(minutesInput.value, 10) || 10;
+    } else {
+      delete currentLimits[key].behavior;
+      delete currentLimits[key].passMinutes;
+    }
+    await sendBg({ action: 'saveSettings', config: { [persistKey]: currentLimits } });
+    await onSaved();
+  };
+
+  modeSelect.addEventListener('change', () => { updateVisibility(); persist(); });
+  behaviorSelect.addEventListener('change', () => { updateVisibility(); persist(); });
+  minutesInput.addEventListener('change', persist);
+
+  row.appendChild(modeSelect);
+  row.appendChild(behaviorSelect);
+  row.appendChild(minutesInput);
+  return row;
 }
 
 // ---- Blocked apps (settings view, Android only) ----
@@ -1226,25 +1523,26 @@ async function addApp(app) {
     limits[app.packageName] = { maxGrants: 3, maxMinutes: 10 };
     labels[app.packageName] = app.label;
     await sendBg({ action: 'saveSettings', config: { blockedApps: apps, appLimits: limits, appLabels: labels } });
-    renderApps(apps, limits, labels);
+    renderApps(apps, limits, labels, state.blockingMode);
   }
 }
 
-function removeApp(pkg, label) {
+function removeApp(pkg, label, isSimple) {
   const name = label || pkg;
-  openGateModal({
+  applyOrGate({
+    isSimple,
     changeType: 'remove_app',
     domain: pkg,
     title: `Remove ${name}?`,
     subtitle: `Removing ${name} means it won't be blocked anymore. Convince your coach this is the right call.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {});
+      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
     }
   });
 }
 
-function renderApps(apps, limits = {}, labels = {}) {
+function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
   settingsBlockedApps = apps;
   const list = document.getElementById('app-list');
   list.innerHTML = '';
@@ -1293,7 +1591,8 @@ function renderApps(apps, limits = {}, labels = {}) {
 
       const name = labels[pkg] || pkg;
       e.target.value = currentMins; // revert until/unless approved
-      openGateModal({
+      applyOrGate({
+        isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
         changeType: 'increase_app_limit',
         domain: pkg,
         currentValue: currentlyUnlimited ? -1 : curMaxMinutes,
@@ -1302,7 +1601,7 @@ function renderApps(apps, limits = {}, labels = {}) {
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${name}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {});
+          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
         }
       });
     });
@@ -1311,12 +1610,17 @@ function renderApps(apps, limits = {}, labels = {}) {
     limitSpan.appendChild(document.createTextNode(' min/day'));
     infoContainer.appendChild(limitSpan);
 
+    infoContainer.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, async () => {
+      const state = await getConfig();
+      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+    }, 'appLimits'));
+
     li.appendChild(infoContainer);
 
     const btn = document.createElement('button');
     btn.textContent = 'Remove';
     btn.className = 'delete-btn';
-    btn.addEventListener('click', () => removeApp(pkg, labels[pkg]));
+    btn.addEventListener('click', () => removeApp(pkg, labels[pkg], effectiveModeFor(limitInfo, globalMode) === 'simple'));
     li.appendChild(btn);
     list.appendChild(li);
   }
