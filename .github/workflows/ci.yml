@@ -80,6 +80,7 @@ jobs:
             prompts.js
             providers.js
             tracking.js
+            billing.js
           )
 
           EXIT_CODE=0

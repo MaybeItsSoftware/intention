@@ -2,6 +2,8 @@
 
 How to ship Intention to the Chrome Web Store, Firefox Add-ons (AMO), the Apple App Store (Safari, macOS + iOS), and Google Play (Android). For local unpacked/temporary installs, see the [README](README.md#installation) instead — this doc is about store submission.
 
+Coaching access is sold through In-App Purchase as a repurchasable credit top-up (not a subscription), so two things now have to be live before the mobile builds are submitted: the store products (below) and the [backend](server/README.md) that verifies them. See [In-App Purchase setup](#in-app-purchase-setup) for both.
+
 ## One-time setup per store
 
 | Store | Account | Cost | Where |
@@ -102,9 +104,72 @@ The very first release to Google Play must be created manually (upload the `.aab
 
 To build the signed bundle locally without CI: `cd "Intention Android" && ./gradlew bundleRelease` — output lands at `app/build/outputs/bundle/release/app-release.aab`, signed via the local `keystore.properties`.
 
+## In-App Purchase setup
+
+Intention was rejected under **Guideline 3.1.1** for unlocking its core feature with a user-supplied API key. The fix is structural: access to the coach is sold through Apple/Google, the provider key lives on Intention's backend, and the custom-key field is an unadvertised developer override in Settings → Advanced. All three parts have to be in place at submission.
+
+### 1. Deploy the backend
+
+`server/` verifies receipts and proxies coaching calls. Deploy it anywhere that runs Node 20+, behind TLS, then set:
+
+- `INTENTION_TOKEN_SECRET` — `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
+- `INTENTION_LLM_API_KEY` — Intention's own provider key
+- the Apple and Google credentials in the tables below
+
+The three top-up tiers (£1/£2/£5), the per-model LLM pricing table, and the USD→GBP rate/margin multiplier all live in `server/src/config.js` — the defaults there match the product IDs set up below and are fine to leave as-is; override via `INTENTION_TOPUPS`/`INTENTION_USD_TO_GBP_RATE`/`INTENTION_MARGIN_MULTIPLIER` only if the product IDs or pricing actually need to differ from the defaults.
+
+Point the clients at it by editing `DEFAULT_INTENTION_BACKEND_URL` in `shared/providers.js` and running `scripts/sync.sh`. Full reference: [`server/README.md`](server/README.md).
+
+### 2. App Store Connect (iOS + macOS)
+
+1. **My Apps → Intention → Features → In-App Purchases** (not Monetization → Subscriptions — coaching credit is a **Consumable**, not a subscription). Create three:
+   - `uk.co.maybeitssoftware.intention.coach.credit1` (£1)
+   - `uk.co.maybeitssoftware.intention.coach.credit2` (£2)
+   - `uk.co.maybeitssoftware.intention.coach.credit5` (£5)
+
+   The IDs must match `IntentionProduct` in `Intention Apple/Shared (App)/IntentionStore.swift` and the `appleProductId` values in `server/src/config.js`'s `topUps` table. Each needs a localized display name, description, price, and a review screenshot, and must reach **Ready to Submit** — an IAP still in "Missing Metadata" won't load in the app, and review will see an empty paywall.
+2. **Users and Access → Integrations → In-App Purchase → generate a key.** Its Issuer ID, Key ID, and `.p8` become `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`. Set `APPLE_ENVIRONMENT=sandbox` while testing with a sandbox Apple Account.
+3. **Attach the IAPs to the version** being submitted (App Store Connect asks for this on the version page — first submissions review the app and its IAPs together).
+4. **App Groups.** Coaching credit is bought in the app but the coach also runs inside the Safari extension, so the entitlement crosses via the App Group. Enable **App Groups** under Signing & Capabilities on all four targets (iOS App, iOS Extension, macOS App, macOS Extension) with the same group as `AppGroupConfig.identifier`. macOS groups need the Team ID prefix (`6NQNU5YSC2.group.uk.co.maybeitssoftware.intention`); without it the Mac extension will never see the balance.
+
+Local testing needs no App Store Connect round-trip: `Intention Apple/Shared (App)/Intention.storekit` is wired into both shared schemes, so Debug runs against local StoreKit products.
+
+### 3. Google Play
+
+1. **Monetize → Products → In-app products** (not Subscriptions): create three one-time managed products:
+   - `intention_coach_credit_1` (£1)
+   - `intention_coach_credit_2` (£2)
+   - `intention_coach_credit_5` (£5)
+
+   These must match the `PRODUCT_CREDIT_1`/`_2`/`_5` constants in `BillingManager.kt` and the `googleProductId` values in `server/src/config.js`'s `topUps` table.
+2. Reuse the `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` service account (see the Play section above) for the backend's `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY`, but grant the *backend's* verification calls a **separate, read-only** service account scoped to only "View financial data" on this app — not the release-capable account CI uses to publish. A live, internet-facing server shouldn't hold a key that can also push production releases.
+3. Top-ups only become purchasable once a build containing the Billing library has been through a release track, so push an internal-track build before testing the paywall.
+
+### 4. What review sees
+
+- A fresh install can buy coaching credit and use the coach without ever meeting an API key field: onboarding's last step is the purchase, and it lists Apple's/Google's own products.
+- **Restore purchases** is on the paywall — for a consumable this recovers a purchase that was bought but never durably credited (app killed or offline at the time), not an ongoing plan. There is no "Manage subscription" — nothing recurs, so nothing needs cancelling.
+- No link out of the app to a website, and no mention of any external LLM provider, appears anywhere in onboarding, the paywall, or marketing copy.
+- The custom-key field lives at Settings → Advanced → Custom API key, is not referenced anywhere else, and is labelled as a developer option. If review asks about it: it points the app at the reviewer's own LLM account and sells nothing.
+
+### 5. Refund Webhooks & Automatic Credit Clawback
+
+Refund webhooks are implemented on the backend to automatically claw back coaching credit if a refund is issued after purchase:
+
+- **Apple (App Store Server Notifications V2)**:
+  1. In **App Store Connect → General → App Information → Server-to-Server Notifications**:
+  2. Set Production and Sandbox Server URLs to `https://your-backend-domain.com/v1/webhooks/apple`.
+  3. Select **Version 2 Notifications**. Apple will send signed JWS payloads (`signedPayload`) for `REFUND` or `REVOKE` events, which the backend verifies and deducts from the user's balance.
+
+- **Google (Real-Time Developer Notifications / RTDN)**:
+  1. In **Google Cloud Console**, create a Pub/Sub topic and a **Push Subscription** targeting `https://your-backend-domain.com/v1/webhooks/google` (optionally set `INTENTION_WEBHOOK_SECRET` environment variable and append `?token=YOUR_SECRET` to the webhook URL).
+  2. In **Google Play Console → Monetize → Financial setup → Real-time developer notifications**, enter your Pub/Sub topic name and test the connection.
+  3. Cancellations/voided purchases automatically trigger credit deduction and mark the order as refunded.
+
 ## Store listing checklist (first submission, all stores)
 
-- **Privacy policy URL** — link to [`PRIVACY.md`](PRIVACY.md) (raw GitHub URL or hosted via GitHub Pages). Required by Chrome Web Store and AMO because of the `<all_urls>` host permission and third-party LLM calls.
+- **Privacy policy URL** — link to [`PRIVACY.md`](PRIVACY.md) (raw GitHub URL or hosted via GitHub Pages). Required by Chrome Web Store and AMO because of the `<all_urls>` host permission and third-party LLM calls, and by Apple/Google because a purchase sends conversations to Intention's backend.
+- **IAP disclosures**: title and price of each top-up, plus links to the Terms of Use (Apple accepts the standard EULA) and the privacy policy. The old subscription-specific disclosures (renewal terms, cancellation instructions) don't apply — a consumable top-up has no recurring term to disclose.
 - **Permission justification** (Chrome Web Store asks for this explicitly in the listing form):
   - `<all_urls>` / host permissions — needed to detect and overlay any domain the user adds to their own blocklist; the extension has no fixed list of sites.
   - `tabs` — needed to detect which tab/URL is active and pause it.

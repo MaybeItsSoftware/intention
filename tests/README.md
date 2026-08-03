@@ -54,6 +54,9 @@ Test files:
   both sender shapes: `{tab:{id}}` from the extensions, and the tab-less sender
   the native hosts send (Android's `BackgroundJsHelper`, iOS's
   `BackgroundJSHost`) — which nothing else in the suite can exercise.
+- `server.test.js` — the backend (`server/`): entitlement tokens, the verify/
+  refresh/redeem routes, the daily quota, and the coaching proxy's validation.
+  Store verification is injected, so it needs no network or credentials.
 - `parity.test.js` — loads `prompts.js` and `tracking.js` from **all three**
   variant directories and asserts identical behavior (a sync guard on top of
   the byte-diff check in CI/build).

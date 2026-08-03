@@ -1,0 +1,64 @@
+{
+  "identifier" : "A1B2C3D4",
+  "nonRenewingSubscriptions" : [
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "21520757",
+      "localizations" : [
+        {
+          "description" : "Adds £1 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £1",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "intention1pound",
+      "referenceName" : "Coaching Credit £1",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "21520758",
+      "localizations" : [
+        {
+          "description" : "Adds £2 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £2",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "intention2pound",
+      "referenceName" : "Coaching Credit £2",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "21520759",
+      "localizations" : [
+        {
+          "description" : "Adds £5 of coaching credit. Use it at your own pace — top up again anytime.",
+          "displayName" : "Coaching Credit £5",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "intention5pound",
+      "referenceName" : "Coaching Credit £5",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_storeKitErrors" : [
+    ]
+  },
+  "subscriptionGroups" : [
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

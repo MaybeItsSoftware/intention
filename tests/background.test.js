@@ -390,3 +390,163 @@ describe('concurrent writes', () => {
     expect((await ctx.getStatsForDomain('b.com')).minutesToday).toBe(7);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AI access routing (Apple guideline 3.1.1 refactor)
+// ---------------------------------------------------------------------------
+//
+// Three states, and which one wins matters: a fresh install must land on the
+// subscription (never on a key prompt), a configured custom key must override
+// it, and neither present must lock the coach rather than failing at the LLM.
+
+const ACTIVE_ENTITLEMENT = {
+  active: true,
+  token: 'entitlement-token',
+  productId: 'uk.co.maybeitssoftware.intention.pro.monthly',
+  expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+  source: 'apple'
+};
+
+describe('resolveAIRoute', () => {
+  it('locks a fresh install — no key, no subscription', async () => {
+    const { ctx } = loadBackground();
+    expect((await ctx.resolveAIRoute()).route).toBe('locked');
+  });
+
+  it('routes to the hosted backend on an active entitlement', async () => {
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT } });
+    const route = await ctx.resolveAIRoute();
+    expect(route.route).toBe('hosted');
+    expect(route.provider).toBe('intention');
+    expect(route.accessToken).toBe('entitlement-token');
+  });
+
+  it('lets a custom key override an active subscription', async () => {
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT, ...CONFIGURED } });
+    const route = await ctx.resolveAIRoute();
+    expect(route.route).toBe('byok');
+    expect(route.provider).toBe('anthropic');
+    expect(route.apiKey).toBe('test-key');
+  });
+
+  it('locks when the entitlement has lapsed beyond its grace period', async () => {
+    const lapsed = { ...ACTIVE_ENTITLEMENT, expiresAt: Date.now() - 8 * 24 * 60 * 60 * 1000 };
+    const { ctx } = loadBackground({ seed: { entitlement: lapsed } });
+    expect((await ctx.resolveAIRoute()).route).toBe('locked');
+  });
+
+  // Renewals can post slightly late, and a skewed device clock shouldn't lock
+  // out someone who is paying.
+  it('holds access briefly past expiry', async () => {
+    const justExpired = { ...ACTIVE_ENTITLEMENT, expiresAt: Date.now() - 60 * 1000 };
+    const { ctx } = loadBackground({ seed: { entitlement: justExpired } });
+    expect((await ctx.resolveAIRoute()).route).toBe('hosted');
+  });
+
+  it('ignores an entitlement the backend has rejected', async () => {
+    const dead = { ...ACTIVE_ENTITLEMENT, active: false };
+    const { ctx } = loadBackground({ seed: { entitlement: dead } });
+    expect((await ctx.resolveAIRoute()).route).toBe('locked');
+  });
+});
+
+describe('handleChat access gating', () => {
+  it('returns locked instead of calling any provider when there is no access', async () => {
+    const fetch = makeMockFetch({ content: [{ type: 'text', text: 'should not happen' }] });
+    const { ctx } = loadBackground({ seed: { blockedDomains: ['x.com'] }, fetch });
+    const res = await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
+    expect(res.locked).toBe(true);
+    expect(fetch.calls.length).toBe(0);
+  });
+
+  it('sends hosted calls to the backend with the entitlement token, not an API key', async () => {
+    const fetch = makeMockFetch({ text: 'Okay.', toolCalls: [] });
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    const res = await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
+    expect(res.assistantText).toBe('Okay.');
+    const call = fetch.calls[0];
+    expect(call.url).toMatch(/\/v1\/chat$/);
+    expect(call.init.headers.authorization).toBe('Bearer entitlement-token');
+    expect(call.init.headers['x-api-key']).toBeUndefined();
+  });
+
+  it('still honours the grant tool over the hosted route', async () => {
+    const fetch = makeMockFetch({
+      text: 'Ten minutes.',
+      toolCalls: [{ id: 't1', name: 'grant_access', input: { minutes: 10, reason: 'reply to a DM' } }]
+    });
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    const res = await ctx.handleChat({ tabId: 4, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
+    expect(res.grantedSession.intervalMinutes).toBe(10);
+  });
+
+  // A subscription that lapsed mid-conversation has to stop counting as access,
+  // or every retry produces the same failure with no way back to the paywall.
+  it('marks the entitlement stale when the backend rejects it', async () => {
+    const fetch = makeMockFetch({ status: 401, json: { code: 'entitlement_expired', error: 'gone' } });
+    const { ctx, chrome } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    const res = await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
+    expect(res.locked).toBe(true);
+    expect(chrome.storage._store.entitlement.active).toBe(false);
+    expect((await ctx.resolveAIRoute()).route).toBe('locked');
+  });
+
+  it('leaves a working entitlement alone on an ordinary network failure', async () => {
+    const fetch = async () => { throw new TypeError('Failed to fetch'); };
+    fetch.calls = [];
+    const { ctx, chrome } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    const res = await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
+    expect(res.networkError).toBe(true);
+    expect(res.locked).toBeUndefined();
+    expect(chrome.storage._store.entitlement.active).toBe(true);
+  });
+});
+
+describe('entitlement storage', () => {
+  it('normalizes what it stores and reports the route back', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({ action: 'saveEntitlement', entitlement: { ...ACTIVE_ENTITLEMENT, junk: 'x' } }, {});
+    expect(chrome.storage._store.entitlement.junk).toBeUndefined();
+    expect(chrome.storage._store.entitlement.token).toBe('entitlement-token');
+    const access = await ctx.handleMessage({ action: 'getAccess' }, {});
+    expect(access.route).toBe('hosted');
+    expect(access.hasCustomKey).toBe(false);
+  });
+
+  it('clears the entitlement when handed nothing', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT } });
+    await ctx.handleMessage({ action: 'saveEntitlement', entitlement: null }, {});
+    expect(chrome.storage._store.entitlement).toBe(null);
+  });
+
+  it('reports the custom key route without leaking the key itself', async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED });
+    const access = await ctx.handleMessage({ action: 'getAccess' }, {});
+    expect(access.route).toBe('byok');
+    expect(access.hasCustomKey).toBe(true);
+    expect(access.customProvider).toBe('anthropic');
+    expect(JSON.stringify(access)).not.toContain('test-key');
+  });
+});
+
+describe('checkPageMatch reports access', () => {
+  it('tells the content script when there is no coach to talk to', async () => {
+    const { ctx } = loadBackground({ seed: { blockedDomains: ['x.com'], setupComplete: true } });
+    const res = await ctx.checkPageMatch('x.com', 1);
+    expect(res.isBlocked).toBe(true);
+    expect(res.accessRoute).toBe('locked');
+  });
+});
+
+describe('setup no longer collects credentials', () => {
+  it('completes with no provider or key', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({
+      action: 'saveSetup',
+      config: { userContext: 'ctx', blockedDomains: ['x.com'], domainLimits: {} }
+    }, {});
+    expect(chrome.storage._store.setupComplete).toBe(true);
+    expect(chrome.storage._store.apiKey).toBe('');
+    expect(chrome.storage._store.provider).toBe('');
+  });
+});

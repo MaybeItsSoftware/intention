@@ -252,7 +252,7 @@ blockquote {
 .status { margin-top: 10px; font-size: 13px; color: #94a3b8; min-height: 18px; }
 .status.success { color: #22c55e; }
 
-#coach-modal, #gate-modal, #add-site-modal, #add-app-modal {
+#coach-modal, #gate-modal, #add-site-modal, #add-app-modal, #paywall-modal {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.72);
@@ -263,7 +263,7 @@ blockquote {
   padding: 20px;
 }
 
-#coach-modal[hidden], #gate-modal[hidden], #add-site-modal[hidden], #add-app-modal[hidden] {
+#coach-modal[hidden], #gate-modal[hidden], #add-site-modal[hidden], #add-app-modal[hidden], #paywall-modal[hidden] {
   display: none;
 }
 
@@ -637,6 +637,114 @@ blockquote {
 #context-display::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* ---- Paywall (billing.js renderPaywall) ---- */
+
+.int-paywall {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.int-pw-lede {
+  margin: 0;
+  color: #e2e8f0;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.int-pw-sub, .int-pw-note {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.int-pw-benefits {
+  margin: 0;
+  padding-left: 20px;
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+.int-pw-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Plan buttons stack their own title/price/description lines, so they opt out
+   of the single-line layout `button.primary` otherwise gets. */
+.int-pw-plan {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+}
+
+.int-pw-plan-title { font-weight: 700; }
+.int-pw-plan-price { font-size: 13px; opacity: 0.92; }
+.int-pw-plan-desc { font-size: 12px; opacity: 0.8; }
+
+.int-pw-restore, .int-pw-manage, .int-pw-byok { width: 100%; }
+
+.int-pw-status strong {
+  color: #f1f5f9;
+  font-size: 16px;
+}
+
+.int-pw-divider {
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
+
+.int-pw-code label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.int-pw-error {
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+.int-paywall button[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#paywall-modal .coach-box { width: min(440px, 100%); }
+
+/* The custom-key subsection reuses the advanced card's disclosure styling one
+   level down, so Settings -> Advanced -> Custom API key reads as a nesting. */
+#custom-key-details summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+#custom-key-details summary::-webkit-details-marker { display: none; }
+
+#custom-key-details summary::before {
+  content: '▸';
+  font-size: 12px;
+  color: #94a3b8;
+  transition: transform 0.2s ease;
+}
+
+#custom-key-details[open] summary::before { transform: rotate(90deg); }
+
+#custom-key-details summary .muted { font-size: 12px; font-weight: 400; }
 
 .advanced-card {
   margin-top: 20px;

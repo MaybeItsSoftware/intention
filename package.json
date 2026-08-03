@@ -5,6 +5,7 @@
   "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
   "type": "module",
   "scripts": {
+    "start": "node server/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "sync": "scripts/sync.sh",

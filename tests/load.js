@@ -260,6 +260,29 @@ export function loadBackground({ seed = {}, fetch } = {}) {
   return { ctx, chrome, fetch: mockFetch, listeners };
 }
 
+// Convenience: load billing.js the way a page does — after providers.js, whose
+// entitlementIsActive/DEFAULT_INTENTION_BACKEND_URL it builds on (options.html
+// and coaching.html load them in that order).
+//
+// `window` decides what the module thinks this build is: a native store bridge
+// present means 'store' mode, a Safari user agent with no bridge means
+// 'managed', anything else 'byok'. Pass `window` to pick.
+export function loadBilling({ variant = 'chrome', fetch, window: win = {}, userAgent = 'Chrome/120' } = {}) {
+  const mockFetch = fetch || makeMockFetch({});
+  const navigator = { userAgent };
+  const sources = ['providers.js', 'billing.js']
+    .map(f => readFileSync(resolveSourcePath(f, variant), 'utf8'))
+    .join('\n;\n');
+
+  const ctx = loadSource(join(VARIANTS[variant], '__billing_bundle__.js'), {
+    variant,
+    fetch: mockFetch,
+    source: sources,
+    extraGlobals: { window: { ...win, navigator }, navigator, document: undefined }
+  });
+  return { ctx, fetch: mockFetch };
+}
+
 // Convenience: load providers.js with a mock fetch.
 // Returns { ctx, fetch } so tests can inspect captured requests.
 export function loadProviders({ variant = 'chrome', fetch } = {}) {

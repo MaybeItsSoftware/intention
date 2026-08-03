@@ -59,6 +59,26 @@
     }, extra || {}));
   }
 
+  // In-app purchases (StoreKit 2, IntentionStore.swift). The presence of this
+  // object is what puts billing.js into 'store' mode, where the subscription is
+  // the only thing on offer and it can only be bought through Apple.
+  function billingCall(action, extra, callback) {
+    const cbId = window.IntentionCallbacks.register(callback);
+    window.webkit.messageHandlers.intentionNative.postMessage(Object.assign({
+      type: 'billing',
+      action: action,
+      callbackId: cbId
+    }, extra || {}));
+  }
+
+  window.intentionBilling = {
+    products: function(callback) { billingCall('products', null, callback); },
+    purchase: function(productId, callback) { billingCall('purchase', { productId: productId }, callback); },
+    restore: function(callback) { billingCall('restore', null, callback); },
+    status: function(callback) { billingCall('status', null, callback); },
+    manage: function(callback) { billingCall('manage', null, callback); }
+  };
+
   window.intentionScreenTime = {
     status: function(callback) { screenTimeCall('status', null, callback); },
     authorize: function(callback) { screenTimeCall('authorize', null, callback); },

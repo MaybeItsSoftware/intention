@@ -69,11 +69,85 @@ if (window.visualViewport) {
   updateBottomBarOffset();
 }
 
+// No AI access on this device: swap the conversation for the purchase flow.
+// The block itself doesn't lift — this page is still standing in front of the
+// site or app — there's just no coach to make a case to until it's sorted.
+async function showPaywall() {
+  const paywallEl = document.getElementById('int-paywall');
+  // Same reason as the composer below: these carry their own `display`, so
+  // `hidden` would be ignored.
+  document.getElementById('int-messages').style.display = 'none';
+  document.getElementById('int-stats-row').style.display = 'none';
+  document.getElementById('int-heading').textContent = 'Coaching Credit';
+  // The composer goes (there's nobody to talk to), but the close button stays:
+  // inside the app's WebView it is the only way off this page. `hidden` alone
+  // wouldn't do it — .int-composer's own `display: flex` outranks it.
+  const composer = document.querySelector('.int-composer');
+  if (composer) composer.style.display = 'none';
+  paywallEl.hidden = false;
+  updateBarHeightVar();
+
+  const config = await new Promise(resolve => {
+    chrome.runtime.sendMessage({ action: 'getConfig' }, resolve);
+  });
+
+  const persist = (entitlement) => new Promise(resolve => {
+    chrome.runtime.sendMessage({ action: 'saveEntitlement', entitlement }, resolve);
+  });
+
+  const afterUnlock = async (entitlement) => {
+    await persist(entitlement);
+    // Back to a working gate: reload so the coach opens with a clean history.
+    window.location.reload();
+  };
+
+  await renderPaywall(paywallEl, {
+    entitlement: config?.entitlement || null,
+    compact: true,
+    onPurchase: async (productId) => {
+      const result = await purchaseProduct(productId);
+      if (!result || result.status === 'cancelled') return;
+      if (result.status !== 'purchased') throw new Error(result.error || "The purchase didn't complete.");
+      const entitlement = await verifyPurchase({
+        platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
+        receipt: result.receipt,
+        backendUrl: config?.backendUrl
+      });
+      await afterUnlock(entitlement);
+    },
+    onRestore: async () => {
+      const result = await restorePurchases();
+      if (!result || !result.receipt) throw new Error(result?.error || 'No pending purchase found.');
+      const entitlement = await verifyPurchase({
+        platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
+        receipt: result.receipt,
+        backendUrl: config?.backendUrl
+      });
+      await afterUnlock(entitlement);
+    },
+    onRedeem: async (code) => {
+      const entitlement = await redeemAccessCode(code, config?.backendUrl);
+      if (!entitlementIsActive(entitlement)) throw new Error("That code isn't active.");
+      await afterUnlock(entitlement);
+    }
+  });
+}
+
 // Show initial coaching prompt
 const seed = mode === 'checkin'
   ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
   : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
 addMessage(messagesEl, 'assistant', seed);
+
+// Locked before a word is typed: don't seed a conversation that can't happen.
+try {
+  chrome.runtime.sendMessage({ action: 'getAccess' }, (access) => {
+    if (chrome.runtime.lastError) return;
+    if (access && access.route === 'locked') showPaywall();
+  });
+} catch (e) {
+  console.warn(INT_LOG, 'getAccess message threw:', e);
+}
 
 // Fetch stats and render stats row
 try {
@@ -165,6 +239,10 @@ async function attemptSend(text) {
   if (resp.error) {
     thinking.remove();
     sending = false;
+    if (resp.locked) {
+      showPaywall();
+      return;
+    }
     const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
     showRetryableError(messagesEl, message, text);
     return;

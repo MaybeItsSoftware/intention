@@ -1,5 +1,6 @@
 package uk.co.maybeitssoftware.intention
 
+import android.app.Activity
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -65,6 +66,52 @@ class WebAppInterface(
         BackgroundJsHelper.sendMessage(messageJson) { response ->
             runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(response ?: "")})")
         }
+    }
+
+    // ---- In-app purchases (Google Play Billing) ----
+    //
+    // Mirrors the Apple bridge in ios-bridge.js: billing.js sees the same
+    // window.intentionBilling shape on both platforms, so the paywall itself is
+    // platform-agnostic. Purchases can only happen through Play from here.
+
+    @JavascriptInterface
+    fun billingProducts(callbackId: String) {
+        BillingManager.products { result -> respond(callbackId, result) }
+    }
+
+    @JavascriptInterface
+    fun billingPurchase(productId: String, callbackId: String) {
+        val activity = context as? Activity
+        if (activity == null) {
+            respond(callbackId, JSONObject().put("status", "failed")
+                .put("error", "Purchases can only be started from the Intention app."))
+            return
+        }
+        Handler(Looper.getMainLooper()).post {
+            BillingManager.purchase(activity, productId) { result -> respond(callbackId, result) }
+        }
+    }
+
+    @JavascriptInterface
+    fun billingRestore(callbackId: String) {
+        BillingManager.restore { result -> respond(callbackId, result) }
+    }
+
+    @JavascriptInterface
+    fun billingStatus(callbackId: String) {
+        BillingManager.status { result -> respond(callbackId, result) }
+    }
+
+    // No-op: a consumable top-up has nothing to manage/cancel. Kept as a stub
+    // purely so android-bridge.js/billing.js's `manage` call still resolves
+    // without needing a bridge contract change.
+    @JavascriptInterface
+    fun billingManage(callbackId: String) {
+        respond(callbackId, JSONObject().put("ok", true))
+    }
+
+    private fun respond(callbackId: String, payload: JSONObject) {
+        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(payload.toString())})")
     }
 
     @JavascriptInterface

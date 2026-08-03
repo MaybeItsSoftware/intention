@@ -263,6 +263,8 @@ async function handleMessage(message, sender) {
     }
     case 'saveSetup': return saveSetup(message.config);
     case 'saveSettings': return saveSettings(message.config);
+    case 'getAccess': return getAccess();
+    case 'saveEntitlement': return saveEntitlement(message.entitlement);
     case 'getSession': {
       const sessionKey = sessionKeyFor(tabId, message.domain);
       if (!sessionKey) return { session: null };
@@ -340,10 +342,12 @@ async function checkPageMatch(host, tabId) {
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
   const sessionKey = sessionKeyFor(tabId, matchedDomain);
   const session = sessionKey ? activeSession(activeSessions[sessionKey]) : null;
+  const access = await resolveAIRoute();
   return {
     isBlocked: !!matchedDomain,
     matchedDomain,
     setupComplete: !!setupComplete,
+    accessRoute: access.route,
     session
   };
 }
@@ -366,11 +370,95 @@ async function getLimitsForDomain(domain) {
   return defaults;
 }
 
+// ---------------------------------------------------------------------------
+// AI access routing
+// ---------------------------------------------------------------------------
+//
+// Three states, checked in this order:
+//
+//   byok    a custom provider key is configured (Settings -> Advanced). Calls
+//           go straight from this device to that provider, and the hosted
+//           coaching-credit balance doesn't apply.
+//   hosted  a coaching-credit balance is available. Calls go to Intention's
+//           backend, which holds the provider key. This is the default path.
+//   locked  neither — every coaching entry point shows the paywall instead of
+//           a chat.
+//
+// BYOK wins when present because it is an explicit, deliberate override; it is
+// never what a fresh install lands on.
+async function resolveAIRoute() {
+  const { provider, apiKey, model, entitlement, backendUrl } = await getStorage([
+    'provider', 'apiKey', 'model', 'entitlement', 'backendUrl'
+  ]);
+
+  if (provider && provider !== HOSTED_PROVIDER && apiKey) {
+    return { route: 'byok', provider, apiKey, model: model || '' };
+  }
+  if (entitlementIsActive(entitlement)) {
+    return {
+      route: 'hosted',
+      provider: HOSTED_PROVIDER,
+      accessToken: entitlement.token || '',
+      model: '',
+      backendUrl: backendUrl || ''
+    };
+  }
+  return { route: 'locked' };
+}
+
+// An entitlement the backend has rejected must stop counting as access, or
+// every coaching attempt keeps failing with the same error instead of offering
+// the user the way back in.
+async function markEntitlementStale(code) {
+  await mutateStorage('entitlement', (entitlement) => {
+    if (!entitlement || typeof entitlement !== 'object') return entitlement;
+    return { ...entitlement, active: false, lastError: code || 'entitlement_invalid', updatedAt: Date.now() };
+  }, null);
+}
+
+async function saveEntitlement(entitlement) {
+  if (!entitlement || typeof entitlement !== 'object') {
+    await setStorage({ entitlement: null });
+    return { ok: true, entitlement: null };
+  }
+  const clean = {
+    active: !!entitlement.active,
+    productId: String(entitlement.productId || ''),
+    expiresAt: entitlement.expiresAt ? Number(entitlement.expiresAt) : null,
+    source: String(entitlement.source || ''),
+    token: String(entitlement.token || ''),
+    receipt: entitlement.receipt || null,
+    balanceMicros: Number(entitlement.balanceMicros || 0),
+    balanceGbp: Number(entitlement.balanceGbp || 0),
+    balanceCredits: Number(entitlement.balanceCredits || 0),
+    pendingVerification: !!entitlement.pendingVerification,
+    lastError: String(entitlement.lastError || ''),
+    updatedAt: Date.now()
+  };
+  await setStorage({ entitlement: clean });
+  return { ok: true, entitlement: clean };
+}
+
+async function getAccess() {
+  const { entitlement, provider, apiKey } = await getStorage(['entitlement', 'provider', 'apiKey']);
+  const resolved = await resolveAIRoute();
+  return {
+    route: resolved.route,
+    entitlement: entitlement || null,
+    hasCustomKey: !!(apiKey && provider && provider !== HOSTED_PROVIDER),
+    customProvider: provider && provider !== HOSTED_PROVIDER ? provider : ''
+  };
+}
+
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'entitlement', 'backendUrl'];
   const stored = await getStorage(keys);
+  const access = await resolveAIRoute();
   return {
     setupComplete: !!stored.setupComplete,
+    accessRoute: access.route,
+    entitlement: stored.entitlement || null,
+    backendUrl: stored.backendUrl || '',
     provider: stored.provider || '',
     apiKey: stored.apiKey || '',
     model: stored.model || '',
@@ -388,11 +476,15 @@ async function getFullConfig() {
   };
 }
 
+// Setup no longer carries provider credentials: a fresh install finishes the
+// wizard on the hosted route (or nothing at all, which lands on the paywall
+// at the first gate). Any provider/apiKey here comes from the advanced
+// override and is passed through untouched.
 async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels }) {
   await setStorage({
-    provider,
-    apiKey,
-    model: model || PROVIDERS[provider]?.defaultModel || '',
+    provider: provider || '',
+    apiKey: apiKey || '',
+    model: model || (provider ? PROVIDERS[provider]?.defaultModel : '') || '',
     userContext: userContext || '',
     contextProjects: contextProjects || '',
     contextReasons: contextReasons || '',
@@ -416,8 +508,11 @@ async function saveSettings(partial) {
 }
 
 async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue }) {
-  const { provider, apiKey, model, userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
-  if (!provider || !apiKey) return { error: 'No API key configured. Open settings to finish setup.' };
+  const { userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
+  const access = await resolveAIRoute();
+  if (access.route === 'locked') {
+    return { error: 'You need coaching credit to talk to your coach.', locked: true };
+  }
 
   // For apps, `domain` is the storage/stats key (an Android package name, or
   // the pseudo-target "apps" for the iOS Screen Time pass); prompts get a
@@ -514,9 +609,37 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
 
   let llmResponse;
   try {
-    llmResponse = await callLLM({ provider, apiKey, model, system: systemPrompt, messages: history, tools });
+    llmResponse = await callLLM({
+      provider: access.provider,
+      apiKey: access.apiKey,
+      model: access.model,
+      accessToken: access.accessToken,
+      backendUrl: access.backendUrl,
+      system: systemPrompt,
+      messages: history,
+      tools
+    });
   } catch (e) {
+    if (isEntitlementError(e)) {
+      await markEntitlementStale(e.code);
+      return { error: e.message, locked: true };
+    }
     return { error: e.message, networkError: isNetworkError(e) };
+  }
+
+  // Keeps a "credit remaining" indicator live after every message, rather
+  // than only updating the next time the settings page reconciles.
+  if (access.route === 'hosted') {
+    await mutateStorage('entitlement', (entitlement) => {
+      if (!entitlement || typeof entitlement !== 'object') return entitlement;
+      return {
+        ...entitlement,
+        balanceMicros: llmResponse.balanceMicros,
+        balanceGbp: llmResponse.balanceGbp,
+        balanceCredits: llmResponse.balanceCredits,
+        updatedAt: Date.now()
+      };
+    }, null);
   }
 
   let grantedSession = null;

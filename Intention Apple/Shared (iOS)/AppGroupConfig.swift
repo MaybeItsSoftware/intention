@@ -25,6 +25,9 @@ enum AppGroupConfig {
         "provider", "apiKey", "model", "userContext", "contextProjects",
         "contextReasons", "coachInstructions", "blockedDomains", "domainLimits",
         "blockedApps", "appLimits", "appLabels",
+        // The In-App Purchase entitlement. StoreKit only runs in the app, so
+        // this is how a subscription bought there reaches the Safari extension.
+        "entitlement",
         "setupComplete"
     ]
 
