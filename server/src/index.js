@@ -78,7 +78,8 @@ export const server = http.createServer(async (req, res) => {
 // Only listen when run directly, so tests can import this module freely.
 if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   assertBootConfig();
-  server.listen(config.port, () => {
-    console.log(`[intention] backend listening on :${config.port}`);
+  const host = process.env.HOST || '0.0.0.0';
+  server.listen(config.port, host, () => {
+    console.log(`[intention] backend listening on ${host}:${config.port}`);
   });
 }

@@ -143,7 +143,8 @@ export function assertBootConfig(log = console) {
   if (!config.tokenSecret) problems.push('INTENTION_TOKEN_SECRET is not set');
   if (!config.llm.apiKey) problems.push('INTENTION_LLM_API_KEY is not set');
   if (problems.length) {
-    throw new Error(`Refusing to start:\n  - ${problems.join('\n  - ')}`);
+    (log.error || log.warn)(`[intention] CRITICAL WARNING: Missing required environment configuration:\n  - ${problems.join('\n  - ')}\n[intention] Server will listen for health checks, but auth/coaching calls require these variables.`);
+    return false;
   }
   if (!config.apple.issuerId || !config.apple.privateKey) {
     log.warn('[intention] App Store Server API credentials missing — Apple receipts will be checked by signature only.');
