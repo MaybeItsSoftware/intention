@@ -25,9 +25,9 @@ enum IntentionProduct {
     // Must match the product IDs configured in App Store Connect (and in
     // Intention.storekit for local/sandbox testing) and server/src/config.js's
     // topUps table.
-    static let credit1 = "uk.co.maybeitssoftware.intention.coach.credit1"
-    static let credit2 = "uk.co.maybeitssoftware.intention.coach.credit2"
-    static let credit5 = "uk.co.maybeitssoftware.intention.coach.credit5"
+    static let credit1 = "intention1pound"
+    static let credit2 = "intention2pound"
+    static let credit5 = "intention5pound"
 
     static let all: [String] = [credit1, credit2, credit5]
 }

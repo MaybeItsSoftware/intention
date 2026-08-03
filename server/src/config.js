@@ -92,7 +92,9 @@ export const config = {
     packageName: process.env.GOOGLE_PACKAGE_NAME || 'uk.co.maybeitssoftware.intention',
     // Play Developer API service account (JSON key fields).
     clientEmail: process.env.GOOGLE_CLIENT_EMAIL || '',
-    privateKey: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n')
+    privateKey: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    // Optional secret for Google Pub/Sub webhook authorization
+    webhookSecret: process.env.INTENTION_WEBHOOK_SECRET || ''
   },
 
   // Development escape hatches. Both are ignored outside NODE_ENV=development.
@@ -102,7 +104,7 @@ export const config = {
 // Looks up a top-up tier by the product ID a receipt/purchase reports.
 export function findTopUp(platform, productId) {
   const field = platform === 'apple' ? 'appleProductId' : 'googleProductId';
-  return config.topUps.find(t => t[field] === productId) || null;
+  return config.topUps.find(t => t[field] === productId || t.aliases?.includes(productId)) || null;
 }
 
 // What a top-up's face price actually credits, once the store's commission
@@ -124,9 +126,9 @@ export function microsToCredits(micros) {
 
 function parseTopUps() {
   const DEFAULTS = [
-    { priceGbp: 1, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit1', googleProductId: 'intention_coach_credit_1' },
-    { priceGbp: 2, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit2', googleProductId: 'intention_coach_credit_2' },
-    { priceGbp: 5, appleProductId: 'uk.co.maybeitssoftware.intention.coach.credit5', googleProductId: 'intention_coach_credit_5' }
+    { priceGbp: 1, appleProductId: 'intention1pound', googleProductId: 'intention1pound', aliases: ['uk.co.maybeitssoftware.intention.coach.credit1', 'intention_coach_credit_1'] },
+    { priceGbp: 2, appleProductId: 'intention2pound', googleProductId: 'intention2pound', aliases: ['uk.co.maybeitssoftware.intention.coach.credit2', 'intention_coach_credit_2'] },
+    { priceGbp: 5, appleProductId: 'intention5pound', googleProductId: 'intention5pound', aliases: ['uk.co.maybeitssoftware.intention.coach.credit5', 'intention_coach_credit_5'] }
   ];
   const raw = process.env.INTENTION_TOPUPS;
   if (!raw) return DEFAULTS;

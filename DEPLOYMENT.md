@@ -152,9 +152,19 @@ Local testing needs no App Store Connect round-trip: `Intention Apple/Shared (Ap
 - No link out of the app to a website, and no mention of any external LLM provider, appears anywhere in onboarding, the paywall, or marketing copy.
 - The custom-key field lives at Settings → Advanced → Custom API key, is not referenced anywhere else, and is labelled as a developer option. If review asks about it: it points the app at the reviewer's own LLM account and sells nothing.
 
-### 5. Known follow-up (not yet implemented)
+### 5. Refund Webhooks & Automatic Credit Clawback
 
-Refund detection today only happens at verify time (Apple's Get Transaction Info / Google's purchase-state check catch a purchase that was *already* refunded by the time someone tries to redeem it). Neither platform's push-based refund webhook — Apple's App Store Server Notifications V2, Google's real-time developer notifications — is wired up, so a refund issued *after* credit was granted isn't automatically clawed back. Worth adding if abuse via refund-after-use turns out to matter in practice.
+Refund webhooks are implemented on the backend to automatically claw back coaching credit if a refund is issued after purchase:
+
+- **Apple (App Store Server Notifications V2)**:
+  1. In **App Store Connect → General → App Information → Server-to-Server Notifications**:
+  2. Set Production and Sandbox Server URLs to `https://your-backend-domain.com/v1/webhooks/apple`.
+  3. Select **Version 2 Notifications**. Apple will send signed JWS payloads (`signedPayload`) for `REFUND` or `REVOKE` events, which the backend verifies and deducts from the user's balance.
+
+- **Google (Real-Time Developer Notifications / RTDN)**:
+  1. In **Google Cloud Console**, create a Pub/Sub topic and a **Push Subscription** targeting `https://your-backend-domain.com/v1/webhooks/google` (optionally set `INTENTION_WEBHOOK_SECRET` environment variable and append `?token=YOUR_SECRET` to the webhook URL).
+  2. In **Google Play Console → Monetize → Financial setup → Real-time developer notifications**, enter your Pub/Sub topic name and test the connection.
+  3. Cancellations/voided purchases automatically trigger credit deduction and mark the order as refunded.
 
 ## Store listing checklist (first submission, all stores)
 

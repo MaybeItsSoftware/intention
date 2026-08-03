@@ -20,7 +20,7 @@ process.env.INTENTION_ALLOW_UNVERIFIED_RECEIPTS = '1';
 const { handleRequest } = await import('../server/src/app.js');
 const { signToken, verifyToken, subjectFor } = await import('../server/src/tokens.js');
 const {
-  MemoryStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited
+  MemoryStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited, refundTopUp, getCreditRecord
 } = await import('../server/src/store.js');
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
@@ -405,6 +405,93 @@ describe('Apple JWS verification', () => {
   it('rejects anything that is not a three-part JWS', () => {
     expect(() => decodeJWS('not-a-jws')).toThrow(/JWS/);
     expect(() => decodeJWS(null)).toThrow(/JWS/);
+  });
+});
+
+describe('Refund webhooks & clawback', () => {
+  it('processes an Apple REFUND notification and claws back credit', async () => {
+    const d = deps();
+    const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+    expect(verified.body.balanceMicros).toBe(CREDIT1);
+
+    const signedTransactionInfo = fakeJWS({
+      transactionId: 'txn-1',
+      appAccountToken: 'acct-apple-1',
+      productId: 'uk.co.maybeitssoftware.intention.coach.credit1'
+    });
+    const signedPayload = fakeJWS({
+      notificationType: 'REFUND',
+      data: { signedTransactionInfo }
+    });
+
+    const res = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.refund.deductedMicros).toBe(CREDIT1);
+
+    const sub = subjectFor('apple', 'acct-apple-1');
+    expect(getBalanceMicros(sub, d.store)).toBe(0);
+
+    const repeat = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(repeat.body.refund.alreadyRefunded).toBe(true);
+  });
+
+  it('handles non-refund Apple notifications gracefully', async () => {
+    const d = deps();
+    const signedPayload = fakeJWS({ notificationType: 'TEST' });
+    const res = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.processed).toBe(false);
+  });
+
+  it('rejects Apple webhook missing signedPayload', async () => {
+    const res = await post('/v1/webhooks/apple', {}, {}, deps());
+    expect(res.status).toBe(400);
+  });
+
+  it('processes a Google RTDN refund notification and claws back credit', async () => {
+    const d = deps();
+    const verified = await post('/v1/entitlement/verify',
+      { platform: 'google', receipt: { purchaseToken: 'ptoken-1', productId: 'intention_coach_credit_1' } }, {}, d);
+    expect(verified.body.balanceMicros).toBe(CREDIT1);
+
+    const pubsubData = Buffer.from(JSON.stringify({
+      oneTimeProductNotification: {
+        notificationType: 2,
+        purchaseToken: 'ptoken-1',
+        sku: 'intention_coach_credit_1'
+      }
+    })).toString('base64');
+
+    const res = await post('/v1/webhooks/google', { message: { data: pubsubData } }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.refund.deductedMicros).toBe(CREDIT1);
+
+    const sub = subjectFor('google', 'acct-google-1');
+    expect(getBalanceMicros(sub, d.store)).toBe(0);
+  });
+
+  it('handles Google Pub/Sub test notifications', async () => {
+    const d = deps();
+    const res = await post('/v1/webhooks/google', { testNotification: { version: '1.0' } }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.test).toBe(true);
+  });
+
+  it('rejects Google webhook missing message data', async () => {
+    const res = await post('/v1/webhooks/google', {}, {}, deps());
+    expect(res.status).toBe(400);
+  });
+
+  it('refundTopUp in store.js prevents subsequent re-crediting of refunded transaction', async () => {
+    const store = new MemoryStore();
+    const sub = subjectFor('apple', 'acct-refund-test');
+    adjustBalance(sub, CREDIT1, store);
+
+    refundTopUp('apple', 'txn-refunded', { subject: sub, productId: 'uk.co.maybeitssoftware.intention.coach.credit1' }, store);
+    expect(alreadyCredited('apple', 'txn-refunded', store)).toBe(true);
+    expect(getCreditRecord('apple', 'txn-refunded', store).refunded).toBe(true);
   });
 });
 

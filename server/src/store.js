@@ -1,3 +1,5 @@
+import { findTopUp, creditMicrosForTopUp } from './config.js';
+
 // Small pieces of server state: the coaching-credit balance ledger, the
 // idempotency record that stops a top-up being credited twice, and the
 // one-time codes that link a browser to credit bought in a mobile app.
@@ -64,7 +66,7 @@ export function adjustBalance(subject, deltaMicros, backing = store) {
   return next;
 }
 
-// ---- Purchase idempotency --------------------------------------------------
+// ---- Purchase idempotency & refund tracking --------------------------------
 //
 // Keyed by the store transaction/order id alone, never combined with subject:
 // the same account legitimately tops up repeatedly, but each individual
@@ -79,8 +81,82 @@ export function alreadyCredited(platform, creditId, backing = store) {
   return Boolean(backing.get(creditKey(platform, creditId)));
 }
 
-export function markCredited(platform, creditId, backing = store) {
-  backing.set(creditKey(platform, creditId), true, null);
+export function markCredited(platform, creditId, dataOrBacking = true, backing = store) {
+  let data = dataOrBacking;
+  let storeToUse = backing;
+  if (dataOrBacking && typeof dataOrBacking === 'object' && typeof dataOrBacking.get === 'function' && typeof dataOrBacking.set === 'function') {
+    data = true;
+    storeToUse = dataOrBacking;
+  }
+  storeToUse.set(creditKey(platform, creditId), data, null);
+}
+
+export function getCreditRecord(platform, creditId, backing = store) {
+  const val = backing.get(creditKey(platform, creditId));
+  if (!val) return null;
+  if (val === true) return { credited: true };
+  return val;
+}
+
+export function refundTopUp(platform, creditId, { subject = null, productId = null, creditMicros = null } = {}, backing = store) {
+  const existing = getCreditRecord(platform, creditId, backing);
+
+  if (existing && typeof existing === 'object' && existing.refunded) {
+    const s = existing.subject || subject;
+    return {
+      alreadyRefunded: true,
+      subject: s,
+      balanceMicros: s ? getBalanceMicros(s, backing) : 0
+    };
+  }
+
+  const targetSubject = subject || (existing && typeof existing === 'object' ? existing.subject : null);
+  const targetProductId = productId || (existing && typeof existing === 'object' ? existing.productId : null);
+
+  let microsToDeduct = creditMicros;
+  if (microsToDeduct === null || microsToDeduct === undefined) {
+    if (existing && typeof existing === 'object' && existing.creditMicros !== undefined) {
+      microsToDeduct = existing.creditMicros;
+    } else if (targetProductId) {
+      const topUp = findTopUp(platform, targetProductId);
+      microsToDeduct = topUp ? creditMicrosForTopUp(platform, topUp.priceGbp) : 0;
+    } else {
+      microsToDeduct = 0;
+    }
+  }
+
+  let newBalance = 0;
+  if (targetSubject && microsToDeduct > 0) {
+    newBalance = adjustBalance(targetSubject, -microsToDeduct, backing);
+  } else if (targetSubject) {
+    newBalance = getBalanceMicros(targetSubject, backing);
+  }
+
+  const record = {
+    ...(typeof existing === 'object' ? existing : {}),
+    credited: true,
+    refunded: true,
+    refundedAt: Date.now(),
+    subject: targetSubject,
+    productId: targetProductId,
+    creditMicros: microsToDeduct
+  };
+
+  markCredited(platform, creditId, record, backing);
+
+  if (record.purchaseToken && record.purchaseToken !== creditId) {
+    markCredited(platform, record.purchaseToken, record, backing);
+  }
+  if (record.orderId && record.orderId !== creditId) {
+    markCredited(platform, record.orderId, record, backing);
+  }
+
+  return {
+    refunded: true,
+    subject: targetSubject,
+    deductedMicros: microsToDeduct,
+    balanceMicros: newBalance
+  };
 }
 
 // ---- Browser access codes -------------------------------------------------
@@ -108,3 +184,4 @@ export function redeemAccessCode(code, backing = store) {
 function defaultRandom(max) {
   return Math.floor(Math.random() * max);
 }
+

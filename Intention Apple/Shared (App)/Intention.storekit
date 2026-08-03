@@ -14,7 +14,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "uk.co.maybeitssoftware.intention.coach.credit1",
+      "productID" : "intention1pound",
       "referenceName" : "Coaching Credit £1",
       "type" : "Consumable"
     },
@@ -29,7 +29,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "uk.co.maybeitssoftware.intention.coach.credit2",
+      "productID" : "intention2pound",
       "referenceName" : "Coaching Credit £2",
       "type" : "Consumable"
     },
@@ -44,7 +44,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "uk.co.maybeitssoftware.intention.coach.credit5",
+      "productID" : "intention5pound",
       "referenceName" : "Coaching Credit £5",
       "type" : "Consumable"
     }

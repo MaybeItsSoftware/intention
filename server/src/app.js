@@ -1,10 +1,10 @@
 import { config, findTopUp, creditMicrosForTopUp, microsToCredits } from './config.js';
-import { verifyAppleReceipt, VerificationError } from './apple.js';
+import { verifyAppleReceipt, verifyAppleJWS, decodeJWS, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, alreadyCredited, markCredited,
-  generateAccessCode, redeemAccessCode, store
+  getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 
@@ -32,6 +32,8 @@ export async function handleRequest({ method, path, headers = {}, body = null },
       case '/v1/entitlement/code': return codeEndpoint(headers, backing);
       case '/v1/entitlement/redeem': return redeemEndpoint(body, backing);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing);
+      case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
+      case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing);
       default:
         return json(404, { error: 'Not found', code: 'not_found' });
     }
@@ -87,9 +89,23 @@ function refreshEndpoint(body, backing) {
 // up repeatedly, but each individual purchase is creditable only once).
 async function creditTopUp(platform, subject, result, backing, deps = {}) {
   if (!alreadyCredited(platform, result.creditId, backing)) {
-    markCredited(platform, result.creditId, backing);
     const topUp = findTopUp(platform, result.productId);
-    if (topUp) adjustBalance(subject, creditMicrosForTopUp(platform, topUp.priceGbp), backing);
+    const creditMicros = topUp ? creditMicrosForTopUp(platform, topUp.priceGbp) : 0;
+    const record = {
+      subject,
+      productId: result.productId,
+      creditMicros,
+      creditedAt: Date.now(),
+      refunded: false,
+      creditId: result.creditId,
+      purchaseToken: result.purchaseToken || null,
+      orderId: result.creditId
+    };
+    markCredited(platform, result.creditId, record, backing);
+    if (result.purchaseToken && result.purchaseToken !== result.creditId) {
+      markCredited(platform, result.purchaseToken, record, backing);
+    }
+    if (creditMicros > 0) adjustBalance(subject, creditMicros, backing);
   }
   if (platform === 'google') {
     // Google's own authoritative "this token is spent" record — insurance
@@ -100,6 +116,121 @@ async function creditTopUp(platform, subject, result, backing, deps = {}) {
       console.error('[intention] Google consume failed (balance already credited)', e);
     }
   }
+}
+
+// ---- Refund Webhooks ------------------------------------------------------
+
+async function appleWebhookEndpoint(body, deps, backing) {
+  const signedPayload = body?.signedPayload;
+  if (!signedPayload) {
+    return json(400, { error: 'signedPayload is required', code: 'bad_request' });
+  }
+
+  const verifier = deps.verifyAppleJWS || (config.allowUnverifiedReceipts ? (jws) => decodeJWS(jws).payload : verifyAppleJWS);
+  let notification;
+  try {
+    notification = verifier(signedPayload);
+  } catch (e) {
+    if (e instanceof VerificationError) {
+      return json(401, { error: e.message, code: e.code });
+    }
+    throw e;
+  }
+
+  const notificationType = notification?.notificationType;
+  const signedTransactionInfo = notification?.data?.signedTransactionInfo;
+
+  if (signedTransactionInfo) {
+    let info;
+    try {
+      info = verifier(signedTransactionInfo);
+    } catch (e) {
+      if (e instanceof VerificationError) {
+        return json(401, { error: e.message, code: e.code });
+      }
+      throw e;
+    }
+
+    const transactionId = String(info.transactionId || info.originalTransactionId || '');
+    const appAccountToken = info.appAccountToken || '';
+    const productId = info.productId || '';
+
+    if (notificationType === 'REFUND' || notificationType === 'REVOKE' || info.revocationDate) {
+      const subject = appAccountToken ? subjectFor('apple', appAccountToken) : null;
+      const result = refundTopUp('apple', transactionId, { subject, productId }, backing);
+      return json(200, { ok: true, refund: result });
+    }
+  }
+
+  return json(200, { ok: true, processed: false, notificationType: notificationType || '' });
+}
+
+async function googleWebhookEndpoint(body, headers, deps, backing) {
+  const secret = config.google.webhookSecret;
+  if (secret) {
+    const authHeader = headers.authorization || headers.Authorization || '';
+    const tokenQuery = body?.token;
+    if (authHeader !== `Bearer ${secret}` && tokenQuery !== secret) {
+      return json(401, { error: 'Unauthorized webhook request', code: 'unauthorized' });
+    }
+  }
+
+  if (body?.testNotification) {
+    return json(200, { ok: true, test: true });
+  }
+
+  const messageData = body?.message?.data;
+  if (!messageData) {
+    return json(400, { error: 'message.data is required', code: 'bad_request' });
+  }
+
+  let payload;
+  try {
+    const jsonString = Buffer.from(messageData, 'base64').toString('utf8');
+    payload = JSON.parse(jsonString);
+  } catch (e) {
+    return json(400, { error: 'Invalid message payload', code: 'bad_request' });
+  }
+
+  if (payload.testNotification) {
+    return json(200, { ok: true, test: true });
+  }
+
+  const otp = payload.oneTimeProductNotification;
+  const voided = payload.voidedPurchaseNotification;
+
+  const isCanceled = (otp && Number(otp.notificationType) === 2) || Boolean(voided);
+  if (!isCanceled) {
+    return json(200, { ok: true, processed: false });
+  }
+
+  const purchaseToken = otp?.purchaseToken || voided?.purchaseToken || '';
+  const orderId = voided?.orderId || '';
+  const productId = otp?.sku || voided?.sku || '';
+
+  const creditId = orderId || purchaseToken;
+  if (!creditId) {
+    return json(400, { error: 'No orderId or purchaseToken in notification', code: 'bad_request' });
+  }
+
+  let subject = null;
+  const existing = getCreditRecord('google', creditId, backing) || (purchaseToken ? getCreditRecord('google', purchaseToken, backing) : null);
+  if (existing?.subject) {
+    subject = existing.subject;
+  } else if (purchaseToken && (deps.verifyGoogle || (config.google.clientEmail && config.google.privateKey))) {
+    try {
+      const verifier = deps.verifyGoogle || verifyGooglePurchase;
+      const verified = await verifier({ purchaseToken, productId });
+      if (verified?.obfuscatedExternalAccountId) {
+        subject = subjectFor('google', verified.obfuscatedExternalAccountId);
+      }
+    } catch (e) {
+      // Ignore if verification fails or already voided
+    }
+  }
+
+  const result = refundTopUp('google', creditId, { subject, productId }, backing);
+  return json(200, { ok: true, refund: result });
 }
 
 function entitlementResponse(subject, platform, productId, backing) {

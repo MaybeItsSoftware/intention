@@ -39,9 +39,9 @@ object BillingManager : PurchasesUpdatedListener {
 
     // Must match server/src/config.js's topUps table and the Play Console
     // product IDs.
-    const val PRODUCT_CREDIT_1 = "intention_coach_credit_1"
-    const val PRODUCT_CREDIT_2 = "intention_coach_credit_2"
-    const val PRODUCT_CREDIT_5 = "intention_coach_credit_5"
+    const val PRODUCT_CREDIT_1 = "intention1pound"
+    const val PRODUCT_CREDIT_2 = "intention2pound"
+    const val PRODUCT_CREDIT_5 = "intention5pound"
     private val PRODUCT_IDS = listOf(PRODUCT_CREDIT_1, PRODUCT_CREDIT_2, PRODUCT_CREDIT_5)
 
     private var billingClient: BillingClient? = null

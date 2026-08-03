@@ -52,6 +52,8 @@ npm start               # or: npm run dev
 | `POST /v1/entitlement/code` | Bearer | Mint a one-time code linking a browser to this account's balance |
 | `POST /v1/entitlement/redeem` | — | `{ code }` → entitlement + token, live balance |
 | `POST /v1/chat` | Bearer | `{ system, messages, tools }` → `{ text, toolCalls, balanceMicros, balanceGbp }` |
+| `POST /v1/webhooks/apple` | Apple JWS | App Store Server Notifications V2 (refund/revocation clawback) |
+| `POST /v1/webhooks/google` | Token / PubSub | Google Play RTDN (refund/cancellation clawback) |
 
 Error responses carry a `code` the client acts on: `entitlement_invalid` (401)
 and `entitlement_expired` (402) send the user back to the paywall,
