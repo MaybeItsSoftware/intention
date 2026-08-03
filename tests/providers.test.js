@@ -53,7 +53,7 @@ describe('callAnthropic', () => {
     const fetch = makeMockFetch({ status: 401, json: 'unauthorized' });
     const { ctx } = loadProviders({ fetch });
     await expect(ctx.callAnthropic({ apiKey: 'x', model: 'm', system: 's', messages: MESSAGES }))
-      .rejects.toThrow(/Anthropic 401/);
+      .rejects.toMatchObject({ code: 'auth', message: expect.stringMatching(/invalid API key/) });
   });
 });
 

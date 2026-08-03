@@ -24,6 +24,30 @@ function sendBg(msg) {
   return new Promise(resolve => chrome.runtime.sendMessage(msg, resolve));
 }
 
+// Chat calls (coach/settings-gate modals) can hang if the background worker
+// is busy or the LLM request stalls, so unlike sendBg above they get a
+// bounded timeout — above providers.js's 30s fetch timeout, so the
+// background's own error classification wins the race — and reject on
+// chrome.runtime.lastError instead of silently resolving with undefined.
+function sendBgChat(msg, timeoutMs = 35000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    try {
+      chrome.runtime.sendMessage(msg, (resp) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(resp);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      reject(e);
+    }
+  });
+}
+
 async function getConfig() {
   return sendBg({ action: 'getConfig' });
 }
@@ -270,7 +294,6 @@ function showSetupView() {
   };
 
   renderModeStep();
->>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
 
   // ---- Step: websites ----
   renderSetupDomains();
@@ -426,27 +449,6 @@ async function verifyAndStore(platform, receipt) {
       receipt,
       pendingVerification: true,
       lastError: String(e.message || e)
-=======
-    // Save and finalize
-    await sendBg({
-      action: 'saveSetup',
-      config: {
-        provider: isSimple ? '' : provider,
-        apiKey: isSimple ? '' : apiKey,
-        model: isSimple ? '' : model,
-        userContext,
-        contextProjects: projectsAns,
-        contextReasons: reasonsAns,
-        blockedDomains: setupBlockedDomains,
-        domainLimits,
-        blockedApps: setupBlockedApps,
-        appLimits,
-        appLabels: setupAppLabels,
-        blockingMode: setupBlockingMode,
-        simpleBehavior: setupSimpleBehavior,
-        simplePassMinutes: setupSimplePassMinutes
-      }
->>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
     });
     throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically — reopen Settings to retry.");
   }
@@ -930,6 +932,19 @@ function initSectionTabs() {
     btn.addEventListener('click', () => setSettingsSection(btn.dataset.sectionTab));
   });
   applySettingsSection();
+  applyDeepLinkSection();
+}
+
+// A `?section=` query param (e.g. from the chat's "invalid API key" error
+// button) overrides whatever tab localStorage last remembered, so the user
+// actually lands where the link promised instead of wherever they left off.
+function applyDeepLinkSection() {
+  const section = new URLSearchParams(window.location.search).get('section');
+  if (!section || !SETTINGS_SECTIONS.includes(section)) return;
+  setSettingsSection(section);
+  const target = document.querySelector(`#settings-view [data-section="${section}"]`);
+  target?.scrollIntoView({ block: 'start' });
+  if (section === 'settings') document.getElementById('api-key-input-2')?.focus();
 }
 
 function setSettingsSection(section) {
@@ -1763,10 +1778,17 @@ function addRetryButton(container, onRetry) {
 }
 
 let coachSending = false;
+// Only the most recent attemptCoachSend's result is allowed to touch the DOM;
+// see the matching guard in coaching.js for why.
+let coachRequestSeq = 0;
 
 async function openCoachModal() {
   const modal = document.getElementById('coach-modal');
   modal.hidden = false;
+  // Invalidate any request still in flight from a previous open, so a late
+  // response can't land in this fresh conversation.
+  coachRequestSeq++;
+  coachSending = false;
   const messagesEl = document.getElementById('coach-messages');
   messagesEl.innerHTML = '';
   addCoachMsg('assistant', "Hey there. Let's design your coaching context together. To help me support you better, what are you working on right now, and what tend to be your biggest distractions or triggers? I'll save our updated notes as we chat.");
@@ -1788,17 +1810,23 @@ async function openCoachModal() {
 }
 
 async function attemptCoachSend(text, messagesEl) {
+  const seq = ++coachRequestSeq;
   coachSending = true;
   const thinking = addCoachMsg('assistant', '…', true);
   let resp;
   try {
-    resp = await sendBg({ action: 'chat', mode: 'context', userMessage: text });
+    resp = await sendBgChat({ action: 'chat', mode: 'context', userMessage: text });
   } catch (e) {
+    if (seq !== coachRequestSeq) return;
     coachSending = false;
     thinking.remove();
-    showCoachRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    const message = e && e.message === 'timeout'
+      ? "That's taking too long to answer. Check your connection and try again."
+      : '[no response - background worker may be offline]';
+    showCoachRetryableError(messagesEl, message, text);
     return;
   }
+  if (seq !== coachRequestSeq) return;
   coachSending = false;
   if (!resp) {
     thinking.remove();
@@ -1807,14 +1835,12 @@ async function attemptCoachSend(text, messagesEl) {
   }
   if (resp.error) {
     thinking.remove();
-    // Access lapsed mid-conversation (expired, cancelled, refunded): the way
-    // out is the purchase flow, not a retry button.
     if (resp.locked) {
       await closeCoachModal();
       await openPaywallModal();
       return;
     }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
     showCoachRetryableError(messagesEl, message, text);
     return;
   }
@@ -1872,6 +1898,9 @@ function typeCoachMsg(el, text) {
 // ---- Settings-gate modal: user must convince the coach to loosen a rule ----
 let gateSending = false;
 let gateChange = null;
+// Only the most recent attemptGateSend's result is allowed to touch the DOM;
+// see the matching guard in coaching.js for why.
+let gateRequestSeq = 0;
 
 // Loosening a rule has to be argued with the coach, so it needs the same AI
 // access a gate conversation does — without it, show the paywall rather than a
@@ -1881,6 +1910,9 @@ async function openGateModal({ changeType, domain, currentValue, newValue, title
   gateChange = { changeType, domain, currentValue, newValue, onApproved };
   const modal = document.getElementById('gate-modal');
   modal.hidden = false;
+  // Invalidate any request still in flight from a previous open, so a late
+  // response can't land in this fresh conversation.
+  gateRequestSeq++;
   document.getElementById('gate-title').textContent = title || 'Convince your coach';
   document.getElementById('gate-subtitle').textContent = subtitle || '';
 
@@ -1913,11 +1945,12 @@ async function openGateModal({ changeType, domain, currentValue, newValue, title
 }
 
 async function attemptGateSend(text, messagesEl) {
+  const seq = ++gateRequestSeq;
   gateSending = true;
   const thinking = addGateMsg('assistant', '…', true);
   let resp;
   try {
-    resp = await sendBg({
+    resp = await sendBgChat({
       action: 'chat',
       mode: 'settings_gate',
       domain: gateChange.domain,
@@ -1927,11 +1960,16 @@ async function attemptGateSend(text, messagesEl) {
       userMessage: text
     });
   } catch (e) {
+    if (seq !== gateRequestSeq) return;
     gateSending = false;
     thinking.remove();
-    showGateRetryableError(messagesEl, '[no response - background worker may be offline]', text);
+    const message = e && e.message === 'timeout'
+      ? "That's taking too long to answer. Check your connection and try again."
+      : '[no response - background worker may be offline]';
+    showGateRetryableError(messagesEl, message, text);
     return;
   }
+  if (seq !== gateRequestSeq) return;
   gateSending = false;
   if (!resp) {
     thinking.remove();
@@ -1945,7 +1983,7 @@ async function attemptGateSend(text, messagesEl) {
       await openPaywallModal();
       return;
     }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
     showGateRetryableError(messagesEl, message, text);
     return;
   }

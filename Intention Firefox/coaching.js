@@ -216,7 +216,6 @@ function renderSimpleUI(blockConfig) {
     closeBtn.insertAdjacentElement('beforebegin', settingsBtn);
   }
 }
->>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
 
 // Locked before a word is typed: don't seed a conversation that can't happen.
 try {
@@ -265,18 +264,32 @@ try {
 }
 
 let sending = false;
+// Bumped above providers.js's 30s per-request fetch timeout so the background
+// worker's own timeout/error classification wins the race and reaches the UI
+// as a friendly message, instead of the UI giving up first on a request that
+// was actually about to fail cleanly on its own.
+const CHAT_TIMEOUT_MS = 35000;
+// Only the most recent attemptSend's result is allowed to touch the DOM.
+// Nothing in the current flow can put two attempts in flight at once, but
+// this keeps a stale response harmless if that ever changes.
+let requestSeq = 0;
 
-function sendChatMessage(message, timeoutMs = 15000) {
+function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-    chrome.runtime.sendMessage(message, (resp) => {
+    try {
+      chrome.runtime.sendMessage(message, (resp) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(resp);
+      });
+    } catch (e) {
       clearTimeout(timer);
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(resp);
-    });
+      reject(e);
+    }
   });
 }
 
@@ -289,6 +302,7 @@ async function send() {
 }
 
 async function attemptSend(text) {
+  const seq = ++requestSeq;
   sending = true;
   const thinking = addMessage(messagesEl, 'assistant', '…', true);
 
@@ -303,11 +317,17 @@ async function attemptSend(text) {
       userMessage: text
     });
   } catch (e) {
+    if (seq !== requestSeq) return;
     thinking.remove();
     sending = false;
-    showRetryableError(messagesEl, '[no response: background worker may be offline]', text);
+    const message = e && e.message === 'timeout'
+      ? "That's taking too long to answer. Check your connection and try again."
+      : '[no response: background worker may be offline]';
+    showRetryableError(messagesEl, message, text);
     return;
   }
+
+  if (seq !== requestSeq) return;
 
   if (!resp) {
     thinking.remove();
@@ -322,12 +342,13 @@ async function attemptSend(text) {
       showPaywall();
       return;
     }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
-    showRetryableError(messagesEl, message, text);
+    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
+    showRetryableError(messagesEl, message, text, resp.errorCode);
     return;
   }
   thinking.classList.remove('int-thinking');
   typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
+    if (seq !== requestSeq) return;
     sending = false;
     if (resp.grantedSession) {
       followGrantedSession(resp.grantedSession);
@@ -358,26 +379,55 @@ function followGrantedSession(grantedSession, delayMs = 2200) {
   }, delayMs);
 }
 
-function showRetryableError(container, message, text) {
+function showRetryableError(container, message, text, errorCode) {
   const errorEl = addMessage(container, 'assistant', message);
-  addRetryButton(container, () => {
-    errorEl.remove();
-    attemptSend(text);
+  const actions = [];
+  if (errorCode === 'auth') {
+    // Left open (not dismissed on click) so the user can still hit "Try
+    // again" here after fixing the key in the settings tab this opens.
+    actions.push({
+      label: 'Fix API key',
+      keepOpen: true,
+      onClick: () => openOptionsSection('settings')
+    });
+  }
+  actions.push({
+    label: 'Try again',
+    onClick: () => {
+      errorEl.remove();
+      attemptSend(text);
+    }
   });
+  addActionRow(container, actions);
 }
 
-function addRetryButton(container, onRetry) {
+// Native ports have no background page (chrome.tabs doesn't exist), except
+// Android, which intercepts the "openOptions" message before it ever gets
+// there — see WebAppInterface.sendMessage. iOS has neither, so it has to
+// navigate its own WebView directly, same as the "Close tab" button already
+// does when window.close() is a no-op there.
+function openOptionsSection(section) {
+  if (isApp && !window.intentionApps) {
+    window.location.href = `options.html?section=${encodeURIComponent(section)}`;
+    return;
+  }
+  chrome.runtime.sendMessage({ action: 'openOptions', section });
+}
+
+function addActionRow(container, actions) {
   const row = document.createElement('div');
   row.className = 'int-retry-row';
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'int-retry-btn';
-  btn.textContent = 'Try again';
-  btn.addEventListener('click', () => {
-    row.remove();
-    onRetry();
-  });
-  row.appendChild(btn);
+  for (const action of actions) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'int-retry-btn';
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      if (!action.keepOpen) row.remove();
+      action.onClick();
+    });
+    row.appendChild(btn);
+  }
   container.appendChild(row);
   container.scrollTop = container.scrollHeight;
   return row;

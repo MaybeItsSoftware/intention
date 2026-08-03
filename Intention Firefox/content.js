@@ -532,6 +532,12 @@ function renderChatUI({ mode, domain, blockConfig }) {
   }
 
   let sending = false;
+  // Only the most recent attemptSend's result is allowed to touch the DOM,
+  // so a stale response after a timeout+retry can't double-render.
+  let requestSeq = 0;
+  // Above providers.js's 30s per-request fetch timeout, so the background
+  // worker's own timeout/error classification wins the race.
+  const CHAT_TIMEOUT_MS = 35000;
 
   async function send() {
     const text = inputEl.value.trim();
@@ -542,12 +548,14 @@ function renderChatUI({ mode, domain, blockConfig }) {
   }
 
   async function attemptSend(text) {
+    const seq = ++requestSeq;
     sending = true;
     const thinking = addMessage(messagesEl, "assistant", "…", true);
 
     let resp;
     try {
-      resp = await new Promise((resolve) => {
+      resp = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
         chrome.runtime.sendMessage(
           {
             action: "chat",
@@ -555,33 +563,44 @@ function renderChatUI({ mode, domain, blockConfig }) {
             domain,
             userMessage: text,
           },
-          resolve,
+          (response) => {
+            clearTimeout(timer);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(response);
+          },
         );
       });
     } catch (e) {
+      if (seq !== requestSeq) return;
       thinking.remove();
       sending = false;
-      showRetryableError(messagesEl, "[no response — background worker may be offline]", text);
+      const message = e && e.message === "timeout"
+        ? "That's taking too long to answer. Check your connection and try again."
+        : "[no response: background worker may be offline]";
+      showRetryableError(messagesEl, message, text);
       return;
     }
+
+    if (seq !== requestSeq) return;
 
     if (!resp) {
       thinking.remove();
       sending = false;
-      showRetryableError(messagesEl, "[no response — background worker may be offline]", text);
+      showRetryableError(messagesEl, "[no response: background worker may be offline]", text);
       return;
     }
     if (resp.error) {
       thinking.remove();
       sending = false;
-      // Access lapsed mid-conversation: retrying can't help, so swap the chat
-      // for the pointer to where coaching credit can be sorted out.
       if (resp.locked) {
         renderAccessNeededUI();
         return;
       }
-      const message = resp.networkError ? "Can't reach the coach — check your connection." : `[error: ${resp.error}]`;
-      showRetryableError(messagesEl, message, text);
+      const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
+      showRetryableError(messagesEl, message, text, resp.errorCode);
       return;
     }
     // Reuse the "…" placeholder and reveal the reply gradually so it reads
@@ -600,26 +619,42 @@ function renderChatUI({ mode, domain, blockConfig }) {
     );
   }
 
-  function showRetryableError(container, message, text) {
+  function showRetryableError(container, message, text, errorCode) {
     const errorEl = addMessage(container, "assistant", message);
-    addRetryButton(container, () => {
-      errorEl.remove();
-      attemptSend(text);
+    const actions = [];
+    if (errorCode === "auth") {
+      // Left open (not dismissed on click) so the user can still hit "Try
+      // again" here after fixing the key in the settings tab this opens.
+      actions.push({
+        label: "Fix API key",
+        keepOpen: true,
+        onClick: () => chrome.runtime.sendMessage({ action: "openOptions", section: "settings" }),
+      });
+    }
+    actions.push({
+      label: "Try again",
+      onClick: () => {
+        errorEl.remove();
+        attemptSend(text);
+      },
     });
+    addActionRow(container, actions);
   }
 
-  function addRetryButton(container, onRetry) {
+  function addActionRow(container, actions) {
     const row = document.createElement("div");
     row.className = "int-retry-row";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "int-retry-btn";
-    btn.textContent = "Try again";
-    btn.addEventListener("click", () => {
-      row.remove();
-      onRetry();
-    });
-    row.appendChild(btn);
+    for (const action of actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "int-retry-btn";
+      btn.textContent = action.label;
+      btn.addEventListener("click", () => {
+        if (!action.keepOpen) row.remove();
+        action.onClick();
+      });
+      row.appendChild(btn);
+    }
     container.appendChild(row);
     container.scrollTop = container.scrollHeight;
     return row;

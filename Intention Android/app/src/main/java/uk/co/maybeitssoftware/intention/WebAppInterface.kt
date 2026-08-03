@@ -57,7 +57,7 @@ class WebAppInterface(
             // neither of which exists on Android — bring up MainActivity, which
             // hosts the same options page, instead of silently doing nothing.
             if (action == "openOptions") {
-                openOptions()
+                openOptions(json.optString("section").takeIf { it.isNotEmpty() })
                 runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{\"ok\":true}')")
                 return
             }
@@ -143,9 +143,10 @@ class WebAppInterface(
         runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(array.toString())})")
     }
 
-    private fun openOptions() {
+    private fun openOptions(section: String? = null) {
         val intent = Intent(context, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (section != null) putExtra("section", section)
         }
         Handler(Looper.getMainLooper()).post {
             context.startActivity(intent)

@@ -154,6 +154,7 @@ export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGloba
     Object,
     Array,
     Error,
+    AbortController,
     ...extraGlobals
   };
   // self-reference so `globalThis`/`self` style access works if needed
@@ -233,6 +234,7 @@ export function loadBackground({ seed = {}, fetch } = {}) {
   chrome.tabs = {
     query: async () => [],
     update: async () => {},
+    create: async () => {},
     remove: () => {},
     sendMessage: async () => { throw new Error('no content script'); },
     onRemoved: { addListener: (fn) => { listeners.tabRemoved = fn; } }
