@@ -62,7 +62,59 @@ const PROVIDERS = {
 function isNetworkError(e) {
   if (!e) return false;
   if (e instanceof TypeError) return true;
-  return /failed to fetch|networkerror|load failed|network request failed|internet connection/i.test(e.message || '');
+  return /failed to fetch|networkerror|load failed|network request failed|internet connection|timed? ?out|abort/i.test(e.message || e.name || '');
+}
+
+const PROVIDER_FETCH_TIMEOUT_MS = 30000;
+
+// AbortController-based timeout so a hung provider connection fails fast
+// instead of leaving the chat UI waiting forever. The resulting error's
+// message/name match isNetworkError so callers don't need special-casing.
+async function fetchWithTimeout(url, options, timeoutMs = PROVIDER_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      const err = new Error('Request timed out');
+      err.code = 'timeout';
+      throw err;
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function parseJsonResponse(res, providerLabel) {
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new Error(`Invalid response from ${providerLabel}`);
+  }
+}
+
+// Classifies a non-2xx HTTP response into a stable err.code so downstream
+// callers (background.js) can map to a human-readable message without
+// parsing provider-specific status text.
+async function throwHttpError(res, providerLabel) {
+  const text = await res.text();
+  let err;
+  if (res.status === 401 || res.status === 403) {
+    err = new Error(`${providerLabel}: invalid API key`);
+    err.code = 'auth';
+  } else if (res.status === 429) {
+    err = new Error(`${providerLabel}: rate limited`);
+    err.code = 'rate_limit';
+  } else if (res.status >= 500) {
+    err = new Error(`${providerLabel} is temporarily unavailable (${res.status})`);
+    err.code = 'provider_error';
+  } else {
+    err = new Error(`${providerLabel} ${res.status}: ${text}`);
+    err.code = 'bad_request';
+  }
+  throw err;
 }
 
 async function callLLM({ provider, apiKey, model, system, messages, tools, accessToken, backendUrl }) {
@@ -171,7 +223,7 @@ async function callAnthropic({ apiKey, model, system, messages, tools }) {
       input_schema: t.schema
     }));
   }
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -181,8 +233,8 @@ async function callAnthropic({ apiKey, model, system, messages, tools }) {
     },
     body: JSON.stringify(body)
   });
-  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-  const data = await res.json();
+  if (!res.ok) await throwHttpError(res, 'Anthropic');
+  const data = await parseJsonResponse(res, 'Anthropic');
   let text = '';
   const toolCalls = [];
   for (const block of data.content || []) {
@@ -204,7 +256,7 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, system, messages, 
       function: { name: t.name, description: t.description, parameters: t.schema }
     }));
   }
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  const res = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -212,8 +264,8 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, system, messages, 
     },
     body: JSON.stringify(body)
   });
-  if (!res.ok) throw new Error(`${baseUrl} ${res.status}: ${await res.text()}`);
-  const data = await res.json();
+  if (!res.ok) await throwHttpError(res, baseUrl);
+  const data = await parseJsonResponse(res, baseUrl);
   const msg = data.choices?.[0]?.message || {};
   const text = msg.content || '';
   const toolCalls = (msg.tool_calls || []).map(tc => {
@@ -241,13 +293,13 @@ async function callGemini({ apiKey, model, system, messages, tools }) {
     }];
   }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
   });
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
-  const data = await res.json();
+  if (!res.ok) await throwHttpError(res, 'Gemini');
+  const data = await parseJsonResponse(res, 'Gemini');
   const parts = data.candidates?.[0]?.content?.parts || [];
   let text = '';
   const toolCalls = [];

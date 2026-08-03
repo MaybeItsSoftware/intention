@@ -137,8 +137,19 @@ class MainActivity : AppCompatActivity() {
         // Load options, with the native bridge script injected into <head>
         val html = assets.open("options.html").bufferedReader().use { it.readText() }
         val modifiedHtml = html.replace("<head>", "<head><script src=\"android-bridge.js\"></script>")
+        // A deep-linked section (e.g. from the chat's "invalid API key" error)
+        // arrives as an Intent extra rather than a real URL, since this page is
+        // injected via loadDataWithBaseURL rather than navigated to — folding it
+        // into the base URL's query string is what lets options.js read it the
+        // same way it would from a normal ?section= link on the other platforms.
+        val section = intent.getStringExtra("section")
+        val baseUrl = if (section != null) {
+            "file:///android_asset/options.html?section=${Uri.encode(section)}"
+        } else {
+            "file:///android_asset/"
+        }
         webView.loadDataWithBaseURL(
-            "file:///android_asset/",
+            baseUrl,
             modifiedHtml,
             "text/html",
             "UTF-8",

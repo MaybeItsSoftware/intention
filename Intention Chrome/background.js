@@ -311,7 +311,21 @@ async function handleMessage(message, sender) {
       return getUsageLog(message.days);
     case 'openOptions': {
       const optionsUrl = chrome.runtime.getURL('options.html');
-      await focusOrCreateTab(optionsUrl, () => chrome.runtime.openOptionsPage());
+      if (!message.section) {
+        await focusOrCreateTab(optionsUrl, () => chrome.runtime.openOptionsPage());
+        return { ok: true };
+      }
+      // A section deep-link (e.g. from the chat's "invalid API key" error)
+      // needs to navigate — reusing an already-open options tab as-is via
+      // focusOrCreateTab would leave it stuck wherever it last was.
+      const targetUrl = `${optionsUrl}?section=${encodeURIComponent(message.section)}`;
+      const tabs = await chrome.tabs.query({ url: optionsUrl + '*' });
+      if (tabs.length > 0) {
+        await chrome.tabs.update(tabs[0].id, { active: true, url: targetUrl });
+        try { await chrome.windows.update(tabs[0].windowId, { focused: true }); } catch (e) {}
+      } else {
+        await chrome.tabs.create({ url: targetUrl });
+      }
       return { ok: true };
     }
     case 'closeCurrentTab': {
@@ -462,9 +476,6 @@ async function getAccess() {
   };
 }
 
-async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'entitlement', 'backendUrl'];
-=======
 // Per-item mode/behavior override falls back to the global default, so most
 // domains carry no mode/behavior/passMinutes fields at all.
 async function getEffectiveMode(domain) {
@@ -478,8 +489,7 @@ async function getEffectiveMode(domain) {
 }
 
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'blockingMode', 'simpleBehavior', 'simplePassMinutes'];
->>>>>>> 57515b0 (feat(blocking): add simple no-AI blocking mode)
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'entitlement', 'backendUrl', 'blockingMode', 'simpleBehavior', 'simplePassMinutes'];
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -652,9 +662,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   } catch (e) {
     if (isEntitlementError(e)) {
       await markEntitlementStale(e.code);
-      return { error: e.message, locked: true };
+      return { error: e.message, locked: true, errorCode: e.code };
     }
-    return { error: e.message, networkError: isNetworkError(e) };
+    return { error: friendlyLlmErrorMessage(e), networkError: isNetworkError(e), errorCode: e && e.code };
   }
 
   // Keeps a "credit remaining" indicator live after every message, rather
@@ -677,70 +687,94 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   let settingApproved = null;
   let appendedNote = '';
 
+  // Each tool call is processed independently: a malformed/unexpected input on
+  // one call must not prevent the others from running, and must never abort
+  // before the history persistence below, or the user's message (already sent
+  // to and answered by the LLM) would silently vanish from their chat.
   for (const tc of llmResponse.toolCalls || []) {
-    if (tc.name === 'approve_setting_change' && mode === 'settings_gate') {
-      settingApproved = await applySettingChange({ domain, changeType, newValue });
-      continue;
-    }
-    if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
-      const stats = await getStatsForDomain(domain);
-      const limits = await getLimitsForDomain(domain);
-      
-      const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
-      const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
-      
-      if (grantsLimitReached || minutesLimitReached) {
-        const reasonStr = grantsLimitReached ? "daily grant cap reached" : `absolute max of ${limits.maxMinutes} minutes reached`;
-        appendedNote = `\n\n_(Intention: ${reasonStr} — no more time can be granted today, but I'm still here to talk.)_`;
+    const input = tc.input || {};
+    try {
+      if (tc.name === 'approve_setting_change' && mode === 'settings_gate') {
+        settingApproved = await applySettingChange({ domain, changeType, newValue });
         continue;
       }
-      
-      let minutes = Math.max(1, Math.min(60, Math.round(Number(tc.input.minutes) || 0)));
-      if (limits.maxMinutes > 0) {
-        const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
-        if (minutes > remainingMinutes) {
-          minutes = remainingMinutes;
+      if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
+        const stats = await getStatsForDomain(domain);
+        const limits = await getLimitsForDomain(domain);
+
+        const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
+        const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
+
+        if (grantsLimitReached || minutesLimitReached) {
+          const reasonStr = grantsLimitReached ? "daily grant cap reached" : `absolute max of ${limits.maxMinutes} minutes reached`;
+          appendedNote = `\n\n_(Intention: ${reasonStr} — no more time can be granted today, but I'm still here to talk.)_`;
+          continue;
         }
-      }
-      
-      if (minutes <= 0) {
-        appendedNote = `\n\n_(Intention: absolute max reached — no more time can be granted today.)_`;
-        continue;
-      }
-      
-      const reason = String(tc.input.reason || '').slice(0, 240);
-      grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason });
-    } else if (tc.name === 'update_context' && mode === 'context') {
-      const newContext = String(tc.input.new_context || '').slice(0, 5000).trim();
-      if (newContext) {
-        await setStorage({ userContext: newContext });
-        contextUpdated = { new_context: newContext, diff_summary: String(tc.input.diff_summary || '').slice(0, 240) };
-      }
-    } else if (tc.name === 'save_onboarding' && mode === 'setup') {
-      const userContext = String(tc.input.user_context || '').slice(0, 5000).trim();
-      const blockedDomains = (tc.input.blocked_domains || []).map(d => 
-        String(d).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
-      ).filter(Boolean);
-      
-      const domainLimits = {};
-      for (const item of tc.input.domain_limits || []) {
-        if (item.domain) {
-          const dom = String(item.domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-          domainLimits[dom] = {
-            maxGrants: Number(item.max_grants_per_day) || 3,
-            maxMinutes: Number(item.max_minutes_per_day) ?? -1
-          };
+
+        let minutes = Math.max(1, Math.min(60, Math.round(Number(input.minutes) || 0)));
+        if (limits.maxMinutes > 0) {
+          const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
+          if (minutes > remainingMinutes) {
+            minutes = remainingMinutes;
+          }
         }
+
+        if (minutes <= 0) {
+          appendedNote = `\n\n_(Intention: absolute max reached — no more time can be granted today.)_`;
+          continue;
+        }
+
+        const reason = String(input.reason || '').slice(0, 240);
+        const { activeSessions = {} } = await getStorage(['activeSessions']);
+        const previous = activeSessions[sessionKey];
+        if (previous && !isBanked(previous)) {
+          const elapsed = (Date.now() - previous.startTime) / 60000;
+          await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
+        }
+
+        const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
+        await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
+        chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
+        // Apps have no network rules to allow — the Android accessibility
+        // service reads activeSessions directly to let the app through — and
+        // neither do the native ports, which have no tab to scope a rule to.
+        if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+        grantedSession = session;
+      } else if (tc.name === 'update_context' && mode === 'context') {
+        const newContext = String(input.new_context || '').slice(0, 5000).trim();
+        if (newContext) {
+          await setStorage({ userContext: newContext });
+          contextUpdated = { new_context: newContext, diff_summary: String(input.diff_summary || '').slice(0, 240) };
+        }
+      } else if (tc.name === 'save_onboarding' && mode === 'setup') {
+        const userContext = String(input.user_context || '').slice(0, 5000).trim();
+        const blockedDomains = (input.blocked_domains || []).map(d =>
+          String(d).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+        ).filter(Boolean);
+
+        const domainLimits = {};
+        for (const item of input.domain_limits || []) {
+          if (item?.domain) {
+            const dom = String(item.domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+            domainLimits[dom] = {
+              maxGrants: Number(item.max_grants_per_day) || 3,
+              maxMinutes: Number(item.max_minutes_per_day) ?? -1
+            };
+          }
+        }
+
+        await setStorage({
+          userContext,
+          blockedDomains,
+          domainLimits,
+          setupComplete: true
+        });
+        await syncBlockingRules();
+        contextUpdated = { onboardingComplete: true };
       }
-      
-      await setStorage({
-        userContext,
-        blockedDomains,
-        domainLimits,
-        setupComplete: true
-      });
-      await syncBlockingRules();
-      contextUpdated = { onboardingComplete: true };
+    } catch (e) {
+      console.warn(`Intention: tool call "${tc.name}" failed`, e);
+      appendedNote += `\n\n_(Intention: something went wrong applying that — try describing what you want again.)_`;
     }
   }
 
@@ -766,11 +800,37 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // Re-read under the lock: the LLM call above took seconds, and writing back
   // the copy of chatHistories read before it would drop any other
   // conversation's turns committed in the meantime.
-  await mutateStorage('chatHistories', (histories) => {
-    histories[historyKey] = history.slice(-40);
-  });
+  //
+  // This is best-effort: the LLM has already replied and any grant/setting
+  // change above already landed, so a storage hiccup here should not turn
+  // into an error response — it would just make this turn missing from
+  // history on next open, not undo anything the user was told happened.
+  try {
+    await mutateStorage('chatHistories', (histories) => {
+      histories[historyKey] = history.slice(-40);
+    });
+  } catch (e) {
+    console.warn('Intention: failed to persist chat history', e);
+  }
 
   return { assistantText, grantedSession, contextUpdated, approved: settingApproved ? true : false };
+}
+
+// Maps provider.js's stable err.code classifications to messages a user can
+// actually act on, instead of surfacing raw HTTP bodies or stack traces.
+function friendlyLlmErrorMessage(e) {
+  switch (e && e.code) {
+    case 'auth':
+      return 'Your API key was rejected. Check it in settings.';
+    case 'rate_limit':
+      return "The AI provider is rate-limiting requests. Wait a moment and try again.";
+    case 'provider_error':
+      return "The AI provider is having issues right now. Try again shortly.";
+    case 'timeout':
+      return "The request timed out. Try again.";
+    default:
+      return (e && e.message) || 'Something went wrong talking to the AI provider.';
+  }
 }
 
 // Perform the actual loosening mutation once the coach approves it, then

@@ -18,12 +18,22 @@ function daysAgoKeys(n) {
 }
 
 function getStorage(keys) {
-  return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, result => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(result);
+    });
+  });
 }
 
 function setStorage(obj) {
   pushConfigToNative(obj);
-  return new Promise(resolve => chrome.storage.local.set(obj, resolve));
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(obj, () => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve();
+    });
+  });
 }
 
 // chrome.storage has no transactions, so a plain read → await → write cycle
