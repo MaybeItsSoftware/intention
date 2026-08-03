@@ -1114,7 +1114,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1151,7 +1151,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1194,7 +1194,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1238,7 +1238,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1280,7 +1280,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1318,7 +1318,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1360,7 +1360,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1405,7 +1405,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				OTHER_LDFLAGS = (
 					"-framework",
 					SafariServices,
@@ -1444,7 +1444,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Monitor;
 				PRODUCT_NAME = "Intention Monitor Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Monitor";
@@ -1477,7 +1477,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Monitor;
 				PRODUCT_NAME = "Intention Monitor Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Monitor";
@@ -1511,7 +1511,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Shield;
 				PRODUCT_NAME = "Intention Shield Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Shield";
@@ -1544,7 +1544,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Shield;
 				PRODUCT_NAME = "Intention Shield Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Shield";
@@ -1578,7 +1578,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.ShieldAction;
 				PRODUCT_NAME = "Intention Shield Action Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.ShieldAction";
@@ -1611,7 +1611,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.ShieldAction;
 				PRODUCT_NAME = "Intention Shield Action Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.ShieldAction";
@@ -1645,7 +1645,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Report;
 				PRODUCT_NAME = "Intention Report Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Report";
@@ -1679,7 +1679,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 0.17.0;
+				MARKETING_VERSION = 0.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Report;
 				PRODUCT_NAME = "Intention Report Extension";
 				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Report";
