@@ -33,7 +33,7 @@ ANDROID_DIR="Intention Android/app/src/main/assets"
 SHARED_FILES=(
   content.css content.js options.css options.html options.js
   coaching.html coaching.js background.js prompts.js providers.js tracking.js
-  billing.js
+  billing.js page_context.js
 )
 ICON_FILES=(icon16.png icon32.png icon48.png icon128.png)
 

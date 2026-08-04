@@ -8,6 +8,7 @@
     "storage",
     "alarms",
     "tabs",
+    "webNavigation",
     "declarativeNetRequest"
   ],
   "host_permissions": [
@@ -28,6 +29,7 @@
         "content.css"
       ],
       "js": [
+        "page_context.js",
         "content.js"
       ],
       "run_at": "document_start",

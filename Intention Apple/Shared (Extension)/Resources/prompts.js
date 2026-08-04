@@ -76,7 +76,7 @@ const DEFAULT_COACH_INSTRUCTIONS = `You are Intention — a warm, curious, non-j
 How to be:
 - Default stance: the site stays blocked. The user wants it blocked; that is the whole point. Granting access is the exception, not the norm.
 - Respond to what they actually said, like a person would. Never bulldoze past their message into a scripted check-in. If they say something meta (testing the extension, asking how you work, tinkering with settings), just answer plainly and briefly; that is not a coaching moment.
-- You have live usage facts below. Cite a number only when it carries real weight: "you're at 45 minutes here today" lands, while "you've got 0 minutes so far" is noise. Same for their earlier reasons: "Earlier you came here to do X, is this the same thing?" is great when it's true. Say nothing about usage when there's nothing to say.
+- You have live usage facts below. Cite a number only when it carries real weight: "you're at 45 minutes here today" lands, while "you've got 0 minutes so far" is noise. Same for their earlier reasons: "Earlier you came here to do X, is this the same thing?" is great when it's true. Say nothing about usage when there's nothing to say. You may also have specific page context (video title, channel, video length, thread title, account). Reference these naturally when relevant (e.g. "I see you're opening a 40-minute video on X — do you have time for that right now?").
 - When you do push back, tie it to the user's OWN stated goals and motivations (under "What they told you about themselves"), but only where it genuinely connects to why they're here right now. Mirror their words back: if they said this site makes them feel scattered or anxious, name that. Don't recite their goals list back at them as a guilt trip.
 - Be warm and curious. Real questions: "What are you hoping to find?" "Is there something you're avoiding right now?" "How will you know you're done?"
 - Keep messages short — 2 to 4 sentences. Real coaches don't lecture.
@@ -131,10 +131,41 @@ function renderReasonsToday(reasonsToday) {
   return list.map(r => `"${r}"`).join('; ');
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday }) {
+// Format specific page/content context if available (e.g. video title, length, thread title).
+function renderPageContextBlock(pageContext) {
+  if (!pageContext || typeof pageContext !== 'object') return '';
+  const lines = [];
+  if (pageContext.url) lines.push(`- Page URL: ${pageContext.url}`);
+  if (pageContext.contentType) lines.push(`- Content Type: ${pageContext.contentType}`);
+  if (pageContext.videoTitle) lines.push(`- Video Title: ${pageContext.videoTitle}`);
+  if (pageContext.channel) lines.push(`- Channel / Creator: ${pageContext.channel}`);
+  if (pageContext.duration) lines.push(`- Video Length / Duration: ${pageContext.duration}`);
+  if (pageContext.threadTitle) lines.push(`- Thread / Article Title: ${pageContext.threadTitle}`);
+  if (pageContext.subreddit) lines.push(`- Subreddit: ${pageContext.subreddit}`);
+  if (pageContext.author) lines.push(`- Author / Account: ${pageContext.author}`);
+  if (pageContext.snippet) lines.push(`- Content Snippet: ${pageContext.snippet}`);
+  if (pageContext.title && !pageContext.videoTitle && !pageContext.threadTitle) {
+    lines.push(`- Page Title: ${pageContext.title}`);
+  }
+
+  if (!lines.length) return '';
+
+  return `\n\nSpecific page/content context for what the user is visiting:
+${lines.join('\n')}
+
+Instructions for using page context:
+- You know EXACTLY what video, thread, article, or account they are trying to open.
+- Naturally reference specific details (video title, channel/creator, video duration, thread title, subreddit, or account name) in your coaching questions when relevant.
+- E.g., if it's a 45-minute YouTube video titled "X", you can ask: "I see you're opening a 45-minute video on 'X' by 'Y' — is watching this aligned with your focus right now?"
+- E.g., if it's a Reddit thread titled "Z" in r/reactjs, you can ask: "What are you hoping to learn from 'Z' in r/reactjs?"
+- Be natural, curious, and conversational.`;
+}
+
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday, pageContext }) {
   const minsCapStr = minutesCap && minutesCap > 0 ? `${minutesTodaySite} of ${minutesCap}m absolute max` : 'unlimited';
   const capReached = grantsToday >= grantsCap || (minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
   const reasonsStr = renderReasonsToday(reasonsToday);
+  const pageCtxStr = renderPageContextBlock(pageContext);
   const usage = `You're talking with them right now because they just opened ${domain}.
 
 Today's usage:
@@ -142,7 +173,7 @@ Today's usage:
 - Minutes on ${domain} today: ${minsCapStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Minutes across all blocked sites this week: ${minutesWeekAll}
-- Reasons they already gave for visiting ${domain} today: ${reasonsStr}
+- Reasons they already gave for visiting ${domain} today: ${reasonsStr}${pageCtxStr}
 
 If they've already been here today, say so ("Earlier today you came here for ${reasonsStr === '(none yet today)' ? '…' : reasonsStr}…") and ask whether this is the same pull or genuinely new. If this is their first visit of the day, don't recite the zeros; just ask what brings them here.${capReached ? `
 
@@ -162,17 +193,18 @@ If they've already been here today, say so ("Earlier today you came here for ${r
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, reasonsToday }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, reasonsToday, pageContext }) {
   const minsCapStr = minutesCap && minutesCap > 0 ? `${minutesTodaySite} of ${minutesCap}m absolute max` : 'unlimited';
   const capReached = grantsToday >= grantsCap || (minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
   const reasonsStr = renderReasonsToday(reasonsToday);
+  const pageCtxStr = renderPageContextBlock(pageContext);
   const usage = `You are gently checking in: the user's granted time on ${domain} is up. Their original stated purpose was: "${originalReason || '(unknown)'}".
 
 Today's usage:
 - Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
 - Minutes on ${domain} today: ${minsCapStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
-- Reasons they gave for visiting ${domain} today: ${reasonsStr}
+- Reasons they gave for visiting ${domain} today: ${reasonsStr}${pageCtxStr}
 
 Reference their earlier reasons and today's logged time directly (e.g. "Earlier today you came here for ${reasonsStr === '(none yet today)' ? 'this' : reasonsStr}, and you're now at ${minutesTodaySite} minutes…").
 

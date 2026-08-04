@@ -69,5 +69,5 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     // Google Play Billing — Intention Pro, the subscription that powers the
     // built-in coach (BillingManager.kt).
-    implementation("com.android.billingclient:billing-ktx:7.1.1")
+    implementation("com.android.billingclient:billing-ktx:8.0.0")
 }

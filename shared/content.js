@@ -283,8 +283,9 @@ function showGate(why) {
 function runCheck() {
   try {
     const host = window.location.hostname;
+    const pageContext = typeof extractPageContextFromDOM === 'function' ? extractPageContextFromDOM(document, window) : null;
     chrome.runtime.sendMessage(
-      { action: "checkPageMatch", host },
+      { action: "checkPageMatch", host, pageContext },
       (response) => {
         if (chrome.runtime.lastError) {
           console.warn(
@@ -554,6 +555,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
 
     let resp;
     try {
+      const pageContext = typeof extractPageContextFromDOM === 'function' ? extractPageContextFromDOM(document, window) : null;
       resp = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
         chrome.runtime.sendMessage(
@@ -562,6 +564,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
             mode,
             domain,
             userMessage: text,
+            pageContext,
           },
           (response) => {
             clearTimeout(timer);

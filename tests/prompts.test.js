@@ -193,6 +193,40 @@ describe('buildContextSystemPrompt / buildSetupSystemPrompt', () => {
   });
 });
 
+describe('renderPageContextBlock', () => {
+  it('renders rich page context when video info is provided', () => {
+    const out = P.renderPageContextBlock({
+      url: 'https://www.youtube.com/watch?v=123',
+      contentType: 'YouTube Video',
+      videoTitle: 'How Engines Work',
+      channel: 'Engineering Explained',
+      duration: '15 minutes'
+    });
+    expect(out).toContain('Video Title: How Engines Work');
+    expect(out).toContain('Channel / Creator: Engineering Explained');
+    expect(out).toContain('Video Length / Duration: 15 minutes');
+    expect(out).toContain('YouTube Video');
+  });
+
+  it('renders rich page context when Reddit thread info is provided', () => {
+    const out = P.renderPageContextBlock({
+      url: 'https://www.reddit.com/r/reactjs/comments/123/cool_thread/',
+      contentType: 'Reddit Post',
+      threadTitle: 'Cool React 19 Feature',
+      subreddit: 'r/reactjs',
+      author: 'u/dan_abramov'
+    });
+    expect(out).toContain('Thread / Article Title: Cool React 19 Feature');
+    expect(out).toContain('Subreddit: r/reactjs');
+    expect(out).toContain('Author / Account: u/dan_abramov');
+  });
+
+  it('returns empty string when no pageContext provided', () => {
+    expect(P.renderPageContextBlock(null)).toBe('');
+    expect(P.renderPageContextBlock({})).toBe('');
+  });
+});
+
 describe('tool schemas', () => {
   it('GRANT_TOOL has expected name and required fields', () => {
     expect(P.GRANT_TOOL.name).toBe('grant_access');

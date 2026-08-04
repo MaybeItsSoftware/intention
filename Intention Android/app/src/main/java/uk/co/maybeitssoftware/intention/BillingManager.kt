@@ -8,6 +8,7 @@ import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
 import com.android.billingclient.api.ConsumeParams
+import com.android.billingclient.api.PendingPurchasesParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
@@ -54,9 +55,12 @@ object BillingManager : PurchasesUpdatedListener {
 
     fun init(context: Context) {
         if (billingClient != null) return
+        val pendingPurchasesParams = PendingPurchasesParams.newBuilder()
+            .enableOneTimeProducts()
+            .build()
         val client = BillingClient.newBuilder(context.applicationContext)
             .setListener(this)
-            .enablePendingPurchases()
+            .enablePendingPurchases(pendingPurchasesParams)
             .build()
         billingClient = client
         connect { }
@@ -102,12 +106,13 @@ object BillingManager : PurchasesUpdatedListener {
                         .build()
                 })
                 .build()
-            client.queryProductDetailsAsync(params) { result, details ->
+            client.queryProductDetailsAsync(params) { result, productDetailsResult ->
                 if (result.responseCode != BillingClient.BillingResponseCode.OK) {
                     callback(JSONObject().put("available", true)
                         .put("error", "Top-ups are unavailable right now."))
                     return@queryProductDetailsAsync
                 }
+                val details = productDetailsResult.productDetailsList ?: emptyList()
                 productCache = details
                 val array = JSONArray()
                 // Cheapest first — the smallest top-up leads, per the "show

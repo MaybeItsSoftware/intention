@@ -1,10 +1,34 @@
 try {
-  importScripts('providers.js', 'prompts.js', 'tracking.js');
+  importScripts('providers.js', 'prompts.js', 'tracking.js', 'page_context.js');
 } catch (e) {
   // Firefox loads these via manifest scripts array; globals already present.
 }
 
 const INT_LOG = '[Intention]';
+
+// Track active tab navigation context for sites visited before overlay loads
+const tabNavContext = {};
+if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
+  try {
+    chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+      if (details.frameId === 0 && details.url && !details.url.startsWith('chrome-extension://') && !details.url.startsWith('about:')) {
+        tabNavContext[details.tabId] = {
+          url: details.url,
+          timestamp: Date.now()
+        };
+      }
+    });
+  } catch (e) {
+    console.warn(INT_LOG, 'webNavigation listener warning:', e);
+  }
+}
+if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
+  try {
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      delete tabNavContext[tabId];
+    });
+  } catch (e) {}
+}
 
 // Sessions, chat history and check-in alarms are keyed per browser tab in the
 // extensions. The native ports (Android, iOS) have no tabs — their bridges
@@ -281,7 +305,8 @@ async function handleMessage(message, sender) {
         userMessage: message.userMessage,
         changeType: message.changeType,
         currentValue: message.currentValue,
-        newValue: message.newValue
+        newValue: message.newValue,
+        pageContext: message.pageContext
       });
     case 'clearChatHistory':
       return clearChatHistory(message.historyKey || sessionKeyFor(tabId, message.domain));
@@ -547,11 +572,22 @@ async function saveSettings(partial) {
   return { ok: true };
 }
 
-async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue }) {
+async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext }) {
   const { userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
   const access = await resolveAIRoute();
   if (access.route === 'locked') {
     return { error: 'You need coaching credit to talk to your coach.', locked: true };
+  }
+
+  // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
+  let pageCtx = pageContext || null;
+  if (!pageCtx && tabId != null && tabNavContext[tabId]?.url && typeof extractPageContextFromUrl === 'function') {
+    pageCtx = extractPageContextFromUrl(tabNavContext[tabId].url);
+  }
+  if (pageCtx && typeof enrichPageContext === 'function') {
+    try {
+      pageCtx = await enrichPageContext(pageCtx);
+    } catch (e) {}
   }
 
   // For apps, `domain` is the storage/stats key (an Android package name, or
@@ -592,7 +628,8 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll,
-      reasonsToday: stats.reasonsToday
+      reasonsToday: stats.reasonsToday,
+      pageContext: pageCtx
     });
     tools = [GRANT_TOOL];
   } else if (mode === 'checkin') {
@@ -614,7 +651,8 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
-      reasonsToday: stats.reasonsToday
+      reasonsToday: stats.reasonsToday,
+      pageContext: pageCtx
     });
     tools = [GRANT_TOOL];
   } else if (mode === 'settings_gate') {

@@ -149,6 +149,8 @@ export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGloba
     clearInterval,
     encodeURIComponent,
     decodeURIComponent,
+    URL,
+    URLSearchParams,
     String,
     Number,
     Object,
@@ -250,7 +252,7 @@ export function loadBackground({ seed = {}, fetch } = {}) {
     updateSessionRules: async () => {}
   };
 
-  const sources = ['providers.js', 'prompts.js', 'tracking.js', 'background.js']
+  const sources = ['providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']
     .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
     .join('\n;\n');
 
