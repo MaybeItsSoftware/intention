@@ -80,6 +80,7 @@
       "providers.js",
       "prompts.js",
       "tracking.js",
+      "page_context.js",
       "background.js"
     ]
   }

@@ -550,3 +550,131 @@ describe('setup no longer collects credentials', () => {
     expect(chrome.storage._store.provider).toBe('');
   });
 });
+
+// --------------------------------------------------------------------------
+// Safari: the coaching page has no sender.tab, and WebKit does not reliably
+// honour a session rule's tabIds condition. Both used to strand the user on
+// the gate straight after it granted them time.
+// --------------------------------------------------------------------------
+
+// Stateful declarativeNetRequest mock — the default one in load.js forgets
+// every rule, which is exactly what these tests are about.
+function statefulDnr(chrome) {
+  let dynamic = [];
+  let session = [];
+  // Ids are unique in a real rule store: an add replaces whatever held the id.
+  const apply = (list, { removeRuleIds = [], addRules = [] } = {}) => {
+    const addedIds = addRules.map(r => r.id);
+    return list
+      .filter(r => !removeRuleIds.includes(r.id) && !addedIds.includes(r.id))
+      .concat(addRules);
+  };
+  chrome.declarativeNetRequest = {
+    getDynamicRules: async () => structuredClone(dynamic),
+    updateDynamicRules: async (update) => { dynamic = apply(dynamic, update); },
+    updateSessionRules: async (update) => { session = apply(session, update); },
+    redirectedDomains: () => dynamic.map(r => r.condition.urlFilter).sort(),
+    allowedTabs: () => session.map(r => r.condition.tabIds?.[0]).sort()
+  };
+  return chrome.declarativeNetRequest;
+}
+
+describe('a live pass lifts the domain redirect rule', () => {
+  it('drops the rule on grant and restores it when the session ends', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] },
+      fetch: grantingFetch(10)
+    });
+    const dnr = statefulDnr(chrome);
+
+    await ctx.syncBlockingRules();
+    expect(dnr.redirectedDomains()).toEqual(['||instagram.com^']);
+
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(3)
+    );
+    // Without this the redirect rule would fire on the way back to the site
+    // and drop the user right back on the gate they just talked through.
+    expect(dnr.redirectedDomains()).toEqual([]);
+    expect(dnr.allowedTabs()).toEqual([3]);
+
+    await ctx.handleMessage(
+      { action: 'endSession', domain: 'instagram.com', reason: 'fulfilled' },
+      tab(3)
+    );
+    expect(dnr.redirectedDomains()).toEqual(['||instagram.com^']);
+  });
+
+  it('restores the rule on the next visit if the pass expired unnoticed', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] },
+      fetch: grantingFetch(10)
+    });
+    const dnr = statefulDnr(chrome);
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(3)
+    );
+    expect(dnr.redirectedDomains()).toEqual([]);
+
+    // Time runs out with no alarm to notice it (a suspended background page).
+    chrome.storage._store.activeSessions['3'].startTime = Date.now() - 30 * 60000;
+    await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    // checkPageMatch kicks off the resync without waiting for it, so the page
+    // isn't held up; queueing behind it is how a test waits for that work.
+    await ctx.syncBlockingRules();
+    expect(dnr.redirectedDomains()).toEqual(['||instagram.com^']);
+  });
+});
+
+describe('sessions granted without a tab id', () => {
+  it('are visible to the content script that lands on the site', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        activeSessions: {
+          'target:instagram.com': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+        }
+      }
+    });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(4));
+    expect(match.isBlocked).toBe(true);
+    expect(match.session).not.toBe(null);
+
+    const asked = await ctx.handleMessage({ action: 'getSession', domain: 'instagram.com' }, tab(4));
+    expect(asked.session).not.toBe(null);
+  });
+});
+
+describe('tab id sent by an extension page', () => {
+  it('keys the session when the sender carries no tab', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] },
+      fetch: grantingFetch(10)
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a', tabId: 9 },
+      NATIVE
+    );
+    expect(Object.keys(chrome.storage._store.activeSessions)).toEqual(['9']);
+  });
+
+  it('never overrides a real sender.tab', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        activeSessions: {
+          '99': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+        }
+      }
+    });
+    const asked = await ctx.handleMessage(
+      { action: 'getSession', domain: 'instagram.com', tabId: 99 },
+      tab(5)
+    );
+    expect(asked.session).toBe(null);
+  });
+});

@@ -19,13 +19,66 @@ const mode = urlParams.get('mode') === 'checkin' ? 'checkin' : 'gate';
 // selection is opaque), so there is no per-app label — use a generic name.
 const displayName = isApp ? (appLabel || 'a blocked app') : domain;
 
-// Check for duplicate coaching tab for same domain
-chrome.runtime.sendMessage({ action: 'checkDuplicateCoaching', domain }, (resp) => {
-  if (chrome.runtime.lastError) return;
-  if (resp?.duplicate) {
-    window.close();
+// Safari doesn't populate `sender.tab` for extension pages the way Chrome
+// does, so from the background's point of view this gate belongs to no tab:
+// the pass it grants is filed under a different key than the one the site's
+// content script reads (so the site re-gates the instant it's granted), no
+// per-tab allow rule is registered, and "Close tab" closes nothing. Resolve
+// our own tab id up front and send it with anything the background keys by
+// tab — a real `sender.tab` still wins over it there.
+let selfTabId = null;
+const selfTabReady = new Promise((resolve) => {
+  try {
+    if (!chrome.tabs || !chrome.tabs.getCurrent) {
+      resolve();
+      return;
+    }
+    chrome.tabs.getCurrent((tab) => {
+      if (!chrome.runtime.lastError && tab && typeof tab.id === 'number') selfTabId = tab.id;
+      resolve();
+    });
+  } catch (e) {
+    resolve();
   }
 });
+
+async function sendTabMessage(message, timeoutMs) {
+  await selfTabReady;
+  return sendChatMessage(withTabId(message), timeoutMs);
+}
+
+function withTabId(message) {
+  return selfTabId == null ? message : { ...message, tabId: selfTabId };
+}
+
+// Fire-and-forget counterpart to sendTabMessage, for the messages sent on the
+// way out of this page: waiting on a reply that may never come would only
+// delay the close.
+function postTabMessage(message) {
+  try {
+    const sent = chrome.runtime.sendMessage(withTabId(message));
+    if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+  } catch (e) {}
+}
+
+// The deep link this gate stood in front of, once the background has told us
+// what it was — see `getIntendedUrl`.
+let intendedUrl = '';
+
+// Check for duplicate coaching tab for same domain
+sendTabMessage({ action: 'checkDuplicateCoaching', domain }, 10000)
+  .then((resp) => {
+    if (resp?.duplicate) window.close();
+  })
+  .catch(() => {});
+
+const intendedUrlReady = isApp
+  ? Promise.resolve()
+  : sendTabMessage({ action: 'getIntendedUrl', domain }, 10000)
+      .then((resp) => {
+        if (resp?.url) intendedUrl = resp.url;
+      })
+      .catch(() => {});
 
 const messagesEl = document.getElementById('int-messages');
 const inputEl = document.getElementById('int-input');
@@ -137,6 +190,8 @@ async function showPaywall() {
 init();
 
 async function init() {
+  if (await passThroughIfGranted()) return;
+
   let blockConfig = null;
   try {
     const resp = await sendChatMessage({ action: 'getBlockInfo', domain, isApp });
@@ -150,6 +205,37 @@ async function init() {
   } else {
     renderCoachUI();
   }
+}
+
+// A gate that opens on a domain the user already holds a pass for has nothing
+// to ask. The domain's redirect rule is dropped for the life of a pass, so
+// this only happens on a race (the pass was granted seconds ago) or after the
+// background was suspended and restarted — but when it does happen the user is
+// stuck arguing for time they already have, and every fresh grant re-arms the
+// same trap. Send them through instead. The marker keeps it to one automatic
+// hop per pass, so a redirect rule that somehow outlives the grant can't
+// ping-pong the tab.
+async function passThroughIfGranted() {
+  if (isApp || mode === 'checkin') return false;
+  let session = null;
+  try {
+    const resp = await sendTabMessage({ action: 'getSession', domain }, 10000);
+    session = resp?.session || null;
+  } catch (e) {
+    return false;
+  }
+  if (!session) return false;
+
+  const marker = `intention:passed:${domain}:${session.startTime}`;
+  try {
+    if (sessionStorage.getItem(marker)) return false;
+    sessionStorage.setItem(marker, '1');
+  } catch (e) {
+    // No session storage (private browsing): the hop is still worth making.
+  }
+  await intendedUrlReady;
+  window.location.href = intendedUrl || `https://${domain}`;
+  return true;
 }
 
 function renderCoachUI() {
@@ -190,7 +276,7 @@ function renderSimpleUI(blockConfig) {
       passBtn.textContent = '…';
       let resp;
       try {
-        resp = await sendChatMessage({ action: 'simpleGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
+        resp = await sendTabMessage({ action: 'simpleGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
       } catch (e) {
         resp = null;
       }
@@ -308,7 +394,7 @@ async function attemptSend(text) {
 
   let resp;
   try {
-    resp = await sendChatMessage({
+    resp = await sendTabMessage({
       action: 'chat',
       mode,
       domain,
@@ -373,8 +459,9 @@ function followGrantedSession(grantedSession, delayMs = 2200) {
       // blocked tab) back to the foreground and close this overlay.
       window.intentionApps.launchApp(browserPackage);
     } else {
-      // Chrome/Firefox/Safari: coaching.html IS the blocked tab, so redirect it.
-      window.location.href = `https://${domain}`;
+      // Chrome/Firefox/Safari: coaching.html IS the blocked tab, so redirect it
+      // — back to whatever was asked for, if the background still knows it.
+      window.location.href = intendedUrl || `https://${domain}`;
     }
   }, delayMs);
 }
@@ -433,13 +520,16 @@ function addActionRow(container, actions) {
   return row;
 }
 
-closeBtn.addEventListener('click', () => {
+closeBtn.addEventListener('click', async () => {
   // End session and close the current tab (extensions) or hand off to the
   // native bridge, which opens a blank tab over the blocked one and dismisses
   // this overlay (Android — see closeBtn.textContent above). `domain` is what
   // keys the session on the native ports, which have no tab id to key on.
-  chrome.runtime.sendMessage({ action: 'endSession', domain, reason: 'fulfilled' });
-  chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
+  // Only the local tab-id lookup is waited on — window.close() below would
+  // otherwise tear the page down before either message was posted.
+  await selfTabReady;
+  postTabMessage({ action: 'endSession', domain, reason: 'fulfilled' });
+  postTabMessage({ action: 'closeCurrentTab' });
   if (isApp && !window.intentionApps) {
     // iOS app WebView: window.close() is a no-op — go back to settings.
     window.location.href = 'options.html';

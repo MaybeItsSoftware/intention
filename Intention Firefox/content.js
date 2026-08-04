@@ -262,6 +262,9 @@ let currentSession = null;
 let matchedDomain = null;
 let matchedBlockConfig = null;
 let handled = false;
+// Guards against a second check running while the first is still working
+// through its retries (visibilitychange and pageshow can both fire mid-flight).
+let checking = false;
 
 function showGate(why) {
   if (handled) return;
@@ -280,81 +283,241 @@ function showGate(why) {
   }
 }
 
-function runCheck() {
+// Safari runs the background as a non-persistent page rather than a service
+// worker, and a suspended one doesn't always answer the first message: the
+// callback comes back with "Could not establish connection", or never fires at
+// all, while the page carries on loading. One dropped check used to mean the
+// gate simply never appeared and the site stayed open for the whole visit —
+// the exact "sometimes it blocks, sometimes nothing happens" failure. So keep
+// asking, and if the background stays unreachable, decide from storage, which
+// a content script can read without any background page at all.
+//
+// The budget below gives it several chances inside a couple of seconds: long
+// enough for a background page that only needs waking, short enough that a
+// blocked site isn't left readable while we wait.
+const CHECK_ATTEMPT_TIMEOUT_MS = 1200;
+const CHECK_RETRY_DELAYS_MS = [100, 250, 500, 1000];
+const CHECK_TOTAL_BUDGET_MS = 2500;
+
+function askBackground(message, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(
+      () => finish(reject, new Error("no answer")),
+      timeoutMs,
+    );
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          finish(reject, new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response) {
+          finish(reject, new Error("empty response"));
+          return;
+        }
+        finish(resolve, response);
+      });
+    } catch (e) {
+      finish(reject, e);
+    }
+  });
+}
+
+async function runCheck() {
+  if (handled || checking) return;
+  checking = true;
   try {
     const host = window.location.hostname;
-    const pageContext = typeof extractPageContextFromDOM === 'function' ? extractPageContextFromDOM(document, window) : null;
-    chrome.runtime.sendMessage(
-      { action: "checkPageMatch", host, pageContext },
-      (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn(
-            INT_LOG,
-            "checkPageMatch lastError:",
-            chrome.runtime.lastError.message,
-          );
-          return;
-        }
+    const pageContext =
+      typeof extractPageContextFromDOM === "function"
+        ? extractPageContextFromDOM(document, window)
+        : null;
+
+    const deadline = Date.now() + CHECK_TOTAL_BUDGET_MS;
+    for (let attempt = 0; ; attempt++) {
+      if (handled) return;
+      try {
+        const response = await askBackground(
+          { action: "checkPageMatch", host, pageContext },
+          CHECK_ATTEMPT_TIMEOUT_MS,
+        );
         console.log(INT_LOG, "checkPageMatch response", response);
+        applyCheckResult(response);
+        return;
+      } catch (e) {
+        console.warn(
+          INT_LOG,
+          `checkPageMatch attempt ${attempt + 1} failed:`,
+          e && e.message,
+        );
+        const delay = CHECK_RETRY_DELAYS_MS[attempt];
+        if (delay == null || Date.now() >= deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
 
-        if (!response) {
-          return;
-        }
-
-        if (!response.setupComplete) {
-          if (handled) return;
-          handled = true;
-          try {
-            ensureBodyAndStop();
-            injectOverlayStyle();
-            renderSetupNeededUI();
-          } catch (e) {
-            console.error(INT_LOG, "failed to render setup needed UI:", e);
-          }
-          return;
-        }
-
-        if (!response.isBlocked) {
-          return;
-        }
-
-        matchedDomain = response.matchedDomain;
-        matchedBlockConfig = response.blockConfig || null;
-
-        if (response.session) {
-          if (handled) return;
-          handled = true;
-          currentSession = response.session;
-          runWhenBodyExists(() => {
-            try {
-              injectOverlayStyle();
-              renderStatusBadge(response.session);
-            } catch (e) {
-              console.error(INT_LOG, "failed to render status badge:", e);
-            } finally {
-              setupInterruptionListener();
-            }
-          });
-        } else if (response.accessRoute === "locked") {
-          // Blocked, with no coach to argue with. The site stays blocked —
-          // there's just nothing to say to it from here.
-          if (handled) return;
-          handled = true;
-          try {
-            ensureBodyAndStop();
-            injectOverlayStyle();
-            renderAccessNeededUI();
-          } catch (e) {
-            console.error(INT_LOG, "failed to render access needed UI:", e);
-          }
-        } else {
-          showGate("no active session (fail-safe)");
-        }
-      },
-    );
-  } catch (e) {
-    console.warn(INT_LOG, "sendMessage threw synchronously:", e);
+    await checkFromStorage(host);
+  } finally {
+    checking = false;
   }
+}
+
+function applyCheckResult(response) {
+  if (!response.setupComplete) {
+    if (handled) return;
+    handled = true;
+    try {
+      ensureBodyAndStop();
+      injectOverlayStyle();
+      renderSetupNeededUI();
+    } catch (e) {
+      console.error(INT_LOG, "failed to render setup needed UI:", e);
+    }
+    return;
+  }
+
+  if (!response.isBlocked) {
+    return;
+  }
+
+  matchedDomain = response.matchedDomain;
+  matchedBlockConfig = response.blockConfig || null;
+
+  if (response.session) {
+    if (handled) return;
+    handled = true;
+    currentSession = response.session;
+    runWhenBodyExists(() => {
+      try {
+        injectOverlayStyle();
+        renderStatusBadge(response.session);
+      } catch (e) {
+        console.error(INT_LOG, "failed to render status badge:", e);
+      } finally {
+        setupInterruptionListener();
+      }
+    });
+  } else if (response.accessRoute === "locked") {
+    // Blocked, with no coach to argue with. The site stays blocked —
+    // there's just nothing to say to it from here.
+    if (handled) return;
+    handled = true;
+    try {
+      ensureBodyAndStop();
+      injectOverlayStyle();
+      renderAccessNeededUI();
+    } catch (e) {
+      console.error(INT_LOG, "failed to render access needed UI:", e);
+    }
+  } else {
+    showGate("no active session (fail-safe)");
+  }
+}
+
+// Last resort, when the background never answered: everything the gate needs
+// to decide is already in extension storage, which a content script may read
+// on its own. An unreachable background then degrades to "gate shown, coach
+// retries" instead of "blocked site wide open".
+async function checkFromStorage(host) {
+  let stored;
+  try {
+    stored = await new Promise((resolve, reject) => {
+      chrome.storage.local.get(
+        [
+          "blockedDomains",
+          "setupComplete",
+          "activeSessions",
+          "blockingMode",
+          "simpleBehavior",
+          "simplePassMinutes",
+          "domainLimits",
+        ],
+        (items) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(items || {});
+        },
+      );
+    });
+  } catch (e) {
+    console.warn(INT_LOG, "storage fallback failed:", e && e.message);
+    return;
+  }
+  if (handled) return;
+
+  const blockedDomains = stored.blockedDomains || [];
+  const matched =
+    blockedDomains.find((d) => host === d || host.endsWith("." + d)) || null;
+  console.log(INT_LOG, "storage fallback ->", matched || "not blocked");
+  if (!matched) return;
+
+  if (!stored.setupComplete) {
+    handled = true;
+    try {
+      ensureBodyAndStop();
+      injectOverlayStyle();
+      renderSetupNeededUI();
+    } catch (e) {
+      console.error(INT_LOG, "failed to render setup needed UI:", e);
+    }
+    return;
+  }
+
+  matchedDomain = matched;
+  matchedBlockConfig = effectiveModeFromStorage(matched, stored);
+
+  // Which per-tab key a live pass was granted under isn't knowable from
+  // inside the page, so any unexpired session for this domain counts. Erring
+  // towards letting a granted pass through beats re-gating someone who has
+  // already made their case to the coach.
+  const sessions = stored.activeSessions || {};
+  const live = Object.values(sessions).find(
+    (s) =>
+      s &&
+      s.domain === matched &&
+      !s.endedAt &&
+      Date.now() < s.startTime + s.intervalMinutes * 60000,
+  );
+  if (live) {
+    handled = true;
+    currentSession = live;
+    runWhenBodyExists(() => {
+      try {
+        injectOverlayStyle();
+        renderStatusBadge(live);
+      } catch (e) {
+        console.error(INT_LOG, "failed to render status badge:", e);
+      } finally {
+        setupInterruptionListener();
+      }
+    });
+    return;
+  }
+
+  showGate("background unreachable (storage fail-safe)");
+}
+
+// Content-script mirror of background.js's getEffectiveMode: same per-domain
+// override, same global defaults.
+function effectiveModeFromStorage(domain, stored) {
+  const entry = (stored.domainLimits || {})[domain] || null;
+  const globalPassMinutes =
+    Number(stored.simplePassMinutes) > 0 ? Number(stored.simplePassMinutes) : 10;
+  return {
+    mode: entry?.mode || stored.blockingMode || "coach",
+    behavior: entry?.behavior || stored.simpleBehavior || "pass",
+    passMinutes:
+      Number(entry?.passMinutes) > 0 ? Number(entry.passMinutes) : globalPassMinutes,
+  };
 }
 
 runCheck();
@@ -368,6 +531,14 @@ if (typeof document.visibilityState !== "undefined") {
   };
   document.addEventListener("visibilitychange", onVisibilityChange);
 }
+
+// Safari restores back/forward navigations from the page cache without
+// re-running content scripts, so a page that slipped through unchecked (or
+// whose pass has since expired) would come back ungated. `persisted` marks
+// exactly those restores.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && !handled) runCheck();
+});
 
 function ensureBodyAndStop() {
   window.stop();

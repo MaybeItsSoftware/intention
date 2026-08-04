@@ -10,8 +10,13 @@ const INT_LOG = '[Intention]';
 const tabNavContext = {};
 if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
   try {
+    // Our own pages are skipped by extension origin rather than by the
+    // `chrome-extension://` scheme: Safari serves them from
+    // `safari-web-extension://`, so matching on the scheme let the gate's own
+    // URL overwrite the very address the user was heading for.
+    const extensionOrigin = chrome.runtime.getURL('');
     chrome.webNavigation.onBeforeNavigate.addListener((details) => {
-      if (details.frameId === 0 && details.url && !details.url.startsWith('chrome-extension://') && !details.url.startsWith('about:')) {
+      if (details.frameId === 0 && details.url && !details.url.startsWith(extensionOrigin) && !details.url.startsWith('chrome-extension://') && !details.url.startsWith('about:')) {
         tabNavContext[details.tabId] = {
           url: details.url,
           timestamp: Date.now()
@@ -73,12 +78,44 @@ async function focusOrCreateTab(urlPattern, createFn) {
   return createFn();
 }
 
+// Which blocked domains currently need a redirect rule. A domain with a live
+// pass gets none, on top of the per-tab session allow rule registered below:
+// belt and braces, because WebKit does not reliably honour a session rule's
+// `tabIds` condition, and when it doesn't the redirect wins and throws the
+// user straight back into the gate they just talked their way through — the
+// "granted, then stuck on the gate forever" loop. The rule comes back when the
+// pass ends (see the callers of syncBlockingRules), and, should the background
+// have been suspended by then, on the next visit to the domain.
+async function domainsNeedingRedirect() {
+  const { blockedDomains = [], activeSessions = {} } = await getStorage(['blockedDomains', 'activeSessions']);
+  const passed = new Set(
+    Object.values(activeSessions).filter(s => activeSession(s)).map(s => s.domain)
+  );
+  return blockedDomains.filter(domain => !passed.has(domain));
+}
+
+// Rule updates are read-modify-write against the browser's rule store, and
+// several things can ask for one at once (a grant, a tab closing, a visit to a
+// blocked domain). Run them one at a time so a sync can't read a rule set
+// another is halfway through replacing.
+let blockingRuleQueue = Promise.resolve();
+function syncBlockingRules() {
+  blockingRuleQueue = blockingRuleQueue.then(applyBlockingRules, applyBlockingRules);
+  return blockingRuleQueue;
+}
+
 // Sync DNR rules based on blocked domains setting
-async function syncBlockingRules() {
+async function applyBlockingRules() {
   try {
-    const { blockedDomains = [] } = await getStorage(['blockedDomains']);
+    const blockedDomains = await domainsNeedingRedirect();
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
+
+    // Called on every visit to a blocked domain, so don't rewrite a rule set
+    // that already says what it should.
+    const current = currentRules.map(r => r.condition?.urlFilter || '').sort().join('\n');
+    const wanted = blockedDomains.map(domain => `||${domain}^`).sort().join('\n');
+    if (current === wanted) return;
 
     const addRules = blockedDomains.map((domain, index) => {
       const ruleId = 1000 + index;
@@ -203,8 +240,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
-  // Expiration of session time -> remove DNR allow rule for this tab
+  // Expiration of session time -> remove DNR allow rule for this tab, and put
+  // back the domain redirect rule the grant dropped.
   removeSessionRule(tabId);
+  await syncBlockingRules();
 
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'showCheckin' });
@@ -226,6 +265,8 @@ async function bankExpiredSession(sessionKey) {
   await mutateStorage('activeSessions', (sessions) => {
     if (sessions[sessionKey]) sessions[sessionKey].endedAt = Date.now();
   });
+  // The pass is over: this domain needs its redirect rule back.
+  await syncBlockingRules();
 }
 
 // Rebuilds the half of session state that lives in a one-shot OS timer rather
@@ -263,6 +304,8 @@ async function reconcileSessions() {
   if (banked.length || rearmed.length) {
     console.log(INT_LOG, 'reconcileSessions: banked', banked.length, 're-armed', rearmed.length);
   }
+  // Redirect rules follow the sessions that were just settled either way.
+  await syncBlockingRules();
   return { banked, rearmed };
 }
 
@@ -274,7 +317,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 async function handleMessage(message, sender) {
-  const tabId = sender.tab?.id;
+  // `sender.tab` is the trustworthy source and always wins — content scripts
+  // can't opt out of it. Safari doesn't populate it for extension pages
+  // (coaching.html, options.html) the way Chrome does, so those send their own
+  // id from chrome.tabs.getCurrent(); without it every session opened from the
+  // coaching page lands under a different key than the one the content script
+  // looks under, and the site re-gates the moment the pass is granted.
+  const tabId = sender.tab?.id ?? (typeof message.tabId === 'number' ? message.tabId : undefined);
   switch (message.action) {
     case 'checkPageMatch': return checkPageMatch(message.host, tabId);
     case 'getConfig': {
@@ -293,7 +342,11 @@ async function handleMessage(message, sender) {
       const sessionKey = sessionKeyFor(tabId, message.domain);
       if (!sessionKey) return { session: null };
       const { activeSessions = {} } = await getStorage(['activeSessions']);
-      return { session: activeSession(activeSessions[sessionKey]) };
+      // Same target-key fallback as checkPageMatch: a pass granted where no
+      // tab id was available still counts.
+      const session = activeSession(activeSessions[sessionKey])
+        || (message.domain ? activeSession(activeSessions[`target:${message.domain}`]) : null);
+      return { session };
     }
     case 'chat':
       return handleChat({
@@ -322,6 +375,22 @@ async function handleMessage(message, sender) {
       });
     case 'getBlockInfo':
       return { blockConfig: await getEffectiveMode(message.domain) };
+    // The redirect that opens the gate carries only the domain, so the deep
+    // link the user actually clicked is lost by the time they've talked their
+    // way through it. webNavigation recorded it a moment earlier — hand it
+    // back so the pass returns them to the page they asked for instead of the
+    // site's front door.
+    case 'getIntendedUrl': {
+      const recorded = tabId != null ? tabNavContext[tabId]?.url : null;
+      if (!recorded || !message.domain) return { url: '' };
+      try {
+        const host = new URL(recorded).hostname;
+        if (host === message.domain || host.endsWith('.' + message.domain)) {
+          return { url: recorded };
+        }
+      } catch (e) {}
+      return { url: '' };
+    }
     // Sent by the native hosts (Android BackgroundJsHelper / BootReceiver, iOS
     // BackgroundJSHost) once the background page is up, since a device restart
     // leaves them with sessions in storage but no timers. Not used by the
@@ -390,7 +459,16 @@ async function checkPageMatch(host, tabId) {
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
   const sessionKey = sessionKeyFor(tabId, matchedDomain);
-  const session = sessionKey ? activeSession(activeSessions[sessionKey]) : null;
+  // The target key is the fallback for a pass granted where no tab id was
+  // available (the coaching page on Safari, or a native port). Without it the
+  // grant is invisible here and the page gates again straight away.
+  const session = (sessionKey ? activeSession(activeSessions[sessionKey]) : null)
+    || (matchedDomain ? activeSession(activeSessions[`target:${matchedDomain}`]) : null);
+  // A pass that has since expired leaves the domain's redirect rule dropped
+  // (see syncBlockingRules) — visiting it again is the moment to notice and
+  // put the rule back. Not awaited: the content script is holding this page's
+  // gate decision open, and the rule only matters from the next load on.
+  if (matchedDomain && !session) syncBlockingRules();
   const access = await resolveAIRoute();
   const blockConfig = matchedDomain ? await getEffectiveMode(matchedDomain) : null;
   return {
@@ -777,6 +855,8 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         // service reads activeSessions directly to let the app through — and
         // neither do the native ports, which have no tab to scope a rule to.
         if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+        // Drops this domain's redirect rule for the life of the pass.
+        if (!isApp) await syncBlockingRules();
         grantedSession = session;
       } else if (tc.name === 'update_context' && mode === 'context') {
         const newContext = String(input.new_context || '').slice(0, 5000).trim();
@@ -947,6 +1027,8 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason 
   // service reads activeSessions directly to let the app through — and
   // neither do the native ports, which have no tab to scope a rule to.
   if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+  // Drops this domain's redirect rule for the life of the pass.
+  if (!isApp) await syncBlockingRules();
   return session;
 }
 
@@ -1001,6 +1083,8 @@ async function endSession({ tabId, domain, reason }) {
   await mutateStorage('chatHistories', (chatHistories) => { delete chatHistories[sessionKey]; });
   chrome.alarms.clear(`checkin-${sessionKey}`);
   if (tabId != null) removeSessionRule(tabId);
+  // The pass is over: this domain needs its redirect rule back.
+  await syncBlockingRules();
 
   if (reason === 'fulfilled' && tabId != null) {
     try { chrome.tabs.remove(tabId); } catch (e) {}

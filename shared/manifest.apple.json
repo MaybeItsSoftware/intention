@@ -4,6 +4,7 @@
     "storage",
     "alarms",
     "tabs",
+    "webNavigation",
     "declarativeNetRequest",
     "nativeMessaging"
   ],
@@ -12,6 +13,7 @@
       "providers.js",
       "prompts.js",
       "tracking.js",
+      "page_context.js",
       "background.js"
     ],
     "persistent": false
