@@ -58,6 +58,8 @@ local.properties
 keystore.properties
 
 .env.local
+.env.railway.tmp
+*.tmp
 
 # Fastlane (Intention Apple/)
 *.pkg
