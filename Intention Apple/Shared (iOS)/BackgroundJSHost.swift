@@ -74,7 +74,9 @@ final class BackgroundJSHost: NSObject {
                 completion(nil)
                 return
             }
-            let work = { [weak self] in self?.deliver(message, completion: completion) }
+            let work: () -> Void = { [weak self] in
+                self?.deliver(message, completion: completion)
+            }
             if self.isReady {
                 work()
             } else {

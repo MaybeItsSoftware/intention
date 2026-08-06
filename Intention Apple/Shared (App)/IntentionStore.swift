@@ -92,8 +92,11 @@ actor IntentionStore {
     // call is idempotent and mostly just refreshes the JS-side balance/UI;
     // the durable credit already happened in verifyWithBackend below.
     func purchase(productID: String) async -> [String: Any] {
-        guard let product = cachedProducts.first(where: { $0.id == productID })
-            ?? (try? await Product.products(for: [productID]))?.first else {
+        var product = cachedProducts.first(where: { $0.id == productID })
+        if product == nil {
+            product = (try? await Product.products(for: [productID]))?.first
+        }
+        guard let product = product else {
             return ["status": "failed", "error": "That top-up isn't available right now."]
         }
 
