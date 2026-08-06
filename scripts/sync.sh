@@ -30,12 +30,26 @@ FIREFOX_DIR="Intention Firefox"
 APPLE_DIR="Intention Apple/Shared (Extension)/Resources"
 ANDROID_DIR="Intention Android/app/src/main/assets"
 
-SHARED_FILES=(
-  content.css content.js options.css options.html options.js
-  coaching.html coaching.js background.js prompts.js providers.js tracking.js
-  billing.js page_context.js
-)
-ICON_FILES=(icon16.png icon32.png icon48.png icon128.png)
+# The synced set is derived from shared/ itself, so adding or removing a file
+# there propagates without touching this script. manifest.*.json are merge
+# inputs (never copied verbatim) and icons are handled separately below.
+SHARED_FILES=()
+while IFS= read -r f; do
+  SHARED_FILES+=("$f")
+done < <(cd "$SHARED_DIR" && find . -maxdepth 1 -type f \
+  ! -name 'manifest.*.json' ! -name 'icon*.png' ! -name '.*' \
+  | sed 's|^\./||' | LC_ALL=C sort)
+
+ICON_FILES=()
+while IFS= read -r f; do
+  ICON_FILES+=("$f")
+done < <(cd "$SHARED_DIR" && find . -maxdepth 1 -type f -name 'icon*.png' \
+  | sed 's|^\./||' | LC_ALL=C sort)
+
+if [[ ${#SHARED_FILES[@]} -eq 0 ]]; then
+  echo "✗ No shared files found in $SHARED_DIR/ — refusing to sync" >&2
+  exit 1
+fi
 
 CHECK=false
 if [[ "${1:-}" == "--check" ]]; then
@@ -47,8 +61,10 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 DRIFT=()
+ORPHANS=()
 
-# place <src> <dest> — copy src to dest, or in --check mode record drift.
+# place <src> <dest> — copy src to dest, or in --check mode record drift
+# (covers both a stale copy and a missing one).
 place() {
   local src="$1" dest="$2"
   if $CHECK; then
@@ -58,6 +74,43 @@ place() {
   else
     mkdir -p "$(dirname "$dest")"
     cp "$src" "$dest"
+  fi
+}
+
+# sweep_orphans <dest_dir> <allowed...> — find files in dest_dir that are no
+# longer part of the synced set (a file deleted from shared/ leaves its copies
+# behind otherwise). In --check mode record them; in sync mode remove them.
+sweep_orphans() {
+  local dest_dir="$1"; shift
+  local allowed=("$@") f name a known
+  for f in "$dest_dir"/*; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    known=false
+    for a in "${allowed[@]}"; do
+      [[ "$name" == "$a" ]] && { known=true; break; }
+    done
+    $known && continue
+    if $CHECK; then
+      ORPHANS+=("$f")
+    else
+      rm "$f"
+      echo "  removed orphan: $f"
+    fi
+  done
+  if [[ -d "$dest_dir/fonts" ]]; then
+    for f in "$dest_dir/fonts"/*; do
+      [[ -f "$f" ]] || continue
+      name="$(basename "$f")"
+      if [[ ! -f "$SHARED_DIR/fonts/$name" ]]; then
+        if $CHECK; then
+          ORPHANS+=("$f")
+        else
+          rm "$f"
+          echo "  removed orphan: $f"
+        fi
+      fi
+    done
   fi
 }
 
@@ -87,7 +140,11 @@ PY
 }
 
 sync_platform() {
+  # extra_files: platform-specific files that legitimately live alongside the
+  # synced copies and must survive the orphan sweep.
   local dest_dir="$1" manifest_platform="$2" # manifest_platform empty = no manifest/icons
+  shift 2
+  local extra_files=("$@")
 
   for f in "${SHARED_FILES[@]}"; do
     place "$SHARED_DIR/$f" "$dest_dir/$f"
@@ -97,6 +154,8 @@ sync_platform() {
     place "$font" "$dest_dir/fonts/$(basename "$font")"
   done
 
+  # ${arr[@]+...} guards empty-array expansion under set -u on bash 3.2 (macOS)
+  local allowed=("${SHARED_FILES[@]}" ${extra_files[@]+"${extra_files[@]}"})
   if [[ -n "$manifest_platform" ]]; then
     for f in "${ICON_FILES[@]}"; do
       place "$SHARED_DIR/$f" "$dest_dir/$f"
@@ -106,20 +165,31 @@ sync_platform() {
     generate_manifest "$manifest_platform" "$tmp"
     place "$tmp" "$dest_dir/manifest.json"
     rm -f "$tmp"
+    allowed+=("${ICON_FILES[@]}" manifest.json)
   fi
+
+  sweep_orphans "$dest_dir" "${allowed[@]}"
 }
 
-sync_platform "$CHROME_DIR" chrome
-sync_platform "$FIREFOX_DIR" firefox
-sync_platform "$APPLE_DIR" apple
+# env.txt is the gitignored dev-only key file (loadEnv() in options.js);
+# android-bridge.js / background.html are Android's WebView scaffolding.
+sync_platform "$CHROME_DIR" chrome env.txt
+sync_platform "$FIREFOX_DIR" firefox env.txt
+sync_platform "$APPLE_DIR" apple env.txt
 if [[ -d "Intention Android" ]]; then
-  sync_platform "$ANDROID_DIR" ""
+  sync_platform "$ANDROID_DIR" "" android-bridge.js background.html
 fi
 
 if $CHECK; then
-  if [[ ${#DRIFT[@]} -gt 0 ]]; then
-    echo "✗ Out of sync with shared/ (${#DRIFT[@]} file(s)):" >&2
-    for f in "${DRIFT[@]}"; do echo "    $f" >&2; done
+  if [[ ${#DRIFT[@]} -gt 0 || ${#ORPHANS[@]} -gt 0 ]]; then
+    if [[ ${#DRIFT[@]} -gt 0 ]]; then
+      echo "✗ Out of sync with shared/ (${#DRIFT[@]} stale or missing):" >&2
+      for f in "${DRIFT[@]}"; do echo "    $f" >&2; done
+    fi
+    if [[ ${#ORPHANS[@]} -gt 0 ]]; then
+      echo "✗ Orphaned copies no longer present in shared/ (${#ORPHANS[@]}):" >&2
+      for f in "${ORPHANS[@]}"; do echo "    $f" >&2; done
+    fi
     echo "  Edit shared/ (not the platform copies), then run: scripts/sync.sh" >&2
     exit 1
   fi
