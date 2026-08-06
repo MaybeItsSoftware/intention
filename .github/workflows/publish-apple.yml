@@ -4,16 +4,23 @@ name: Publish to App Store Connect
 # vX.Y tag push, provided the ASC_*/MATCH_* secrets are configured (see
 # DEPLOYMENT.md). This only primes each build in App Store Connect — it does
 # not attach it to a version or submit it for review; do that manually when
-# ready. Skips gracefully — without failing the run — if secrets are
-# missing. Runs on a macOS runner via Fastlane + match, the same setup used
-# for local releases (see Intention Apple/fastlane/Fastfile).
+# ready. FAILS the run if the secrets are missing, so a release channel that
+# is publishing nothing cannot keep reporting success — use the
+# allow_missing_secrets input for a deliberate dry run. Runs on a macOS runner
+# via Fastlane + match, the same setup used for local releases (see
+# Intention Apple/fastlane/Fastfile).
 
 on:
   workflow_run:
     workflows: ["Automated Release"]
     types: [completed]
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      allow_missing_secrets:
+        description: "Skip (rather than fail) when App Store Connect secrets are unset"
+        type: boolean
+        default: false
 
 jobs:
   check-release:
@@ -69,12 +76,30 @@ jobs:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_GIT_SSH_KEY: ${{ secrets.MATCH_GIT_SSH_KEY }}
         run: |
-          if [[ -n "$ASC_KEY_ID" && -n "$ASC_ISSUER_ID" && -n "$ASC_KEY_CONTENT" && -n "$MATCH_PASSWORD" && -n "$MATCH_GIT_SSH_KEY" ]]; then
+          MISSING=""
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT MATCH_PASSWORD MATCH_GIT_SSH_KEY; do
+            [[ -n "${!name}" ]] || MISSING="$MISSING $name"
+          done
+
+          if [[ -z "$MISSING" ]]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::App Store Connect secrets not configured — skipping publish. See DEPLOYMENT.md."
+            exit 0
           fi
+
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+
+          # A manual run may legitimately want to exercise the earlier steps
+          # without secrets; a release run never does.
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.allow_missing_secrets }}" == "true" ]]; then
+            echo "::warning::Skipping publish, secrets not configured:$MISSING"
+            exit 0
+          fi
+
+          # Failing here is the point. This job used to report success after
+          # doing nothing, so a release channel that had never once published
+          # looked identical to a healthy one. A red job is the signal.
+          echo "::error::App Store Connect secrets not configured, so this release did NOT reach the App Store. Missing:$MISSING. See DEPLOYMENT.md."
+          exit 1
 
       - name: Select Xcode
         if: steps.check.outputs.configured == 'true'
