@@ -7,6 +7,7 @@ import {
   getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
+import { reservations } from './reservations.js';
 
 // Request handling, kept transport-agnostic: `handleRequest` takes a plain
 // { method, path, headers, body } and returns { status, body }. index.js wraps
@@ -14,6 +15,9 @@ import { callCoachLLM, UpstreamError } from './llm.js';
 
 const MAX_MESSAGES = 60;
 const MAX_CONTENT_CHARS = 8000;
+// Not about credit — that's the reservation below. This stops one token pinning
+// a pile of simultaneous upstream calls and burning the provider rate limit.
+const MAX_INFLIGHT_PER_SUBJECT = 2;
 
 export async function handleRequest({ method, path, headers = {}, body = null }, deps = {}) {
   const backing = deps.store || store;
@@ -293,8 +297,22 @@ async function chatEndpoint(headers, body, deps, backing) {
     }
   }
 
-  const balanceMicros = getBalanceMicros(claims.sub, backing);
-  if (balanceMicros <= 0) {
+  const system = typeof body.system === 'string' ? body.system : '';
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+  const holds = deps.reservations || reservations;
+
+  // Everything from here to holds.acquire() runs with no await, so no other
+  // request can interleave and see this balance before it is spoken for. See
+  // reservations.js — that atomicity is the whole fix.
+  if (holds.inFlight(claims.sub) >= MAX_INFLIGHT_PER_SUBJECT) {
+    return json(429, {
+      error: 'Too many coaching requests in flight. Wait for the last one to finish.',
+      code: 'too_many_inflight'
+    });
+  }
+  const estimateMicros = estimateCostMicros({ system, messages, tools });
+  const availableMicros = getBalanceMicros(claims.sub, backing) - holds.heldMicros(claims.sub);
+  if (availableMicros <= 0) {
     return json(402, {
       error: "You're out of coaching credit. Buy more to keep talking to your coach.",
       code: 'balance_exhausted',
@@ -303,22 +321,26 @@ async function chatEndpoint(headers, body, deps, backing) {
       balanceCredits: 0
     });
   }
+  holds.acquire(claims.sub, estimateMicros);
 
   const llm = deps.callCoachLLM || callCoachLLM;
-  const result = await llm({
-    system: typeof body.system === 'string' ? body.system : '',
-    messages,
-    tools: Array.isArray(body.tools) ? body.tools : []
-  });
+  let result;
+  try {
+    result = await llm({ system, messages, tools });
+  } finally {
+    // Must run on the error path too, or a failed upstream call leaves credit
+    // held against a request that will never bill.
+    holds.release(claims.sub, estimateMicros);
+  }
 
-  // Deducted after the fact, from the real cost of what was just used — the
-  // balance is only checked (not reserved) up front, so one message can push
-  // it slightly negative; that's expected prepaid-metering behaviour and
-  // corrects itself on the next top-up.
+  // Deducted after the fact, from the real cost of what was just used. The
+  // check above admits on `available > 0` rather than `>= estimate`, so a
+  // message can still push the balance slightly negative — that's the intended
+  // prepaid-metering behaviour, and it corrects itself on the next top-up. What
+  // the hold adds is a bound: the overdraft is at most one estimate no matter
+  // how many requests arrive at once, where before it was unbounded.
   const usage = result.usage || { inputTokens: 0, outputTokens: 0 };
-  const pricing = config.llm.pricing[config.llm.model] || config.llm.pricing.default;
-  const costUsd = (usage.inputTokens * pricing.inputPerMillionUsd + usage.outputTokens * pricing.outputPerMillionUsd) / 1_000_000;
-  const costMicros = Math.ceil(costUsd * config.llm.usdToGbpRate * config.llm.marginMultiplier * 1_000_000);
+  const costMicros = priceMicros(usage.inputTokens, usage.outputTokens);
   const newBalance = adjustBalance(claims.sub, -costMicros, backing);
 
   return json(200, {
@@ -328,6 +350,24 @@ async function chatEndpoint(headers, body, deps, backing) {
     balanceGbp: microsToGbp(newBalance),
     balanceCredits: microsToCredits(newBalance)
   });
+}
+
+function priceMicros(inputTokens = 0, outputTokens = 0) {
+  const pricing = config.llm.pricing[config.llm.model] || config.llm.pricing.default;
+  const costUsd = (inputTokens * pricing.inputPerMillionUsd + outputTokens * pricing.outputPerMillionUsd) / 1_000_000;
+  return Math.ceil(costUsd * config.llm.usdToGbpRate * config.llm.marginMultiplier * 1_000_000);
+}
+
+// Worst case for the call about to be made, used only to size the hold. Output
+// is bounded server-side by config.llm.maxTokens (the client cannot raise it),
+// and input by the request caps above, so this is a real ceiling rather than a
+// guess. ~4 chars per token is the usual rough ratio; erring high is safe here
+// because the hold is released as soon as the call returns.
+function estimateCostMicros({ system, messages, tools }) {
+  const chars = system.length
+    + messages.reduce((sum, m) => sum + (m.content?.length || 0), 0)
+    + JSON.stringify(tools || []).length;
+  return priceMicros(Math.ceil(chars / 4), config.llm.maxTokens);
 }
 
 // ---- helpers --------------------------------------------------------------

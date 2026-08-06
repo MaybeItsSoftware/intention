@@ -24,6 +24,8 @@ const {
 } = await import('../server/src/store.js');
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
+const { Reservations } = await import('../server/src/reservations.js');
+const { UpstreamError } = await import('../server/src/llm.js');
 const { creditMicrosForTopUp } = await import('../server/src/config.js');
 
 const SECRET = 'test-secret-do-not-use';
@@ -47,6 +49,9 @@ const googleResult = {
 
 const deps = (overrides = {}) => ({
   store: new MemoryStore(),
+  // Fresh per test: holds are in-process state, so sharing them would let one
+  // test's in-flight call bound another's.
+  reservations: new Reservations(),
   verifyApple: async () => appleResult,
   verifyGoogle: async () => googleResult,
   consumeGoogle: async () => {},
@@ -561,3 +566,93 @@ function validity() {
     der(0x17, Buffer.from(fmt(new Date(Date.now() + 86400000))))
   ]));
 }
+
+// The balance used to be read, then awaited across the LLM call, then
+// deducted. Every request arriving during that await saw the same untouched
+// balance and passed, so one topped-up token admitted unlimited concurrent
+// calls on the operator's provider key. A synchronous check-and-reserve closes
+// it: Node cannot interleave requests where there is no await.
+describe('credit is reserved, not just checked', () => {
+  const tokenFor = (sub) => signToken({ sub, platform: 'apple', productId: appleResult.productId }, SECRET, 60_000);
+
+  // An LLM call that parks until released, so several requests are genuinely
+  // in flight at once -- the only way to exercise the race.
+  function deferredLLM() {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    const started = [];
+    return {
+      release: () => release(),
+      started,
+      call: async () => {
+        started.push(1);
+        await gate;
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 1000, outputTokens: 1000 } };
+      }
+    };
+  }
+
+  it('does not let concurrent calls spend one balance many times over', async () => {
+    const store = new MemoryStore();
+    const sub = subjectFor('apple', 'acct-race');
+    adjustBalance(sub, 1, store); // enough to admit one message, nowhere near five
+    const llm = deferredLLM();
+    const d = deps({ store, callCoachLLM: llm.call });
+
+    const calls = Array.from({ length: 5 }, () =>
+      post('/v1/chat', { messages: [{ role: 'user', content: 'hi' }] },
+        { authorization: `Bearer ${tokenFor(sub)}` }, d));
+    llm.release();
+    const results = await Promise.all(calls);
+
+    // Before the fix all five reached the provider on a 1-micro balance.
+    expect(llm.started.length).toBeLessThanOrEqual(2);
+    expect(results.filter(r => r.status === 200).length).toBeLessThanOrEqual(2);
+    expect(results.some(r => r.status === 429 || r.status === 402)).toBe(true);
+  });
+
+  it('refuses a third simultaneous call from one subject', async () => {
+    const store = new MemoryStore();
+    const sub = subjectFor('apple', 'acct-inflight');
+    adjustBalance(sub, 5_000_000, store);
+    const llm = deferredLLM();
+    const d = deps({ store, callCoachLLM: llm.call });
+
+    const first = post('/v1/chat', { messages: [{ role: 'user', content: 'a' }] },
+      { authorization: `Bearer ${tokenFor(sub)}` }, d);
+    const second = post('/v1/chat', { messages: [{ role: 'user', content: 'b' }] },
+      { authorization: `Bearer ${tokenFor(sub)}` }, d);
+    const third = await post('/v1/chat', { messages: [{ role: 'user', content: 'c' }] },
+      { authorization: `Bearer ${tokenFor(sub)}` }, d);
+
+    expect(third.status).toBe(429);
+    expect(third.body.code).toBe('too_many_inflight');
+
+    llm.release();
+    await Promise.all([first, second]);
+  });
+
+  it('releases the hold when the provider call fails', async () => {
+    const store = new MemoryStore();
+    const sub = subjectFor('apple', 'acct-fail');
+    adjustBalance(sub, 5_000_000, store);
+    let calls = 0;
+    const d = deps({
+      store,
+      callCoachLLM: async () => {
+        calls += 1;
+        if (calls === 1) throw new UpstreamError('provider down', 502);
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 10, outputTokens: 10 } };
+      }
+    });
+
+    const failed = await post('/v1/chat', { messages: [{ role: 'user', content: 'a' }] },
+      { authorization: `Bearer ${tokenFor(sub)}` }, d);
+    expect(failed.status).toBe(502);
+
+    // A hold leaked on the error path would starve every later request.
+    const after = await post('/v1/chat', { messages: [{ role: 'user', content: 'b' }] },
+      { authorization: `Bearer ${tokenFor(sub)}` }, d);
+    expect(after.status).toBe(200);
+  });
+});
