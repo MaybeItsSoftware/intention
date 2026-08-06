@@ -95,16 +95,18 @@ final class BackgroundJSHost: NSObject {
         pendingCallbacks[callbackId] = completion
 
         guard
-            let messageB64 = JSBridgeCodec.encode(message),
-            let senderB64 = JSBridgeCodec.encode([String: Any]())
+            let messageLiteral = JSBridgeCodec.encodedLiteral(message),
+            let senderLiteral = JSBridgeCodec.encodedLiteral([String: Any]())
         else {
             pendingCallbacks.removeValue(forKey: callbackId)
             completion(nil)
             return
         }
 
-        let script = "window.triggerMessage(atob('\(messageB64)'), atob('\(senderB64)'), '\(callbackId)')"
-        hostedWebView.evaluateJavaScript(script, completionHandler: nil)
+        let script = "window.triggerMessage(\(messageLiteral), \(senderLiteral), \(JSBridgeCodec.jsLiteral(callbackId)))"
+        hostedWebView.evaluateJavaScript(script) { _, error in
+            if let error { NSLog("[Intention] triggerMessage failed: %@", String(describing: error)) }
+        }
     }
 
     // MARK: - Catch-up
@@ -177,11 +179,12 @@ final class BackgroundJSHost: NSObject {
     private func deliverAlarm(_ name: String) {
         AlarmStore.remove(name)
         alarmTimers.removeValue(forKey: name)?.invalidate()
-        guard let hostedWebView = webView, let nameB64 = JSBridgeCodec.encode(name) else { return }
+        guard let hostedWebView = webView else { return }
         hostedWebView.evaluateJavaScript(
-            "window.alarmListener && window.alarmListener({ name: JSON.parse(atob('\(nameB64)')).value })",
-            completionHandler: nil
-        )
+            "window.alarmListener && window.alarmListener({ name: \(JSBridgeCodec.jsLiteral(name)) })"
+        ) { _, error in
+            if let error { NSLog("[Intention] alarmListener failed: %@", String(describing: error)) }
+        }
     }
 
     private static func numeric(_ value: Any?) -> Double? {
@@ -200,9 +203,12 @@ final class BackgroundJSHost: NSObject {
     }
 
     private func invokeJSCallback(_ callbackId: String, result: Any?) {
-        guard !callbackId.isEmpty, let hostedWebView = webView, let resultB64 = JSBridgeCodec.encode(result) else { return }
-        let script = "window.IntentionCallbacks.invoke('\(callbackId)', atob('\(resultB64)'))"
-        hostedWebView.evaluateJavaScript(script, completionHandler: nil)
+        guard !callbackId.isEmpty, let hostedWebView = webView,
+              let resultLiteral = JSBridgeCodec.encodedLiteral(result) else { return }
+        let script = "window.IntentionCallbacks.invoke(\(JSBridgeCodec.jsLiteral(callbackId)), \(resultLiteral))"
+        hostedWebView.evaluateJavaScript(script) { _, error in
+            if let error { NSLog("[Intention] callback invoke failed: %@", String(describing: error)) }
+        }
     }
 }
 

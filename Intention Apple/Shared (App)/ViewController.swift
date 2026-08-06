@@ -524,11 +524,12 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     }
 
     private func invokeBridgeCallback(_ callbackId: String, result: Any?) {
-        guard !callbackId.isEmpty, let resultB64 = JSBridgeCodec.encode(result) else { return }
+        guard !callbackId.isEmpty, let resultLiteral = JSBridgeCodec.encodedLiteral(result) else { return }
         webView.evaluateJavaScript(
-            "window.IntentionCallbacks.invoke('\(callbackId)', atob('\(resultB64)'))",
-            completionHandler: nil
-        )
+            "window.IntentionCallbacks.invoke(\(JSBridgeCodec.jsLiteral(callbackId)), \(resultLiteral))"
+        ) { _, error in
+            if let error { NSLog("[Intention] bridge callback failed: %@", String(describing: error)) }
+        }
     }
 
 }
