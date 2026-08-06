@@ -4,15 +4,16 @@
     <style name="Theme.Intention" parent="Theme.AppCompat.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="colorPrimary">#0f1115</item>
-        <item name="colorPrimaryDark">#090a0d</item>
         <item name="colorAccent">#e7e7ea</item>
     </style>
 
-    <!-- Fullscreen Coaching Theme -->
+    <!-- Fullscreen Coaching Theme. System bars are hidden in code via
+         WindowInsetsControllerCompat (CoachingActivity) rather than the legacy
+         android:windowFullscreen flag, which conflicts with SDK 35+ edge-to-edge
+         enforcement. -->
     <style name="Theme.Intention.Fullscreen" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
-        <item name="android:windowFullscreen">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowBackground">#0f1115</item>
     </style>

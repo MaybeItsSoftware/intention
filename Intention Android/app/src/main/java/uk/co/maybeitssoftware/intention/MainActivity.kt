@@ -11,7 +11,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.TextView
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
 
@@ -20,6 +23,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         // Dynamic layouts are cleaner for extension wrappers
         val rootLayout = android.widget.LinearLayout(this).apply {
@@ -121,6 +125,14 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(accessibilityGate)
         rootLayout.addView(webView)
         setContentView(rootLayout)
+
+        // With edge-to-edge enforced on SDK 35+, content draws behind the system
+        // bars by default — pad the root so the gate/webview stay clear of them.
+        ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
+        }
 
         // Initialize background helper
         BackgroundJsHelper.init(applicationContext)

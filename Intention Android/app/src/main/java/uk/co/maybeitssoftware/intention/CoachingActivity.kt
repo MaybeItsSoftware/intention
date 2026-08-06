@@ -7,7 +7,11 @@ import android.provider.Browser
 import android.util.Log
 import android.webkit.WebSettings
 import android.webkit.WebView
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class CoachingActivity : AppCompatActivity() {
 
@@ -25,6 +29,17 @@ class CoachingActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        // This screen must fully cover the display so the block can't be swiped
+        // away. The old android:windowFullscreen theme flag doesn't play well
+        // with SDK 35+ edge-to-edge enforcement, so hide the bars explicitly
+        // instead; BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE lets a swipe reveal
+        // them temporarily without the coach ever losing fullscreen on resume.
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
 
         domain = intent.getStringExtra("domain") ?: ""
         isApp = intent.getBooleanExtra("isApp", true)

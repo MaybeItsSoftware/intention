@@ -63,8 +63,11 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    // Pulled in explicitly (over appcompat's transitive version) for enableEdgeToEdge(),
+    // required for correct edge-to-edge behaviour on Android 15+ (targetSdk 35+).
+    implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     // Google Play Billing — Intention Pro, the subscription that powers the
