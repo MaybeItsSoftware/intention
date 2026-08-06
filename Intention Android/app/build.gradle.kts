@@ -20,8 +20,8 @@ android {
         applicationId = "uk.co.maybeitssoftware.intention"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "0.19.1"
+        versionCode = 40
+        versionName = "0.20.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
