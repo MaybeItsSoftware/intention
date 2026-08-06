@@ -58,6 +58,32 @@ preflight() {
       fail "Safari MARKETING_VERSION ($APPLE_VERSIONS) doesn't match manifest version ($VERSION) — run scripts/bump-version.sh $VERSION"
     fi
     ok "Safari Xcode version matches ($VERSION)"
+
+    # env.txt holds development API keys and is gitignored. It was once a
+    # bundled resource on both Apple targets, so a real key shipped inside every
+    # App Store binary. Nothing may put it back.
+    if grep -q "env\.txt" "$APPLE_PBXPROJ"; then
+      fail "env.txt is referenced by the Xcode project — it must never be a build input"
+    fi
+    ok "Xcode project does not bundle env.txt"
+
+    # Every script the Apple manifest loads has to actually be in the bundle.
+    # page_context.js was listed in the manifest but never added to the Xcode
+    # project, so Safari shipped a manifest pointing at a missing file.
+    MANIFEST_SCRIPTS=$(python3 -c "
+import json
+m = json.load(open('$APPLE_EXT_DIR/manifest.json'))
+names = set(m.get('background', {}).get('scripts', []))
+for cs in m.get('content_scripts', []):
+    names.update(cs.get('js', []))
+print('\n'.join(sorted(names)))
+")
+    while IFS= read -r script; do
+      [[ -n "$script" ]] || continue
+      grep -q "$script" "$APPLE_PBXPROJ" \
+        || fail "$script is loaded by the Apple manifest but not referenced in the Xcode project — it will be missing from the built extension"
+    done <<< "$MANIFEST_SCRIPTS"
+    ok "Xcode project bundles every script the Apple manifest loads"
   fi
 
   # Verify every platform matches shared/ (single source of truth).

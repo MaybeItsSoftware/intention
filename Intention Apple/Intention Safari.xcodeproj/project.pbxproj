@@ -16,6 +16,7 @@
 		0E93EE68E1E4905CC3900D1F /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		125A0D90AB57B28FE647ACAB /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		1EDF5969600008746A5F0B50 /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		1EDF5969600008746A5F0B51 /* page_context.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7E /* page_context.js */; };
 		BB10C0DE00000000000000B1 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
 		BB10C0DE00000000000000B2 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
 		BB10C0DE00000000000000B3 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
@@ -49,6 +50,7 @@
 		66B8D0592FE985EF00BC0D7F /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0192FE985EE00BC0D7F /* SafariWebExtensionHandler.swift */; };
 		66B8D0792FE985EF00BC0D7F /* icon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06B2FE985EF00BC0D7F /* icon16.png */; };
 		66B8D07A2FE985EF00BC0D7F /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		66B8D07A2FE985EF00BC0D7E /* page_context.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7E /* page_context.js */; };
 		66B8D07B2FE985EF00BC0D7F /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
 		66B8D07C2FE985EF00BC0D7F /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
 		66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06F2FE985EF00BC0D7F /* icon48.png */; };
@@ -63,6 +65,7 @@
 		66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
 		66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06B2FE985EF00BC0D7F /* icon16.png */; };
 		66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		66B8D0882FE985EF00BC0D7E /* page_context.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7E /* page_context.js */; };
 		66B8D0892FE985EF00BC0D7F /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
 		66B8D08A2FE985EF00BC0D7F /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
 		66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06F2FE985EF00BC0D7F /* icon48.png */; };
@@ -75,8 +78,6 @@
 		66B8D0922FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
 		66B8D0932FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
 		66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
-		66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0FE2FE985EF00BC0D7F /* env.txt */; };
-		66B8D1002FE985EF00BC0D7F /* env.txt in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0FE2FE985EF00BC0D7F /* env.txt */; };
 		66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
 		66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
 		66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
@@ -103,6 +104,7 @@
 		C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		C11391A3091DB42063A78CA3 /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
 		CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
+		CE510BB9AADCBEF64B46E9CD /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
 		D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 /* End PBXBuildFile section */
 
@@ -218,6 +220,7 @@
 		66B8D04B2FE985EF00BC0D7F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		66B8D06B2FE985EF00BC0D7F /* icon16.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon16.png; path = "../../Intention Chrome/icon16.png"; sourceTree = "<group>"; };
 		66B8D06C2FE985EF00BC0D7F /* prompts.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = prompts.js; path = "../../Intention Chrome/prompts.js"; sourceTree = "<group>"; };
+		66B8D06C2FE985EF00BC0D7E /* page_context.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = page_context.js; path = "../../Intention Chrome/page_context.js"; sourceTree = "<group>"; };
 		66B8D06D2FE985EF00BC0D7F /* content.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = content.css; path = "../../Intention Chrome/content.css"; sourceTree = "<group>"; };
 		66B8D06E2FE985EF00BC0D7F /* background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = background.js; path = "../../Intention Chrome/background.js"; sourceTree = "<group>"; };
 		66B8D06F2FE985EF00BC0D7F /* icon48.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon48.png; path = "../../Intention Chrome/icon48.png"; sourceTree = "<group>"; };
@@ -231,7 +234,6 @@
 		66B8D0762FE985EF00BC0D7F /* providers.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = providers.js; path = "../../Intention Chrome/providers.js"; sourceTree = "<group>"; };
 		66B8D0772FE985EF00BC0D7F /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = "../../Intention Chrome/options.css"; sourceTree = "<group>"; };
 		66B8D0782FE985EF00BC0D7F /* icon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon32.png; path = "../../Intention Chrome/icon32.png"; sourceTree = "<group>"; };
-		66B8D0FE2FE985EF00BC0D7F /* env.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = env.txt; path = "../../Intention Chrome/env.txt"; sourceTree = "<group>"; };
 		66B8D1012FE985EF00BC0D7F /* coaching.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = coaching.html; path = "../../Intention Chrome/coaching.html"; sourceTree = "<group>"; };
 		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
 		66B8D1072FE985EF00BC0D7F /* fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = fonts; path = "../../Intention Chrome/fonts"; sourceTree = "<group>"; };
@@ -432,6 +434,7 @@
 			children = (
 				66B8D06B2FE985EF00BC0D7F /* icon16.png */,
 				66B8D06C2FE985EF00BC0D7F /* prompts.js */,
+				66B8D06C2FE985EF00BC0D7E /* page_context.js */,
 				66B8D06D2FE985EF00BC0D7F /* content.css */,
 				66B8D06E2FE985EF00BC0D7F /* background.js */,
 				66B8D06F2FE985EF00BC0D7F /* icon48.png */,
@@ -445,7 +448,6 @@
 				BB10C0DE000000000000FE01 /* billing.js */,
 				66B8D0772FE985EF00BC0D7F /* options.css */,
 				66B8D0782FE985EF00BC0D7F /* icon32.png */,
-				66B8D0FE2FE985EF00BC0D7F /* env.txt */,
 				66B8D1012FE985EF00BC0D7F /* coaching.html */,
 				66B8D1042FE985EF00BC0D7F /* coaching.js */,
 				66B8D1072FE985EF00BC0D7F /* fonts */,
@@ -727,6 +729,7 @@
 				BC10C0DE00000000000000B2 /* coaching.js in Resources */,
 				BC10C0DE00000000000000B3 /* content.css in Resources */,
 				1EDF5969600008746A5F0B50 /* prompts.js in Resources */,
+				1EDF5969600008746A5F0B51 /* page_context.js in Resources */,
 				863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */,
 				79E816C9538AF8290B28BE79 /* background.js in Resources */,
 				AA10C0DE000000000000FE01 /* fonts in Resources */,
@@ -758,6 +761,7 @@
 				66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */,
 				66B8D0932FE985EF00BC0D7F /* options.css in Resources */,
 				66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */,
+				66B8D0882FE985EF00BC0D7E /* page_context.js in Resources */,
 				66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */,
 				66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */,
 				66B8D0902FE985EF00BC0D7F /* options.html in Resources */,
@@ -765,7 +769,6 @@
 				BB10C0DE00000000000000B2 /* billing.js in Resources */,
 				66B8D08B2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */,
-				66B8D0FF2FE985EF00BC0D7F /* env.txt in Resources */,
 				66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */,
 				66B8D1052FE985EF00BC0D7F /* coaching.js in Resources */,
 				AA10C0DE000000000000FE02 /* fonts in Resources */,
@@ -784,6 +787,7 @@
 				66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */,
 				66B8D0852FE985EF00BC0D7F /* options.css in Resources */,
 				66B8D07A2FE985EF00BC0D7F /* prompts.js in Resources */,
+				66B8D07A2FE985EF00BC0D7E /* page_context.js in Resources */,
 				66B8D0792FE985EF00BC0D7F /* icon16.png in Resources */,
 				66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */,
 				66B8D0822FE985EF00BC0D7F /* options.html in Resources */,
@@ -791,7 +795,6 @@
 				BB10C0DE00000000000000B3 /* billing.js in Resources */,
 				66B8D07D2FE985EF00BC0D7F /* icon48.png in Resources */,
 				66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */,
-				66B8D1002FE985EF00BC0D7F /* env.txt in Resources */,
 				66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */,
 				66B8D1062FE985EF00BC0D7F /* coaching.js in Resources */,
 				AA10C0DE000000000000FE03 /* fonts in Resources */,
@@ -851,6 +854,7 @@
 			files = (
 				66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */,
 				66B8D0332FE985EF00BC0D7F /* AppDelegate.swift in Sources */,
+				CE510BB9AADCBEF64B46E9CD /* JSBridgeCodec.swift in Sources */,
 				BA10C0DE00000000000000B2 /* IntentionStore.swift in Sources */,
 				BA10C0DE00000000000000C2 /* AppGroupConfig.swift in Sources */,
 				BA10C0DE00000000000000C3 /* AppGroupStorage.swift in Sources */,
