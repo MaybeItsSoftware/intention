@@ -841,23 +841,11 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         }
 
         const reason = String(input.reason || '').slice(0, 240);
-        const { activeSessions = {} } = await getStorage(['activeSessions']);
-        const previous = activeSessions[sessionKey];
-        if (previous && !isBanked(previous)) {
-          const elapsed = (Date.now() - previous.startTime) / 60000;
-          await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
-        }
-
-        const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
-        await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
-        chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
-        // Apps have no network rules to allow — the Android accessibility
-        // service reads activeSessions directly to let the app through — and
-        // neither do the native ports, which have no tab to scope a rule to.
-        if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
-        // Drops this domain's redirect rule for the life of the pass.
-        if (!isApp) await syncBlockingRules();
-        grantedSession = session;
+        // Must go through grantSession, not a copy of it: recordGrant is what
+        // feeds stats.grantsToday and reasonsToday, so an inlined version that
+        // skips it silently disables both the daily cap checked above and the
+        // escalating skepticism the check-in prompt is built on.
+        grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason });
       } else if (tc.name === 'update_context' && mode === 'context') {
         const newContext = String(input.new_context || '').slice(0, 5000).trim();
         if (newContext) {

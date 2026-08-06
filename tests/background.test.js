@@ -678,3 +678,91 @@ describe('tab id sent by an extension page', () => {
     expect(asked.session).toBe(null);
   });
 });
+
+// The coach's grant_access path was a hand-inlined copy of grantSession that
+// had dropped its opening recordGrant call. Since stats.grantsToday is fed
+// only by recordGrant, the daily cap compared 0 >= 3 forever and the
+// escalating-skepticism prompt had no reasons to escalate on. Every test here
+// fails against that version.
+describe('an AI-granted pass is recorded like any other', () => {
+  it('counts towards the day, so the cap can ever be reached', async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10, 'check DMs') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.grantsToday).toBe(1);
+  });
+
+  it('refuses a fourth grant and says why, instead of granting forever', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(5, 'one more look') });
+    for (let i = 0; i < 3; i++) {
+      await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        NATIVE
+      );
+      // Retire each pass so the next call is a fresh grant, not an extension.
+      delete chrome.storage._store.activeSessions['target:instagram.com'];
+    }
+    expect((await ctx.getStatsForDomain('instagram.com')).grantsToday).toBe(3);
+
+    const fourth = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    expect(fourth.grantedSession ?? null).toBe(null);
+    expect(chrome.storage._store.activeSessions['target:instagram.com']).toBeUndefined();
+    expect(fourth.assistantText).toMatch(/daily grant cap reached/);
+  });
+
+  it('honours a per-domain cap lower than the default', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, domainLimits: { 'instagram.com': { maxGrants: 1 } } },
+      fetch: grantingFetch(5)
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    delete chrome.storage._store.activeSessions['target:instagram.com'];
+
+    const second = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    expect(second.grantedSession ?? null).toBe(null);
+    expect(second.assistantText).toMatch(/daily grant cap reached/);
+  });
+
+  it('feeds the stated reason back into the prompt context', async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10, 'reply to a DM') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.reasonsToday).toContain('reply to a DM');
+  });
+
+  it('leaves the same state behind as the no-AI simple path', async () => {
+    const seed = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
+    const viaCoach = loadBackground({ seed, fetch: grantingFetch(10, 'check DMs') });
+    await viaCoach.ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(7)
+    );
+
+    const viaSimple = loadBackground({ seed });
+    await viaSimple.ctx.handleMessage(
+      { action: 'simpleGrant', domain: 'instagram.com' },
+      tab(7)
+    );
+
+    const coachSession = viaCoach.chrome.storage._store.activeSessions['7'];
+    const simpleSession = viaSimple.chrome.storage._store.activeSessions['7'];
+    expect(Object.keys(coachSession).sort()).toEqual(Object.keys(simpleSession).sort());
+    expect((await viaCoach.ctx.getStatsForDomain('instagram.com')).grantsToday)
+      .toBe((await viaSimple.ctx.getStatsForDomain('instagram.com')).grantsToday);
+  });
+});
