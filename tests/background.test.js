@@ -28,8 +28,8 @@ function grantingFetch(minutes = 10, reason = 'check DMs') {
 describe('sessionKeyFor', () => {
   it('keys on the tab id when there is one', () => {
     const { ctx } = loadBackground();
-    expect(ctx.sessionKeyFor(7, 'instagram.com')).toBe('7');
-    expect(ctx.sessionKeyFor(0, 'instagram.com')).toBe('0');
+    expect(ctx.sessionKeyFor(7, 'instagram.com')).toBe('tab:7:instagram.com');
+    expect(ctx.sessionKeyFor(0, 'instagram.com')).toBe('tab:0:instagram.com');
   });
 
   it('falls back to the target when the sender has no tab', () => {
@@ -195,11 +195,11 @@ describe('check-in alarm', () => {
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
       tab(42)
     );
-    expect(chrome.storage._store.activeSessions['42']).toBeDefined();
+    expect(chrome.storage._store.activeSessions['tab:42:instagram.com']).toBeDefined();
 
     // The mock's tabs.sendMessage rejects, standing in for a closed tab.
-    await listeners.alarm({ name: 'checkin-42' });
-    expect(chrome.storage._store.activeSessions['42']).toBeUndefined();
+    await listeners.alarm({ name: 'checkin-tab:42:instagram.com' });
+    expect(chrome.storage._store.activeSessions['tab:42:instagram.com']).toBeUndefined();
   });
 });
 
@@ -317,8 +317,10 @@ describe('extension tab keying still holds', () => {
       tab(2)
     );
 
-    expect(Object.keys(chrome.storage._store.activeSessions).sort()).toEqual(['1', '2']);
-    expect(Object.keys(chrome.storage._store.chatHistories).sort()).toEqual(['1', '2']);
+    expect(Object.keys(chrome.storage._store.activeSessions).sort())
+      .toEqual(['tab:1:instagram.com', 'tab:2:instagram.com']);
+    expect(Object.keys(chrome.storage._store.chatHistories).sort())
+      .toEqual(['tab:1:instagram.com', 'tab:2:instagram.com']);
   });
 
   it('closing a tab records its minutes and clears its state', async () => {
@@ -327,12 +329,12 @@ describe('extension tab keying still holds', () => {
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
       tab(5)
     );
-    chrome.storage._store.activeSessions['5'].startTime = Date.now() - 4 * 60000;
+    chrome.storage._store.activeSessions['tab:5:instagram.com'].startTime = Date.now() - 4 * 60000;
 
     await listeners.tabRemoved(5);
 
-    expect(chrome.storage._store.activeSessions['5']).toBeUndefined();
-    expect(chrome.storage._store.chatHistories['5']).toBeUndefined();
+    expect(chrome.storage._store.activeSessions['tab:5:instagram.com']).toBeUndefined();
+    expect(chrome.storage._store.chatHistories['tab:5:instagram.com']).toBeUndefined();
     const stats = await ctx.getStatsForDomain('instagram.com');
     expect(stats.minutesToday).toBe(4);
   });
@@ -354,7 +356,7 @@ describe('extension tab keying still holds', () => {
     // Run the clock past the granted window without firing the alarm — a
     // restarted service worker loses its alarms, and the pass must not outlive
     // its minutes just because nothing was there to close it.
-    chrome.storage._store.activeSessions['3'].startTime = Date.now() - 30 * 60000;
+    chrome.storage._store.activeSessions['tab:3:instagram.com'].startTime = Date.now() - 30 * 60000;
     match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
     expect(match.session).toBe(null);
   });
@@ -619,7 +621,7 @@ describe('a live pass lifts the domain redirect rule', () => {
     expect(dnr.redirectedDomains()).toEqual([]);
 
     // Time runs out with no alarm to notice it (a suspended background page).
-    chrome.storage._store.activeSessions['3'].startTime = Date.now() - 30 * 60000;
+    chrome.storage._store.activeSessions['tab:3:instagram.com'].startTime = Date.now() - 30 * 60000;
     await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
     // checkPageMatch kicks off the resync without waiting for it, so the page
     // isn't held up; queueing behind it is how a test waits for that work.
@@ -659,7 +661,7 @@ describe('tab id sent by an extension page', () => {
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a', tabId: 9 },
       NATIVE
     );
-    expect(Object.keys(chrome.storage._store.activeSessions)).toEqual(['9']);
+    expect(Object.keys(chrome.storage._store.activeSessions)).toEqual(['tab:9:instagram.com']);
   });
 
   it('never overrides a real sender.tab', async () => {
@@ -759,10 +761,165 @@ describe('an AI-granted pass is recorded like any other', () => {
       tab(7)
     );
 
-    const coachSession = viaCoach.chrome.storage._store.activeSessions['7'];
-    const simpleSession = viaSimple.chrome.storage._store.activeSessions['7'];
+    const coachSession = viaCoach.chrome.storage._store.activeSessions['tab:7:instagram.com'];
+    const simpleSession = viaSimple.chrome.storage._store.activeSessions['tab:7:instagram.com'];
     expect(Object.keys(coachSession).sort()).toEqual(Object.keys(simpleSession).sort());
     expect((await viaCoach.ctx.getStatsForDomain('instagram.com')).grantsToday)
       .toBe((await viaSimple.ctx.getStatsForDomain('instagram.com')).grantsToday);
+  });
+});
+
+// Sessions used to be keyed on the tab id alone, so a pass earned on one
+// blocked site opened every other blocked site in that tab for the rest of the
+// pass -- no conversation required -- and handed the next site's gate the
+// previous site's transcript. Keys are now per (tab, domain).
+describe('a pass is confined to the site it was earned on', () => {
+  const TWO_SITES = {
+    ...CONFIGURED,
+    setupComplete: true,
+    blockedDomains: ['instagram.com', 'reddit.com']
+  };
+
+  it('does not open a second blocked site in the same tab', async () => {
+    const { ctx } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10, 'check DMs') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+
+    const sameSite = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(42));
+    expect(sameSite.session).not.toBe(null);
+
+    const otherSite = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.reddit.com' }, tab(42));
+    expect(otherSite.isBlocked).toBe(true);
+    expect(otherSite.session).toBe(null);
+  });
+
+  it('does not answer getSession for another domain in the same tab', async () => {
+    const { ctx } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+    const asked = await ctx.handleMessage({ action: 'getSession', domain: 'reddit.com' }, tab(42));
+    expect(asked.session).toBe(null);
+  });
+
+  it('keeps each site transcript to itself', async () => {
+    const { ctx, chrome } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'something private' },
+      tab(42)
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'unrelated' },
+      tab(42)
+    );
+
+    const histories = chrome.storage._store.chatHistories;
+    expect(JSON.stringify(histories['tab:42:instagram.com'])).toContain('something private');
+    expect(JSON.stringify(histories['tab:42:reddit.com'])).not.toContain('something private');
+  });
+
+  it('lets one tab hold a live pass on two sites at once', async () => {
+    const { ctx, chrome } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' },
+      tab(42)
+    );
+    expect(Object.keys(chrome.storage._store.activeSessions).sort())
+      .toEqual(['tab:42:instagram.com', 'tab:42:reddit.com']);
+  });
+
+  it('banks both of a tab sessions when it closes', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' },
+      tab(42)
+    );
+    chrome.storage._store.activeSessions['tab:42:instagram.com'].startTime = Date.now() - 3 * 60000;
+    chrome.storage._store.activeSessions['tab:42:reddit.com'].startTime = Date.now() - 2 * 60000;
+
+    await listeners.tabRemoved(42);
+
+    expect(chrome.storage._store.activeSessions).toEqual({});
+    expect(chrome.storage._store.chatHistories).toEqual({});
+    expect((await ctx.getStatsForDomain('instagram.com')).minutesToday).toBe(3);
+    expect((await ctx.getStatsForDomain('reddit.com')).minutesToday).toBe(2);
+  });
+
+  it('hands the tab allow rule to the session still running', async () => {
+    const { ctx, chrome } = loadBackground({ seed: TWO_SITES, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' },
+      tab(42)
+    );
+    await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com' }, tab(42));
+
+    // One rule per tab, so ending one session must re-point the rule at the
+    // survivor rather than removing it and stranding that pass.
+    const forTab = chrome.declarativeNetRequest._sessionRules.filter(r => r.id === 42);
+    expect(forTab).toHaveLength(1);
+    expect(forTab[0].condition.urlFilter).toContain('reddit.com');
+  });
+});
+
+describe('sessions written under the old key format', () => {
+  const legacySeed = (extra = {}) => ({
+    ...CONFIGURED,
+    setupComplete: true,
+    blockedDomains: ['instagram.com', 'reddit.com'],
+    activeSessions: {
+      '42': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+    },
+    ...extra
+  });
+
+  it('are still honoured for their own domain', async () => {
+    const { ctx } = loadBackground({ seed: legacySeed() });
+    const asked = await ctx.handleMessage({ action: 'getSession', domain: 'instagram.com' }, tab(42));
+    expect(asked.session).not.toBe(null);
+  });
+
+  it('are not honoured for a different domain', async () => {
+    const { ctx } = loadBackground({ seed: legacySeed() });
+    const asked = await ctx.handleMessage({ action: 'getSession', domain: 'reddit.com' }, tab(42));
+    expect(asked.session).toBe(null);
+  });
+
+  it('are rekeyed, with transcript and check-in, on reconcile', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: legacySeed({ chatHistories: { '42': [{ role: 'user', content: 'earlier' }] } })
+    });
+    await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+
+    const sessions = chrome.storage._store.activeSessions;
+    expect(sessions['42']).toBeUndefined();
+    expect(sessions['tab:42:instagram.com']).toBeDefined();
+    expect(chrome.storage._store.chatHistories['tab:42:instagram.com'][0].content).toBe('earlier');
+    expect(chrome.alarms._created.some(a => a.name === 'checkin-tab:42:instagram.com')).toBe(true);
+  });
+
+  it('still bank if their old check-in alarm fires first', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: legacySeed() });
+    chrome.storage._store.activeSessions['42'].startTime = Date.now() - 10 * 60000;
+
+    // The tab id is still recoverable from the legacy alarm name, so this
+    // takes the same path as before and drops the unreachable tab's session.
+    await listeners.alarm({ name: 'checkin-42' });
+
+    expect(chrome.storage._store.activeSessions['42']).toBeUndefined();
   });
 });

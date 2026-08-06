@@ -360,8 +360,11 @@ class IntentionAccessibilityService : AccessibilityService() {
         val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         var latest: Long? = null
         try {
-            // activeSessions is a JSON object keyed by tab id (extensions) or
-            // "target:<domain|package>" (Android/iOS, which have no tabs):
+            // activeSessions is a JSON object keyed "tab:<id>:<domain>" in the
+            // browser extensions, or "target:<domain|package>" on Android/iOS,
+            // which have no tabs. This loop matches on each session's own
+            // `domain` field rather than parsing keys, so it is unaffected by
+            // the key format -- keep it that way.
             // {"target:instagram.com": {"domain": "instagram.com", "startTime": 12345, "intervalMinutes": 10}}
             val json = JSONObject(activeSessionsStr)
             val keys = json.keys()

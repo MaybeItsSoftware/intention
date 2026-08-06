@@ -246,10 +246,21 @@ export function loadBackground({ seed = {}, fetch } = {}) {
   chrome.runtime.onInstalled = { addListener: () => {} };
   chrome.runtime.onMessage = { addListener: (fn) => { listeners.message = fn; } };
   chrome.runtime.openOptionsPage = () => {};
+  // Session (allow) rules are recorded rather than dropped: they are keyed by
+  // tab id alone, so a tab holding a pass on two blocked sites has one rule
+  // covering one of them, and tests need to see which.
+  const sessionRules = [];
   chrome.declarativeNetRequest = {
     getDynamicRules: async () => [],
     updateDynamicRules: async () => {},
-    updateSessionRules: async () => {}
+    updateSessionRules: async ({ removeRuleIds = [], addRules = [] } = {}) => {
+      for (const id of removeRuleIds) {
+        const i = sessionRules.findIndex(r => r.id === id);
+        if (i !== -1) sessionRules.splice(i, 1);
+      }
+      sessionRules.push(...addRules);
+    },
+    _sessionRules: sessionRules
   };
 
   const sources = ['providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']

@@ -35,15 +35,69 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   } catch (e) {}
 }
 
-// Sessions, chat history and check-in alarms are keyed per browser tab in the
-// extensions. The native ports (Android, iOS) have no tabs — their bridges
-// deliver messages with no sender.tab — so they key per blocked target
-// instead. Without this every site and app on the device shares one slot: a
-// second grant silently evicts the first, declining one target ends another's
-// pass, and every coaching conversation appends to the same transcript.
+// Sessions, chat history and check-in alarms are keyed per (tab, target) in
+// the extensions. The native ports (Android, iOS) have no tabs — their bridges
+// deliver messages with no sender.tab — so they key per blocked target alone.
+// Without a key per target, every site and app on the device shares one slot:
+// a second grant silently evicts the first, declining one target ends
+// another's pass, and every coaching conversation appends to the same
+// transcript.
+//
+// The target is in the key, not just the tab id, because a tab outlives the
+// site in it. Keying on the tab alone meant a pass earned on one blocked site
+// unlocked every other blocked site visited in that tab for the rest of the
+// pass — no conversation required — and handed the next site's gate the
+// previous site's chat transcript.
+const LEGACY_TAB_KEY = /^\d+$/;
+
 function sessionKeyFor(tabId, target) {
-  if (tabId != null) return String(tabId);
-  return target ? `target:${target}` : null;
+  if (!target) return null;
+  return tabId != null ? `tab:${tabId}:${target}` : `target:${target}`;
+}
+
+// The tab id a session key belongs to, or null for a target-only (native) key.
+// Understands the legacy bare-tab-id form so alarms and sessions written before
+// the key change are still routed correctly.
+function tabIdFromSessionKey(sessionKey) {
+  const composite = /^tab:(\d+):/.exec(sessionKey || '');
+  if (composite) return Number(composite[1]);
+  return LEGACY_TAB_KEY.test(sessionKey || '') ? Number(sessionKey) : null;
+}
+
+// Every session key belonging to a tab, including any legacy bare-tab-id key.
+// A tab can legitimately hold more than one: earn a pass on one blocked site,
+// navigate to another and earn a second, and both are live.
+function sessionKeysForTab(activeSessions, tabId) {
+  if (tabId == null) return [];
+  const prefix = `tab:${tabId}:`;
+  return Object.keys(activeSessions).filter(
+    key => key.startsWith(prefix) || key === String(tabId)
+  );
+}
+
+// The one place sessions are looked up. Reads are funnelled through here so the
+// "a session only counts for its own domain" rule is enforced once rather than
+// re-derived at each call site — which is exactly how the cross-domain hole
+// appeared. `live: false` returns a banked session too, which the check-in
+// coach needs so it can quote the reason the user originally gave.
+function readSession(activeSessions, tabId, domain, { live = true } = {}) {
+  if (!domain) return null;
+  const candidates = [
+    activeSessions[sessionKeyFor(tabId, domain)],
+    activeSessions[`target:${domain}`]
+  ];
+  // Back-compat for a pass in flight across the upgrade. Domain-checked, so
+  // this path cannot itself reopen the hole it is bridging.
+  if (tabId != null) {
+    const legacy = activeSessions[String(tabId)];
+    if (legacy && legacy.domain === domain) candidates.push(legacy);
+  }
+  for (const session of candidates) {
+    if (!session) continue;
+    const resolved = live ? activeSession(session) : session;
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 // A session that has been banked by the check-in alarm is kept around on the
@@ -213,6 +267,11 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 syncBlockingRules();
+// Carries any pass written under the pre-(tab, domain) key format across, so a
+// grant in flight when the extension updated isn't stranded. Idempotent, and a
+// no-op once there is nothing left in the old shape. The native hosts get here
+// via their own reconcileSessions call on start.
+migrateSessionKeys();
 // No-op outside the Safari Web Extension runtime — see tracking.js.
 syncConfigFromNative();
 
@@ -222,13 +281,15 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  await endSession({ tabId, reason: 'closed' });
+  // A closing tab carries no domain, and a tab can hold a pass on more than
+  // one blocked site, so every session belonging to it has to be swept.
+  await endAllSessionsForTab(tabId, 'closed');
 });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm.name.startsWith('checkin-')) return;
   const sessionKey = alarm.name.slice('checkin-'.length);
-  const tabId = /^\d+$/.test(sessionKey) ? Number(sessionKey) : null;
+  const tabId = tabIdFromSessionKey(sessionKey);
 
   if (tabId == null) {
     // Native ports: there is no content script to interrupt. The platform
@@ -286,7 +347,54 @@ async function bankExpiredSession(sessionKey) {
 // own. Idempotent — banking is guarded by isBanked() and chrome.alarms.create
 // replaces any alarm of the same name — so the native hosts can call it on
 // every start.
+// Rewrites sessions written under the old bare-tab-id key ("42") into the
+// per-(tab, domain) form ("tab:42:instagram.com"), carrying the transcript and
+// the check-in alarm across. Every session stores its own domain, so this is
+// lossless. Idempotent, and runs from reconcileSessions, which every platform
+// already calls on start.
+async function migrateSessionKeys() {
+  const { activeSessions = {}, chatHistories = {} } = await getStorage(['activeSessions', 'chatHistories']);
+  const renames = [];
+  for (const [key, session] of Object.entries(activeSessions)) {
+    if (!LEGACY_TAB_KEY.test(key) || !session?.domain) continue;
+    renames.push([key, `tab:${key}:${session.domain}`, session]);
+  }
+  // Transcripts under a legacy key whose session is gone have nothing to name
+  // them any more, and chat history is disposable.
+  const orphanHistories = Object.keys(chatHistories).filter(
+    key => LEGACY_TAB_KEY.test(key) && !activeSessions[key]
+  );
+  if (!renames.length && !orphanHistories.length) return { migrated: 0 };
+
+  await mutateStorage('activeSessions', (sessions) => {
+    for (const [oldKey, newKey, session] of renames) {
+      sessions[newKey] = session;
+      delete sessions[oldKey];
+    }
+  });
+  await mutateStorage('chatHistories', (histories) => {
+    for (const [oldKey, newKey] of renames) {
+      if (histories[oldKey]) {
+        histories[newKey] = histories[oldKey];
+        delete histories[oldKey];
+      }
+    }
+    for (const key of orphanHistories) delete histories[key];
+  });
+  for (const [oldKey, newKey, session] of renames) {
+    chrome.alarms.clear(`checkin-${oldKey}`);
+    if (!isBanked(session)) {
+      chrome.alarms.create(`checkin-${newKey}`, {
+        when: session.startTime + session.intervalMinutes * 60000
+      });
+    }
+  }
+  console.log(INT_LOG, 'migrateSessionKeys: rekeyed', renames.length);
+  return { migrated: renames.length };
+}
+
 async function reconcileSessions() {
+  await migrateSessionKeys();
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const banked = [];
   const rearmed = [];
@@ -339,14 +447,9 @@ async function handleMessage(message, sender) {
     case 'getAccess': return getAccess();
     case 'saveEntitlement': return saveEntitlement(message.entitlement);
     case 'getSession': {
-      const sessionKey = sessionKeyFor(tabId, message.domain);
-      if (!sessionKey) return { session: null };
+      if (!message.domain) return { session: null };
       const { activeSessions = {} } = await getStorage(['activeSessions']);
-      // Same target-key fallback as checkPageMatch: a pass granted where no
-      // tab id was available still counts.
-      const session = activeSession(activeSessions[sessionKey])
-        || (message.domain ? activeSession(activeSessions[`target:${message.domain}`]) : null);
-      return { session };
+      return { session: readSession(activeSessions, tabId, message.domain) };
     }
     case 'chat':
       return handleChat({
@@ -458,12 +561,11 @@ async function checkPageMatch(host, tabId) {
   await syncConfigFromNative();
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
-  const sessionKey = sessionKeyFor(tabId, matchedDomain);
-  // The target key is the fallback for a pass granted where no tab id was
-  // available (the coaching page on Safari, or a native port). Without it the
-  // grant is invisible here and the page gates again straight away.
-  const session = (sessionKey ? activeSession(activeSessions[sessionKey]) : null)
-    || (matchedDomain ? activeSession(activeSessions[`target:${matchedDomain}`]) : null);
+  // readSession also covers the target-only key, the fallback for a pass
+  // granted where no tab id was available (the coaching page on Safari, or a
+  // native port). Without it the grant is invisible here and the page gates
+  // again straight away.
+  const session = readSession(activeSessions, tabId, matchedDomain);
   // A pass that has since expired leaves the domain's redirect rule dropped
   // (see syncBlockingRules) — visiting it again is the moment to notice and
   // put the rule back. Not awaited: the content script is holding this page's
@@ -712,9 +814,10 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     tools = [GRANT_TOOL];
   } else if (mode === 'checkin') {
     const { activeSessions = {} } = await getStorage(['activeSessions']);
-    // Deliberately not activeSession(): by check-in time the native ports have
+    // Deliberately live: false — by check-in time the native ports have
     // already marked this one ended, and its reason is what we're after.
-    const session = activeSessions[sessionKey] || {};
+    // Still domain-scoped, so the coach can't quote another site's reason.
+    const session = readSession(activeSessions, tabId, domain, { live: false }) || {};
     const stats = await getStatsForDomain(domain);
     const limits = await getLimitsForDomain(domain);
     systemPrompt = buildCheckinSystemPrompt({
@@ -1053,10 +1156,11 @@ async function clearChatHistory(historyKey) {
   return { ok: true };
 }
 
-async function endSession({ tabId, domain, reason }) {
-  const sessionKey = sessionKeyFor(tabId, domain);
-  if (!sessionKey) return { ok: true };
-
+// Retires one session key: banks whatever time it earned, drops its transcript
+// and its check-in alarm. Deliberately does no DNR or redirect-rule work — the
+// callers below own that, because a tab's allow rule is shared by every session
+// on that tab and must only be touched once the sweep is complete.
+async function retireSessionKey(sessionKey) {
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const session = activeSessions[sessionKey];
   if (session) {
@@ -1070,12 +1174,56 @@ async function endSession({ tabId, domain, reason }) {
   }
   await mutateStorage('chatHistories', (chatHistories) => { delete chatHistories[sessionKey]; });
   chrome.alarms.clear(`checkin-${sessionKey}`);
-  if (tabId != null) removeSessionRule(tabId);
+}
+
+// The DNR allow rule is keyed by tab id alone (one rule per tab), but a tab can
+// hold a live pass on more than one blocked site. So ending one session must
+// not strip the rule out from under another that is still running — hand the
+// rule to whichever session is still live instead of removing it.
+async function settleTabRule(tabId) {
+  if (tabId == null) return;
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const stillLive = sessionKeysForTab(activeSessions, tabId)
+    .map(key => activeSession(activeSessions[key]))
+    .find(Boolean);
+  if (stillLive) {
+    const remainingMinutes = Math.max(
+      1,
+      Math.ceil((stillLive.startTime + stillLive.intervalMinutes * 60000 - Date.now()) / 60000)
+    );
+    await registerSessionRule(tabId, stillLive.domain, remainingMinutes);
+  } else {
+    removeSessionRule(tabId);
+  }
+}
+
+async function endSession({ tabId, domain, reason }) {
+  const sessionKey = sessionKeyFor(tabId, domain);
+  if (!sessionKey) return { ok: true };
+
+  await retireSessionKey(sessionKey);
+  await settleTabRule(tabId);
   // The pass is over: this domain needs its redirect rule back.
   await syncBlockingRules();
 
   if (reason === 'fulfilled' && tabId != null) {
     try { chrome.tabs.remove(tabId); } catch (e) {}
   }
+  return { ok: true };
+}
+
+// Tab-close path. onRemoved gives us a tab id and nothing else, so there is no
+// domain to build a key from — and with per-(tab, domain) keys a tab may own
+// several sessions. Missing any of them would leak it forever: its minutes
+// never banked, its redirect rule never restored.
+async function endAllSessionsForTab(tabId, reason) {
+  if (tabId == null) return { ok: true };
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const keys = sessionKeysForTab(activeSessions, tabId);
+  for (const key of keys) {
+    await retireSessionKey(key);
+  }
+  removeSessionRule(tabId);
+  if (keys.length) await syncBlockingRules();
   return { ok: true };
 }

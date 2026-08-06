@@ -138,7 +138,7 @@ describe('background.js handleChat — malformed tool calls do not lose the turn
     expect(res.assistantText).toContain('Sure, here you go.');
     // Garbage `minutes` still coerces to a valid grant (Math.max/min/round of NaN||0 -> 1).
     expect(res.grantedSession).toBeTruthy();
-    const history = chrome.storage._store.chatHistories['1'];
+    const history = chrome.storage._store.chatHistories['tab:1:x.com'];
     expect(history.at(-1).content).toContain('Sure, here you go.');
   });
 
