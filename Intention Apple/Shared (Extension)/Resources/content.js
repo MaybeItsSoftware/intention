@@ -606,6 +606,8 @@ function renderInterstitial(subtitle, buttonLabel) {
   column.appendChild(button);
   root.appendChild(column);
   document.body.appendChild(root);
+  // An SPA re-rendering <body> must not be able to drop the block.
+  keepAttached(root);
   button.addEventListener("click", () => {
     chrome.runtime.sendMessage({ action: "openOptions" });
   });
@@ -652,6 +654,8 @@ function renderChatUI({ mode, domain, blockConfig }) {
   `;
   root.querySelector(".int-subtitle").textContent = subtitle;
   document.body.appendChild(root);
+  // An SPA re-rendering <body> must not be able to drop the block.
+  keepAttached(root);
 
   const messagesEl = document.getElementById("int-messages");
   const inputEl = document.getElementById("int-input");
@@ -872,6 +876,8 @@ function renderSimpleGateUI({ mode, domain, blockConfig }) {
   `;
   root.querySelector(".int-subtitle").textContent = subtitle;
   document.body.appendChild(root);
+  // An SPA re-rendering <body> must not be able to drop the block.
+  keepAttached(root);
 
   const messagesEl = document.getElementById("int-messages");
   const actionsEl = document.getElementById("int-simple-actions");
@@ -964,6 +970,13 @@ function typeMessage(el, container, text, onDone) {
   document.addEventListener("click", skip, true);
 }
 
+// Tears down whatever the running badge left behind: its ticking timer, its
+// re-attach observer and the node itself. Stored module-side because the
+// check-in overlay has to stop the badge before it wipes the page — otherwise
+// the observer below faithfully re-attaches a badge, still counting an ended
+// session, on top of the overlay.
+let badgeTeardown = null;
+
 function renderStatusBadge(session) {
   const badge = document.createElement("div");
   badge.id = "intention-badge";
@@ -997,9 +1010,7 @@ function renderStatusBadge(session) {
   // background close the tab. Stop the timer and the re-attach observer first
   // so neither keeps running against a tab on its way out.
   finishBtn.addEventListener("click", () => {
-    clearInterval(intervalId);
-    observer.disconnect();
-    badge.remove();
+    teardown();
     chrome.runtime.sendMessage({
       action: "endSession",
       domain: session.domain,
@@ -1013,18 +1024,54 @@ function renderStatusBadge(session) {
     if (!document.body.contains(badge)) document.body.appendChild(badge);
   });
   observer.observe(document.body, { childList: true });
+
+  function teardown() {
+    clearInterval(intervalId);
+    observer.disconnect();
+    badge.remove();
+    if (badgeTeardown === teardown) badgeTeardown = null;
+  }
+  badgeTeardown = teardown;
+}
+
+// Keeps a node attached to a body the page keeps re-rendering. Same hazard the
+// badge already guards against, but the gate and check-in overlays need it
+// more: if an SPA drops #intention-root, the block is simply gone.
+function keepAttached(node) {
+  const observer = new MutationObserver(() => {
+    if (!document.body.contains(node)) document.body.appendChild(node);
+  });
+  observer.observe(document.body, { childList: true });
+  return () => observer.disconnect();
 }
 
 function setupInterruptionListener() {
   chrome.runtime.onMessage.addListener((message) => {
     if (message.action === "showCheckin") {
       if (!document.getElementById("intention-root")) {
-        renderChatUI({
-          mode: "checkin",
-          domain:
-            currentSession?.domain || matchedDomain || window.location.hostname,
-          blockConfig: matchedBlockConfig,
-        });
+        // The pass has run out, so this has to block the page the same way the
+        // gate does. Rendering the panel alone left the site fully live behind
+        // it: video kept playing, the page kept scrolling, and an SPA re-render
+        // could drop the panel entirely — leaving no block at all.
+        //
+        // Order matters. The badge's own observer re-attaches it whenever it
+        // leaves the body, so it must be stopped before ensureBodyAndStop()
+        // wipes the body, or it reappears on top of the overlay still counting
+        // a session that has ended.
+        if (badgeTeardown) badgeTeardown();
+        handled = true;
+        try {
+          ensureBodyAndStop();
+          injectOverlayStyle();
+          renderChatUI({
+            mode: "checkin",
+            domain:
+              currentSession?.domain || matchedDomain || window.location.hostname,
+            blockConfig: matchedBlockConfig,
+          });
+        } catch (e) {
+          console.error(INT_LOG, "failed to render check-in:", e);
+        }
       }
     }
   });
