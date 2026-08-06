@@ -18,6 +18,54 @@ function parseISODuration(isoStr) {
   return parts.join(', ') || isoStr;
 }
 
+// Everything in this file comes from the page being gated, or from a
+// third-party API about it, and all of it ends up inside the coach's SYSTEM
+// prompt. The page is by definition the thing the gate exists to resist, so
+// treat every field as hostile: no newlines (they let content forge extra
+// prompt lines), no control or bidi/zero-width characters (they hide text from
+// a reader while the model still sees it), and a hard length cap so a page
+// cannot bury the real instructions under 50KB of its own.
+//
+// prompts.js re-applies this at the render boundary — see renderPageContextBlock.
+// Doing it here as well keeps the messages small on the wire.
+const PAGE_CTX_LIMITS = {
+  url: 500,
+  contentType: 40,
+  videoTitle: 200,
+  threadTitle: 200,
+  title: 200,
+  channel: 80,
+  author: 80,
+  subreddit: 80,
+  duration: 40,
+  snippet: 400
+};
+
+function clampField(value, max) {
+  if (typeof value !== 'string') return '';
+  const flattened = value
+    // C0/C1 controls, line/paragraph separators, zero-width and bidi overrides.
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (flattened.length <= max) return flattened;
+  return flattened.slice(0, max).trim() + '…';
+}
+
+// Applies the caps above to a whole context object, dropping anything empty.
+function clampPageContext(pageCtx) {
+  if (!pageCtx || typeof pageCtx !== 'object') return pageCtx;
+  const out = {};
+  for (const [key, value] of Object.entries(pageCtx)) {
+    const max = PAGE_CTX_LIMITS[key];
+    const clamped = max ? clampField(value, max) : value;
+    if (clamped !== '' && clamped != null) out[key] = clamped;
+  }
+  // A url that isn't http(s) has no business being quoted back to the user.
+  if (out.url && !/^https?:\/\//i.test(out.url)) delete out.url;
+  return out;
+}
+
 function cleanSlug(slug) {
   if (!slug) return '';
   return slug
@@ -129,7 +177,7 @@ function extractPageContextFromDOM(doc, win) {
     threadTitle = ogTitle || rawTitle;
   }
 
-  return {
+  return clampPageContext({
     url,
     title: rawTitle,
     contentType,
@@ -140,7 +188,7 @@ function extractPageContextFromDOM(doc, win) {
     subreddit: subreddit || undefined,
     author: author || undefined,
     snippet: snippet || ogDesc || undefined
-  };
+  });
 }
 
 function extractPageContextFromUrl(urlStr) {
@@ -238,7 +286,7 @@ function extractPageContextFromUrl(urlStr) {
     }
   }
 
-  return {
+  return clampPageContext({
     url: urlStr,
     title: threadTitle || videoTitle || urlStr,
     contentType,
@@ -247,7 +295,7 @@ function extractPageContextFromUrl(urlStr) {
     threadTitle: threadTitle || undefined,
     subreddit: subreddit || undefined,
     author: author || undefined
-  };
+  });
 }
 
 async function enrichPageContext(pageCtx) {
@@ -284,5 +332,7 @@ async function enrichPageContext(pageCtx) {
     // Network or parse error: return best-effort pageCtx
   }
 
-  return enriched;
+  // Titles and author names here came from YouTube and Reddit, not from the
+  // extractors above, so they have not been through clampField yet.
+  return clampPageContext(enriched);
 }
