@@ -17,8 +17,14 @@
          re-arm the check-ins for any session that is still running. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Backup stays on, but scoped: the blocklist and active sessions are
+         never backed up, so a restore cannot be used to undo blocking, while
+         the Play Billing account id (which keys the server-side credit
+         balance) still survives a reinstall. See res/xml/backup_rules.xml. -->
     <application
         android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

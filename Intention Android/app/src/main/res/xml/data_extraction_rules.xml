@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 31+ equivalent of backup_rules.xml. See that file for why blocking state
+  is deliberately never backed up while the billing account id always is.
+
+  The two blocks differ on purpose:
+
+  cloud-backup is the one a user can round-trip on the same device
+  (adb backup / restore, or a Google Drive restore), so it carries the billing
+  id and nothing else.
+
+  device-transfer runs during setup of a *new* device, copying directly from
+  the old one. That is not a same-device round trip, so it is not a route to
+  wiping your own blocklist — and losing every blocked site when you change
+  phone would be a bad experience for the people this app is for. So it takes
+  both. Note that allowBackup="false" would not have covered device-transfer
+  at all; it is governed here, which is a further reason to be explicit rather
+  than reach for the blunt flag.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="intention_billing.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="intention_billing.xml" />
+        <include domain="sharedpref" path="intention_prefs.xml" />
+    </device-transfer>
+</data-extraction-rules>

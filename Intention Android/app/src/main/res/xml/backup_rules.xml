@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud backup contents on API 23-30 (dataExtractionRules covers 31+).
+
+  Include-only, deliberately. Intention is a self-blocking app, so its own
+  state is exactly what a determined user would restore to defeat it: an
+  edited intention_prefs.xml puts back an empty blocklist, or an activeSessions
+  entry with a huge intervalMinutes. Nothing about blocking is backed up.
+
+  intention_billing is the exception and must stay included. It holds the
+  account UUID that keys the coaching-credit balance server-side (see
+  BillingManager.stableAccountId and server/src/app.js's subjectFor). Credits
+  are consumables, consumed immediately, so Play cannot re-report them — lose that UUID and the paid balance is orphaned with no recovery path.
+  Restoring a chosen UUID is not a blocking bypass, and taking someone else's
+  balance would mean guessing a v4 UUID.
+
+  Include-only also fails safe: anything added later (a new prefs file, WebView
+  local storage, a database) is excluded until someone deliberately lists it.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="intention_billing.xml" />
+</full-backup-content>
