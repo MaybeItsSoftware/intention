@@ -1039,3 +1039,59 @@ describe('privileged message actions are gated on sender and mode', () => {
     expect(chrome.storage._store.chatHistories['context']).toBeUndefined();
   });
 });
+
+// tabNavContext was purely in-memory, and a coaching conversation outlives the
+// MV3 worker's ~30s idle teardown — so by the time the user talked their way
+// through the gate, getIntendedUrl had forgotten the deep link they clicked
+// and the pass dropped them on the site's front door.
+describe('the intended URL survives worker suspension', () => {
+  const SEED = { ...CONFIGURED, blockedDomains: ['youtube.com'] };
+  const WATCH = 'https://www.youtube.com/watch?v=abc123';
+
+  const recordNav = async (listeners, url, tabId = 5) => {
+    listeners.beforeNavigate({ frameId: 0, tabId, url });
+    await new Promise(r => setTimeout(r, 0)); // let the mirrored write settle
+  };
+
+  const suspend = (ctx) => {
+    for (const k of Object.keys(ctx.tabNavContext)) delete ctx.tabNavContext[k];
+  };
+
+  it('rehydrates from chrome.storage.session after a worker restart', async () => {
+    const { ctx, listeners } = loadBackground({ seed: SEED, sessionArea: true });
+    await recordNav(listeners, WATCH);
+    suspend(ctx);
+    const resp = await ctx.handleMessage(
+      { action: 'getIntendedUrl', domain: 'youtube.com' }, tab(5, 'www.youtube.com')
+    );
+    expect(resp.url).toBe(WATCH);
+  });
+
+  it('falls back to chrome.storage.local where session storage is missing', async () => {
+    const { ctx, listeners } = loadBackground({ seed: SEED });
+    await recordNav(listeners, WATCH);
+    suspend(ctx);
+    const resp = await ctx.handleMessage(
+      { action: 'getIntendedUrl', domain: 'youtube.com' }, tab(5, 'www.youtube.com')
+    );
+    expect(resp.url).toBe(WATCH);
+  });
+
+  it('still refuses a recorded URL from a different host', async () => {
+    const { ctx, listeners } = loadBackground({ seed: SEED, sessionArea: true });
+    await recordNav(listeners, 'https://evil.com/lure');
+    const resp = await ctx.handleMessage(
+      { action: 'getIntendedUrl', domain: 'youtube.com' }, tab(5, 'www.youtube.com')
+    );
+    expect(resp.url).toBe('');
+  });
+
+  it('prunes closed tabs and stale entries from the persisted map', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: SEED, sessionArea: true });
+    await recordNav(listeners, WATCH, 5);
+    ctx.tabNavContext[9] = { url: 'https://old.example/', timestamp: Date.now() - 25 * 60 * 60 * 1000 };
+    listeners.tabRemoved(5);
+    await new Promise(r => setTimeout(r, 0));
+    expect(chrome.storage._sessionStore.tabNavContext).toEqual({});
+  });
+});

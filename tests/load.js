@@ -38,12 +38,8 @@ function resolveSourcePath(file, variant = 'chrome') {
 //   chrome.storage.local.get(keys, cb)   keys: string | string[] | object | null
 //   chrome.storage.local.set(obj, cb)
 //   chrome.storage.local.remove(keys, cb)
-export function makeMockChrome(seed = {}) {
-  const store = structuredClone(seed);
-
-  const listeners = [];
-
-  const local = {
+export function makeStorageArea(store) {
+  return {
     get(keys, cb) {
       let result = {};
       if (keys == null) {
@@ -75,6 +71,14 @@ export function makeMockChrome(seed = {}) {
       Promise.resolve().then(() => cb && cb());
     }
   };
+}
+
+export function makeMockChrome(seed = {}) {
+  const store = structuredClone(seed);
+
+  const listeners = [];
+
+  const local = makeStorageArea(store);
 
   const chrome = {
     storage: {
@@ -218,11 +222,22 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
 // the way the browser would. Call ctx.handleMessage(msg, sender) to drive the
 // message API — `sender` is {tab:{id}} in the extensions and {} on the native
 // ports, which is exactly what the session keying turns on.
-export function loadBackground({ seed = {}, fetch } = {}) {
+export function loadBackground({ seed = {}, fetch, sessionArea = false } = {}) {
   const chrome = makeMockChrome(seed);
   const mockFetch = fetch || makeMockFetch({ content: [{ type: 'text', text: 'ok' }] });
 
-  const listeners = { alarm: null, tabRemoved: null, message: null };
+  // Opt-in chrome.storage.session (Chrome MV3 / Firefox 140+ / Safari 16.4+);
+  // without it background.js takes its .local fallback path, like old Safari.
+  if (sessionArea) {
+    const sessionStore = {};
+    chrome.storage.session = makeStorageArea(sessionStore);
+    chrome.storage._sessionStore = sessionStore;
+  }
+
+  const listeners = { alarm: null, tabRemoved: null, message: null, beforeNavigate: null };
+  chrome.webNavigation = {
+    onBeforeNavigate: { addListener: (fn) => { listeners.beforeNavigate = fn; } }
+  };
   const alarms = [];
   chrome.alarms = {
     create: (name, info) => alarms.push({ name, info }),
@@ -233,13 +248,19 @@ export function loadBackground({ seed = {}, fetch } = {}) {
     _created: alarms,
     onAlarm: { addListener: (fn) => { listeners.alarm = fn; } }
   };
+  // background.js registers more than one onRemoved handler (nav-context
+  // cleanup and the session sweep); fire them all, as the browser would.
+  const tabRemovedListeners = [];
+  listeners.tabRemoved = async (tabId) => {
+    for (const fn of tabRemovedListeners) await fn(tabId);
+  };
   chrome.tabs = {
     query: async () => [],
     update: async () => {},
     create: async () => {},
     remove: () => {},
     sendMessage: async () => { throw new Error('no content script'); },
-    onRemoved: { addListener: (fn) => { listeners.tabRemoved = fn; } }
+    onRemoved: { addListener: (fn) => { tabRemovedListeners.push(fn); } }
   };
   chrome.windows = { update: async () => {} };
   chrome.action = { onClicked: { addListener: () => {} } };

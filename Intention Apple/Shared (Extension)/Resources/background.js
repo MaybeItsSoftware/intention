@@ -6,8 +6,62 @@ try {
 
 const INT_LOG = '[Intention]';
 
-// Track active tab navigation context for sites visited before overlay loads
+// Track active tab navigation context for sites visited before overlay loads.
+//
+// The in-memory object is a synchronous write-through cache: a coaching
+// conversation easily outlives the MV3 worker's ~30s idle teardown (Safari
+// tears its non-persistent background page down too), and losing this map
+// meant getIntendedUrl came back empty and the user who argued for a specific
+// video landed on the site's front door. Every write is mirrored to
+// chrome.storage.session where it exists (Chrome MV3, Firefox 140+, Safari
+// 16.4+), falling back to .local on older Safari; reads rehydrate from there
+// when the worker has restarted. Android's hand-written chrome shim has
+// neither tabs nor webNavigation, so navStore stays null and this is inert.
 const tabNavContext = {};
+const NAV_CONTEXT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const navStore = (typeof chrome !== 'undefined' && (chrome.storage?.session || chrome.storage?.local)) || null;
+
+// Age-bounding on every persist is what keeps the .local fallback from
+// growing without limit when a tab closes while the worker is asleep.
+function prunedNavContext(map) {
+  const cutoff = Date.now() - NAV_CONTEXT_MAX_AGE_MS;
+  const out = {};
+  for (const [id, entry] of Object.entries(map)) {
+    if (entry && typeof entry.timestamp === 'number' && entry.timestamp > cutoff) out[id] = entry;
+  }
+  return out;
+}
+
+function persistNavContext() {
+  if (!navStore) return;
+  try {
+    navStore.set({ tabNavContext: prunedNavContext(tabNavContext) }, () => {
+      void chrome.runtime.lastError; // best-effort; nothing to do on failure
+    });
+  } catch (e) {}
+}
+
+// Synchronous cache hit first; on a miss (fresh worker) pull the persisted map
+// back into the cache before answering.
+function readNavContext(tabId) {
+  const cached = tabNavContext[tabId];
+  if (cached || !navStore) return Promise.resolve(cached || null);
+  return new Promise((resolve) => {
+    try {
+      navStore.get(['tabNavContext'], (result) => {
+        void chrome.runtime.lastError;
+        const stored = prunedNavContext(result?.tabNavContext || {});
+        for (const [id, entry] of Object.entries(stored)) {
+          if (!(id in tabNavContext)) tabNavContext[id] = entry;
+        }
+        resolve(tabNavContext[tabId] || null);
+      });
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
 if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
   try {
     // Our own pages are skipped by extension origin rather than by the
@@ -21,6 +75,7 @@ if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
           url: details.url,
           timestamp: Date.now()
         };
+        persistNavContext();
       }
     });
   } catch (e) {
@@ -31,6 +86,7 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   try {
     chrome.tabs.onRemoved.addListener((tabId) => {
       delete tabNavContext[tabId];
+      persistNavContext();
     });
   } catch (e) {}
 }
@@ -541,7 +597,7 @@ async function handleMessage(message, sender) {
     // back so the pass returns them to the page they asked for instead of the
     // site's front door.
     case 'getIntendedUrl': {
-      const recorded = tabId != null ? tabNavContext[tabId]?.url : null;
+      const recorded = tabId != null ? (await readNavContext(tabId))?.url : null;
       if (!recorded || !message.domain) return { url: '' };
       try {
         const host = new URL(recorded).hostname;
@@ -818,8 +874,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
 
   // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
   let pageCtx = pageContext || null;
-  if (!pageCtx && tabId != null && tabNavContext[tabId]?.url && typeof extractPageContextFromUrl === 'function') {
-    pageCtx = extractPageContextFromUrl(tabNavContext[tabId].url);
+  if (!pageCtx && tabId != null && typeof extractPageContextFromUrl === 'function') {
+    const nav = await readNavContext(tabId);
+    if (nav?.url) pageCtx = extractPageContextFromUrl(nav.url);
   }
   if (pageCtx && typeof enrichPageContext === 'function') {
     try {
