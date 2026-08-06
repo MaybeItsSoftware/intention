@@ -69,5 +69,6 @@ Intention Apple/fastlane/.env
 Intention Apple/fastlane/test_output
 # Regenerated each run from match's live profile-name mapping — see Fastfile.
 Intention Apple/ExportOptions-ios.plist
+Intention Apple/ExportOptions-ios-dev.plist
 Intention Apple/ExportOptions-macos.plist
 Intention Apple/ExportOptions-macos-local.plist

@@ -23,6 +23,14 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 Build a signed release IPA and upload it to App Store Connect
 
+### ios install
+
+```sh
+[bundle exec] fastlane ios install
+```
+
+Build a development IPA and install it on a connected/paired device (DEVICE_UDID, DEVICE_NAME env vars)
+
 ----
 
 

@@ -34,10 +34,21 @@ MACOS_TARGETS = {
 }
 
 def asc_api_key
+  key_id = ENV["ASC_KEY_ID"] || ENV["APPLE_KEY_ID"]
+  issuer_id = ENV["ASC_ISSUER_ID"] || ENV["APPLE_ISSUER_ID"]
+  raw_key = ENV["ASC_KEY_CONTENT"] || ENV["APPLE_KEY_CONTENT"] || ENV["APPLE_PRIVATE_KEY"]
+
+  # If key is raw PEM string, convert to base64 for fastlane
+  key_content = raw_key
+  if raw_key && raw_key.include?("BEGIN PRIVATE KEY")
+    require "base64"
+    key_content = Base64.strict_encode64(raw_key)
+  end
+
   app_store_connect_api_key(
-    key_id:                ENV["ASC_KEY_ID"],
-    issuer_id:             ENV["ASC_ISSUER_ID"],
-    key_content:           ENV["ASC_KEY_CONTENT"],
+    key_id:                key_id,
+    issuer_id:             issuer_id,
+    key_content:           key_content,
     is_key_content_base64: true,
   )
 end
@@ -107,6 +118,57 @@ platform :ios do
       ipa:                               lane_context[SharedValues::IPA_OUTPUT_PATH],
       skip_waiting_for_build_processing: true,
     )
+  end
+
+  desc "Build a development IPA and install it on a connected/paired device (DEVICE_UDID, DEVICE_NAME env vars)"
+  lane :install do
+    setup_ci
+    api_key = asc_api_key
+
+    device_udid = ENV["DEVICE_UDID"] || UI.user_error!("Set DEVICE_UDID to the target device's UDID")
+    device_name = ENV["DEVICE_NAME"] || device_udid
+
+    register_device(
+      name:    device_name,
+      udid:    device_udid,
+      team_id: TEAM_ID,
+      api_key: api_key,
+    )
+
+    match(
+      type:                  "development",
+      platform:              "ios",
+      app_identifier:        IOS_TARGETS.values,
+      api_key:               api_key,
+      readonly:              is_ci,
+      # Regenerate the profile if the device list changed since it was last
+      # created (e.g. this iPhone was just registered above).
+      force_for_new_devices: true,
+    )
+
+    apply_manual_signing(IOS_TARGETS, code_sign_identity: "Apple Development")
+
+    mapping = lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
+    export_options = File.join(ROOT, "ExportOptions-ios-dev.plist")
+    options = {
+      "method"               => "development",
+      "teamID"               => TEAM_ID,
+      "signingStyle"         => "manual",
+      "provisioningProfiles" => IOS_TARGETS.values.to_h { |id| [id, mapping.fetch(id)] },
+    }
+    require "plist"
+    File.write(export_options, options.to_plist)
+
+    build_app(
+      project:          PROJECT,
+      scheme:           "Intention Safari (iOS)",
+      export_method:    "development",
+      export_options:   export_options,
+      output_directory: File.join(ROOT, "..", "build", "ios-dev"),
+    )
+
+    sh("xcrun devicectl device install app --device #{device_udid.shellescape} #{lane_context[SharedValues::IPA_OUTPUT_PATH].shellescape}")
+    UI.success("Installed on #{device_name}")
   end
 end
 
