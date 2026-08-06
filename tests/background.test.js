@@ -11,8 +11,11 @@ import { loadBackground, makeMockFetch } from './load.js';
 
 const CONFIGURED = { provider: 'anthropic', apiKey: 'test-key', model: 'claude-sonnet-5' };
 
-// Sender shapes: a browser tab vs a native host with no tabs.
-const tab = (id) => ({ tab: { id } });
+// Sender shapes: a content script in a browser tab (which always carries the
+// page URL), an extension page (options/coaching), and a native host with no
+// tabs. host defaults to the page the gate actually runs on in most tests.
+const tab = (id, host = 'instagram.com') => ({ tab: { id }, url: `https://${host}/` });
+const EXT_PAGE = { url: 'chrome-extension://test/coaching.html' };
 const NATIVE = {};
 
 // An LLM reply that grants `minutes`, in Anthropic's response shape.
@@ -755,7 +758,7 @@ describe('an AI-granted pass is recorded like any other', () => {
       tab(7)
     );
 
-    const viaSimple = loadBackground({ seed });
+    const viaSimple = loadBackground({ seed: { ...seed, blockingMode: 'simple' } });
     await viaSimple.ctx.handleMessage(
       { action: 'simpleGrant', domain: 'instagram.com' },
       tab(7)
@@ -921,5 +924,118 @@ describe('sessions written under the old key format', () => {
     await listeners.alarm({ name: 'checkin-42' });
 
     expect(chrome.storage._store.activeSessions['42']).toBeUndefined();
+  });
+});
+
+// applySettingChange and simpleGrant used to be directly callable by any
+// content script: a hostile page could clear the whole blocklist, or mint a
+// pass on a coach-mode domain and bypass the LLM gate entirely.
+describe('privileged message actions are gated on sender and mode', () => {
+  const BLOCKED = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
+
+  it('refuses simpleGrant on a coach-mode domain, whoever asks', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    for (const sender of [tab(7), EXT_PAGE, NATIVE]) {
+      const resp = await ctx.handleMessage(
+        { action: 'simpleGrant', domain: 'instagram.com' }, sender
+      );
+      expect(resp.grantedSession).toBeUndefined();
+      expect(resp.denied).toBeTruthy();
+    }
+    expect(chrome.storage._store.activeSessions ?? {}).toEqual({});
+  });
+
+  it('refuses a content script asking for a different site than its own', async () => {
+    const { ctx } = loadBackground({
+      seed: { ...BLOCKED, blockingMode: 'simple' }
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'simpleGrant', domain: 'instagram.com' },
+      tab(7, 'evil.com')
+    );
+    expect(resp.grantedSession).toBeUndefined();
+    expect(resp.denied).toBeTruthy();
+  });
+
+  it('still grants from the blocked page itself in simple mode', async () => {
+    const { ctx } = loadBackground({ seed: { ...BLOCKED, blockingMode: 'simple' } });
+    const resp = await ctx.handleMessage(
+      { action: 'simpleGrant', domain: 'instagram.com' },
+      tab(7, 'www.instagram.com')
+    );
+    expect(resp.grantedSession).toBeDefined();
+  });
+
+  it('still grants from the coaching page and native hosts in simple mode', async () => {
+    for (const sender of [EXT_PAGE, NATIVE]) {
+      const { ctx } = loadBackground({ seed: { ...BLOCKED, blockingMode: 'simple' } });
+      const resp = await ctx.handleMessage(
+        { action: 'simpleGrant', domain: 'instagram.com', tabId: 7 }, sender
+      );
+      expect(resp.grantedSession).toBeDefined();
+    }
+  });
+
+  it('honours a per-domain simple override without opening the rest', async () => {
+    const { ctx } = loadBackground({
+      seed: { ...BLOCKED, domainLimits: { 'instagram.com': { mode: 'simple' } } }
+    });
+    const granted = await ctx.handleMessage(
+      { action: 'simpleGrant', domain: 'instagram.com' }, tab(7)
+    );
+    expect(granted.grantedSession).toBeDefined();
+  });
+
+  it('refuses applySettingChange from any content script', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, blockingMode: 'simple' }
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'disable_all' },
+      tab(7)
+    );
+    expect(resp?.blockedDomains).toBeUndefined();
+    expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
+  });
+
+  it('refuses applySettingChange without simple mode even from our own pages', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    const resp = await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'remove', domain: 'instagram.com' },
+      EXT_PAGE
+    );
+    expect(resp?.blockedDomains).toBeUndefined();
+    expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
+  });
+
+  it('applies a simple-mode change from the options page', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, blockingMode: 'simple' }
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'remove', domain: 'instagram.com' },
+      EXT_PAGE
+    );
+    expect(resp.blockedDomains).toEqual([]);
+    expect(chrome.storage._store.blockedDomains).toEqual([]);
+  });
+
+  it('keeps clearChatHistory from wiping another session by guessed key', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    chrome.storage._store.chatHistories = {
+      'tab:9:reddit.com': [{ role: 'user', content: 'other tab' }],
+      'context': [{ role: 'user', content: 'options chat' }]
+    };
+    await ctx.handleMessage(
+      { action: 'clearChatHistory', historyKey: 'tab:9:reddit.com', domain: 'instagram.com' },
+      tab(7)
+    );
+    expect(chrome.storage._store.chatHistories['tab:9:reddit.com']).toBeDefined();
+
+    // The fixed non-session namespaces are still clearable by name.
+    await ctx.handleMessage(
+      { action: 'clearChatHistory', historyKey: 'context' }, EXT_PAGE
+    );
+    expect(chrome.storage._store.chatHistories['context']).toBeUndefined();
   });
 });

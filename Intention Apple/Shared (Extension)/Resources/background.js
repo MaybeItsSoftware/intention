@@ -424,6 +424,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Classifies who sent a runtime message. Three shapes exist in practice:
+// extension pages (options/coaching) carry a sender.url under our own origin
+// (and on Safari no sender.tab); the native hosts (Android BackgroundJsHelper,
+// iOS BackgroundJSHost) deliver a literally empty sender; everything else is a
+// content script running inside an arbitrary web page and gets no privilege.
+function senderTrust(sender) {
+  if (sender?.url && sender.url.startsWith(chrome.runtime.getURL(''))) return 'extension';
+  if (sender && !sender.url && !sender.tab && !sender.id) return 'native';
+  return 'content';
+}
+
+// The page host a content-script sender is actually running in, or '' when it
+// has none. Used to stop a hostile page acting on some other site's behalf.
+function senderPageHost(sender) {
+  try {
+    return new URL(sender.url).hostname;
+  } catch (e) {
+    return '';
+  }
+}
+
+function hostMatchesDomain(host, domain) {
+  return !!host && !!domain && (host === domain || host.endsWith('.' + domain));
+}
+
 async function handleMessage(message, sender) {
   // `sender.tab` is the trustworthy source and always wins — content scripts
   // can't opt out of it. Safari doesn't populate it for extension pages
@@ -438,8 +463,7 @@ async function handleMessage(message, sender) {
       const config = await getFullConfig();
       // Only extension pages (options, coaching) may read the API key —
       // never content scripts, which run inside arbitrary web pages.
-      const fromExtensionPage = !!sender.url && sender.url.startsWith(chrome.runtime.getURL(''));
-      if (!fromExtensionPage) config.apiKey = '';
+      if (senderTrust(sender) !== 'extension') config.apiKey = '';
       return config;
     }
     case 'saveSetup': return saveSetup(message.config);
@@ -464,18 +488,51 @@ async function handleMessage(message, sender) {
         newValue: message.newValue,
         pageContext: message.pageContext
       });
-    case 'clearChatHistory':
-      return clearChatHistory(message.historyKey || sessionKeyFor(tabId, message.domain));
+    case 'clearChatHistory': {
+      // A caller-supplied key is honoured only for the fixed non-session
+      // namespaces the options page uses — otherwise a content script could
+      // wipe another tab's transcript by guessing its session key. Everything
+      // else falls back to the sender's own session key.
+      const requested = message.historyKey;
+      const namespaced = requested === 'context' || requested === 'setup' ||
+        (typeof requested === 'string' && requested.startsWith('settings_gate:'));
+      return clearChatHistory(namespaced ? requested : sessionKeyFor(tabId, message.domain));
+    }
     case 'endSession':
       return endSession({ tabId, domain: message.domain, reason: message.reason });
-    case 'simpleGrant':
+    case 'simpleGrant': {
+      // Simple-mode passes skip the coach entirely, so they must only exist
+      // where simple mode actually applies — otherwise any page could mint a
+      // pass for a coach-mode domain and bypass the gate. And a content script
+      // may only ask for the site it is running on, not burn another domain's
+      // daily grants.
+      if (senderTrust(sender) === 'content' &&
+          !hostMatchesDomain(senderPageHost(sender), message.domain)) {
+        return { denied: 'not available' };
+      }
+      const { mode } = await getEffectiveMode(message.domain);
+      if (mode !== 'simple') return { denied: 'this site requires the coach' };
       return simpleGrant({ tabId, domain: message.domain, isApp: message.isApp });
-    case 'applySettingChange':
+    }
+    case 'applySettingChange': {
+      // Loosening blocking rules without a coach conversation is only ever
+      // legitimate from our own UI, and only where simple mode applies (the
+      // global mode for disable_all, the item's mode otherwise). The
+      // coach-approved path goes through handleChat's approve_setting_change,
+      // which calls applySettingChange() directly and never hits this guard.
+      if (senderTrust(sender) === 'content') {
+        return { error: 'Not allowed from a web page' };
+      }
+      const { mode } = await getEffectiveMode(
+        message.changeType === 'disable_all' ? null : message.domain
+      );
+      if (mode !== 'simple') return { error: 'This change requires the coach' };
       return applySettingChange({
         changeType: message.changeType,
         domain: message.domain,
         newValue: message.newValue
       });
+    }
     case 'getBlockInfo':
       return { blockConfig: await getEffectiveMode(message.domain) };
     // The redirect that opens the gate carries only the domain, so the deep
