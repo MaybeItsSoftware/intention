@@ -18,17 +18,34 @@
         <span id="setup-progress-label" class="setup-progress-label">Step 1 of 4</span>
       </div>
 
+      <section class="card setup-step" id="setup-step-welcome" hidden>
+        <h3 id="setup-welcome-title">Welcome to Intention</h3>
+        <p class="subtitle" id="setup-welcome-intro">Intention puts a moment of choice between you and the things that pull you in. Open a blocked site or app and it stops you, then asks what you actually meant to do.</p>
+        <ul class="setup-checklist" id="setup-welcome-checklist"></ul>
+        <p class="subtitle">This takes about a minute, and nothing is saved until you finish.</p>
+      </section>
+
+      <section class="card setup-step" id="setup-step-safari" hidden>
+        <h3>Turn on the Safari extension</h3>
+        <p class="subtitle">Website blocking runs inside Safari, and only you can switch it on, because iOS doesn't let an app do it for you. Apps are handled separately, later in this setup.</p>
+        <ol class="setup-steps-list" id="setup-safari-steps"></ol>
+        <button type="button" id="setup-safari-settings-btn" class="primary add-row-btn">Open Settings</button>
+        <button type="button" id="setup-safari-open-btn" class="secondary add-row-btn">I turned it on — open Safari</button>
+        <p class="setup-check" id="setup-safari-status">Checking…</p>
+        <p class="subtitle" id="setup-safari-skip-hint">You can carry on without this and turn it on later, but blocked websites won't stop you until you do.</p>
+      </section>
+
       <section class="card setup-step" id="setup-step-mode" hidden>
         <h3>How should blocking work?</h3>
         <p class="subtitle">You can change this later, or set it per site or app.</p>
         <div class="mode-choice-grid">
           <button type="button" class="mode-choice-card" id="setup-mode-coach-btn" data-mode="coach">
             <strong>Coach (AI-guided)</strong>
-            <span>Talk to an AI coach to get through a block or change your rules. Needs your own LLM API key.</span>
+            <span id="setup-mode-coach-desc">Talk to an AI coach to get through a block or change your rules.</span>
           </button>
           <button type="button" class="mode-choice-card" id="setup-mode-simple-btn" data-mode="simple">
             <strong>Simple (no AI)</strong>
-            <span>No API key needed. Choose a hard block or a self-serve timed pass.</span>
+            <span>No AI, nothing to buy. Choose a hard block or a self-serve timed pass.</span>
           </button>
         </div>
         <div id="setup-simple-options" hidden>
@@ -51,16 +68,16 @@
       </section>
 
       <section class="card setup-step" id="setup-step-apps" hidden>
-        <h3>Which apps pull you in?</h3>
+        <h3 id="setup-apps-title">Which apps pull you in?</h3>
         <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
         <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
         <ul id="setup-apps-list"></ul>
-        <p class="subtitle" id="setup-ios-apps-status" hidden></p>
-        <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Enable Screen Time access</button>
+        <p class="setup-check" id="setup-ios-apps-status" hidden></p>
+        <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Allow Screen Time</button>
       </section>
 
-      <section class="card setup-step" id="setup-step-sites">
+      <section class="card setup-step" id="setup-step-sites" hidden>
         <h3>Which websites pull you in?</h3>
         <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 10 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-site-btn" class="primary add-row-btn">+ Add website</button>
@@ -70,6 +87,7 @@
 
       <section class="card setup-step" id="setup-step-projects" hidden>
         <h3>Your coach's context</h3>
+        <p class="subtitle" id="setup-projects-subtitle">Two questions. Your coach uses these to argue your own case back to you when you try to get past a block.</p>
         <label for="setup-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
         <div class="input-group">
           <textarea id="setup-projects-input" rows="4" placeholder="e.g. Coding my side project, writing, reading, exercising, or being present with family..."></textarea>
@@ -86,6 +104,7 @@
 
       <section class="card setup-step" id="setup-step-access" hidden>
         <h3>Turn on your coach</h3>
+        <p class="subtitle" id="setup-access-subtitle">You can also finish now and set this up later. Your sites and apps stay blocked either way, you just won't be able to talk your way past them yet.</p>
         <div id="setup-paywall"></div>
       </section>
 

@@ -59,7 +59,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function renderCurrentView() {
   const state = await getConfig();
-  if (state?.setupComplete) showSettingsView(state);
+  const setupComplete = !!state?.setupComplete;
+  // The iOS host shows its own "turn on the Safari extension" banner, which
+  // would otherwise sit on top of the wizard step that says the same thing at
+  // greater length. Hand over while the wizard is running, take it back after.
+  if (HAS_SAFARI_EXTENSION) window.intentionExtension.setSetupComplete(setupComplete);
+  if (setupComplete) showSettingsView(state);
   else showSetupView();
 }
 
@@ -137,6 +142,12 @@ const HAS_APP_BLOCKING = !!window.intentionApps;
 // package list — the FamilyActivitySelection is opaque, so the web layer only
 // sees counts and drives the native picker.
 const HAS_IOS_APP_BLOCKING = !HAS_APP_BLOCKING && !!window.intentionScreenTime;
+// Only the iOS host app can walk someone through Safari's extension toggle:
+// iOS has no API to flip it and no deep link to the page it lives on, so the
+// most an app can do is say exactly where it is and watch for the extension
+// waking up. Absent everywhere else — on Chrome/Firefox/macOS the extension is
+// already running by the time this page is open.
+const HAS_SAFARI_EXTENSION = !!window.intentionExtension;
 
 let setupBlockedDomains = [];
 let setupDomainLimits = {};
@@ -165,99 +176,29 @@ function showSetupView() {
   document.getElementById('setup-view').hidden = false;
   document.getElementById('settings-view').hidden = true;
 
-  const providerSel = document.getElementById('provider-select');
-  const modelInput = document.getElementById('model-input');
-  const apiKeyInput = document.getElementById('api-key-input');
-
-  const syncPlaceholder = () => {
-    const p = PROVIDERS[providerSel.value];
-    modelInput.placeholder = p ? p.modelPlaceholder : '';
-  };
-
-  // Select the pill matching `model`, or fall back to the Custom pill.
-  const setModelSelection = (model) => {
-    const p = PROVIDERS[providerSel.value];
-    if (model && p && (p.models || []).includes(model)) {
-      setupSelectedModel = model;
-    } else if (model) {
-      setupSelectedModel = null;
-      modelInput.value = model;
-    } else {
-      setupSelectedModel = p ? p.defaultModel : null;
-    }
-    renderModelPills();
-  };
-
-  function renderModelPills() {
-    const container = document.getElementById('setup-model-pills');
-    const customGroup = document.getElementById('setup-custom-model-group');
-    container.innerHTML = '';
-    const p = PROVIDERS[providerSel.value];
-    for (const m of (p ? p.models : []) || []) {
-      const pill = document.createElement('button');
-      pill.type = 'button';
-      pill.className = 'pill' + (setupSelectedModel === m ? ' selected' : '');
-      pill.textContent = m + (p.defaultModel === m ? ' (default)' : '');
-      pill.addEventListener('click', () => {
-        setupSelectedModel = m;
-        renderModelPills();
-      });
-      container.appendChild(pill);
-    }
-    const custom = document.createElement('button');
-    custom.type = 'button';
-    custom.className = 'pill' + (setupSelectedModel === null ? ' selected' : '');
-    custom.textContent = 'Custom…';
-    custom.addEventListener('click', () => {
-      setupSelectedModel = null;
-      renderModelPills();
-      modelInput.focus();
-    });
-    container.appendChild(custom);
-    customGroup.hidden = setupSelectedModel !== null;
-  }
-
-  let env = {};
-  const syncEnvFields = () => {
-    const provider = providerSel.value;
-    const providerKey = `${provider.toUpperCase()}_API_KEY`;
-    const modelKey = `${provider.toUpperCase()}_MODEL`;
-
-    const apiKey = env[providerKey] || env.API_KEY || '';
-    if (apiKey) apiKeyInput.value = apiKey;
-    else apiKeyInput.value = '';
-
-    const model = env[modelKey] || env.DEFAULT_MODEL || '';
-    modelInput.value = '';
-    setModelSelection(model);
-  };
-
-  providerSel.addEventListener('change', () => {
-    syncPlaceholder();
-    syncEnvFields();
-  });
-  syncPlaceholder();
-  setModelSelection('');
-
-  loadEnv().then(parsedEnv => {
-    env = parsedEnv;
-    if (env.DEFAULT_PROVIDER && PROVIDERS[env.DEFAULT_PROVIDER]) {
-      providerSel.value = env.DEFAULT_PROVIDER;
-      syncPlaceholder();
-    }
-    syncEnvFields();
-  });
-
-  // Mode step goes first; apps get their own step ahead of websites wherever a
-  // native bridge exists; the provider step only exists in coach mode.
+  // A welcome step first, so the wizard opens by saying what it is instead of
+  // with a bare question. Anything that needs a trip outside the app (Safari's
+  // extension toggle on iOS) comes next, on purpose: leaving for Settings can
+  // cost the user whatever they've typed, which is nothing this early.
+  // Apps get their own step ahead of websites wherever a native bridge exists,
+  // and the paywall only exists in coach mode, since it's the only mode that
+  // needs paid AI.
   const computeStepOrder = () => {
-    const order = ['setup-step-mode'];
+    const order = ['setup-step-welcome'];
+    if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
+    order.push('setup-step-mode');
     if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
     order.push('setup-step-sites', 'setup-step-projects', 'setup-step-reasons');
-    if (setupBlockingMode !== 'simple') order.push('setup-step-provider');
+    if (setupBlockingMode !== 'simple') order.push('setup-step-access');
     return order;
   };
   setupStepOrder = computeStepOrder();
+
+  // ---- Step: welcome ----
+  renderWelcomeStep();
+
+  // ---- Step: Safari extension (iOS app only) ----
+  if (HAS_SAFARI_EXTENSION) wireSafariStep();
 
   // ---- Step: mode ----
   const modeCoachBtn = document.getElementById('setup-mode-coach-btn');
@@ -268,6 +209,13 @@ function showSetupView() {
   const simpleMinutesGroup = document.getElementById('setup-simple-minutes-group');
   const simpleMinutesInput = document.getElementById('setup-simple-minutes-input');
 
+  // Where a store sells coaching credit, "bring your own API key" is a hidden
+  // developer option rather than the way in, so saying so up front would only
+  // send people looking for a key they don't need.
+  document.getElementById('setup-mode-coach-desc').textContent = BYOK_IS_PRIMARY
+    ? 'Talk to an AI coach to get through a block or change your rules. Needs your own LLM API key.'
+    : 'Talk to an AI coach to get through a block or change your rules. Runs on coaching credit you buy in the app.';
+
   const renderModeStep = () => {
     modeCoachBtn.classList.toggle('selected', setupBlockingMode === 'coach');
     modeSimpleBtn.classList.toggle('selected', setupBlockingMode === 'simple');
@@ -277,16 +225,17 @@ function showSetupView() {
     simpleMinutesGroup.hidden = setupSimpleBehavior !== 'pass';
   };
 
-  modeCoachBtn.onclick = () => {
-    setupBlockingMode = 'coach';
+  // Switching modes adds or drops the paywall step at the end of the wizard,
+  // so the "Step N of M" counter has to be redrawn or it keeps promising a
+  // step count that no longer exists. The mode step's own index never moves,
+  // so re-showing the current step is safe.
+  const onModeChanged = () => {
     renderModeStep();
     setupStepOrder = computeStepOrder();
+    showStep(setupStep);
   };
-  modeSimpleBtn.onclick = () => {
-    setupBlockingMode = 'simple';
-    renderModeStep();
-    setupStepOrder = computeStepOrder();
-  };
+  modeCoachBtn.onclick = () => { setupBlockingMode = 'coach'; onModeChanged(); };
+  modeSimpleBtn.onclick = () => { setupBlockingMode = 'simple'; onModeChanged(); };
   simpleHardBtn.onclick = () => { setupSimpleBehavior = 'hard'; renderModeStep(); };
   simplePassBtn.onclick = () => { setupSimpleBehavior = 'pass'; renderModeStep(); };
   simpleMinutesInput.oninput = () => {
@@ -323,12 +272,18 @@ function showSetupView() {
     backBtn.disabled = n === 1;
     nextBtn.hidden = n === total;
     saveBtn.hidden = n !== total;
+    const stepId = setupStepOrder[n - 1];
     // Prices come from the store, so the paywall is only built once the user
     // actually reaches it — and rebuilt each time, to pick up a purchase made
     // and then backed out of.
-    if (setupStepOrder[n - 1] === 'setup-step-access') {
+    if (stepId === 'setup-step-access') {
       refreshAccessUI('setup-paywall', { compact: false });
     }
+    // Both of these describe state the user can change from outside this
+    // wizard (a Safari toggle, a system permission prompt), so they get
+    // re-read on arrival rather than trusted from whenever the step was built.
+    if (stepId === 'setup-step-safari') refreshSafariStatus();
+    if (stepId === 'setup-step-apps' && HAS_IOS_APP_BLOCKING) refreshSetupIOSApps();
   };
 
   backBtn.onclick = () => { if (setupStep > 1) showStep(setupStep - 1); };
@@ -346,74 +301,163 @@ function showSetupView() {
 
   showStep(1);
 
-  saveBtn.onclick = async () => {
-    const isSimple = setupBlockingMode === 'simple';
-    const provider = providerSel.value;
-    const apiKey = apiKeyInput.value.trim();
-    const model = setupSelectedModel || modelInput.value.trim() || (PROVIDERS[provider] ? PROVIDERS[provider].defaultModel : '');
+  saveBtn.onclick = () => finishSetup();
+}
 
-    if (!isSimple && (!provider || !apiKey)) {
-      setStatus('setup-status', 'Choose a provider and enter an API key.');
-      return;
-    }
+// The welcome step's checklist doubles as an agenda. It matters most on iOS,
+// where setup has to ask for two system permissions: a permission prompt the
+// user was told about a screen earlier reads as part of a plan, and the same
+// prompt arriving cold reads as an app overreaching.
+function renderWelcomeStep() {
+  const items = [];
+  if (HAS_SAFARI_EXTENSION) {
+    items.push(['Turn on the Safari extension',
+      "A switch in iOS Settings that lets Intention block websites. We'll show you exactly where it is."]);
+  }
+  if (HAS_IOS_APP_BLOCKING) {
+    items.push(['Allow Screen Time',
+      'Apple’s permission for blocking apps. Intention uses it only to shield the apps you pick.']);
+  }
+  items.push(['Choose your sites and apps',
+    'The ones you want a moment of friction in front of.']);
+  items.push(['Say what you’re trying to focus on',
+    'Two short answers, so a block can point at your own reasons instead of just saying no.']);
 
-    const projectsAns = document.getElementById('setup-projects-input').value.trim();
-    const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
+  const list = document.getElementById('setup-welcome-checklist');
+  list.innerHTML = '';
+  for (const [title, detail] of items) {
+    const li = document.createElement('li');
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    const span = document.createElement('span');
+    span.textContent = detail;
+    li.append(strong, span);
+    list.appendChild(li);
+  }
+}
 
-    // Create user context
-    const userContext = `Goals and activities I want to focus on:
+// ---- Step: Safari extension (iOS app only) ----
+
+function wireSafariStep() {
+  document.getElementById('setup-safari-settings-btn').addEventListener('click', () => {
+    window.intentionExtension.openSettings();
+  });
+  document.getElementById('setup-safari-open-btn').addEventListener('click', () => {
+    window.intentionExtension.openSafari();
+  });
+  // Returning from Settings or Safari is the one moment this answer can
+  // change, and a WKWebView gets no dependable visibilitychange for an app
+  // switch — so the host fires this event instead, from
+  // ViewController.appDidBecomeActive.
+  window.addEventListener('intention-app-active', () => {
+    if (setupStepOrder[setupStep - 1] === 'setup-step-safari') refreshSafariStatus();
+  });
+  refreshSafariStatus();
+}
+
+async function refreshSafariStatus() {
+  if (!HAS_SAFARI_EXTENSION) return;
+  const listEl = document.getElementById('setup-safari-steps');
+  const statusEl = document.getElementById('setup-safari-status');
+  const settingsBtn = document.getElementById('setup-safari-settings-btn');
+  const openBtn = document.getElementById('setup-safari-open-btn');
+  const hintEl = document.getElementById('setup-safari-skip-hint');
+  const st = await new Promise(resolve => window.intentionExtension.status(resolve));
+
+  // The Settings path moved in iOS 18, so the host reports the one that
+  // matches this device rather than the page guessing. The button below opens
+  // the Settings app itself (iOS has no public deep link into the Extensions
+  // page), so the first step is still spelled out in full for the last few taps.
+  const path = (st && st.settingsPath) || 'Settings → Apps → Safari → Extensions';
+  listEl.innerHTML = '';
+  for (const text of [
+    `Tap "Open Settings" below, then go to ${path}.`,
+    'Turn on Intention Safari Extension.',
+    'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
+    'Come back here and tap "I turned it on" — this page notices on its own once the extension has run.'
+  ]) {
+    const li = document.createElement('li');
+    li.textContent = text;
+    listEl.appendChild(li);
+  }
+
+  const active = !!(st && st.active);
+  listEl.hidden = active;
+  settingsBtn.hidden = active;
+  openBtn.hidden = active;
+  hintEl.hidden = active;
+  statusEl.className = active ? 'setup-check ok' : 'setup-check';
+  statusEl.textContent = active
+    ? 'The Safari extension is on and running. Nothing else to do here.'
+    : 'Not running yet. After turning it on, open Safari and load any page once. That’s what wakes the extension up.';
+}
+
+// Commits whatever the wizard currently holds and switches to the settings
+// view. Called by the wizard's own finish button, and by the paywall's "use my
+// own key" link, which has to leave the wizard for a field that only exists in
+// the settings view.
+async function finishSetup() {
+  const isSimple = setupBlockingMode === 'simple';
+
+  const projectsAns = document.getElementById('setup-projects-input').value.trim();
+  const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
+
+  // Create user context
+  const userContext = `Goals and activities I want to focus on:
 ${projectsAns || '(not configured)'}
 
 How distracting sites make me feel and why I want to step away:
 ${reasonsAns || '(not configured)'}`;
 
-    const simpleOverrides = isSimple ? { behavior: setupSimpleBehavior, passMinutes: setupSimplePassMinutes } : {};
+  const simpleOverrides = isSimple ? { behavior: setupSimpleBehavior, passMinutes: setupSimplePassMinutes } : {};
 
-    // Build domain limits object
-    const domainLimits = {};
-    for (const d of setupBlockedDomains) {
-      domainLimits[d] = setupDomainLimits[d] || {
-        maxGrants: 3,
-        maxMinutes: 10,
-        ...simpleOverrides
-      };
+  // Build domain limits object
+  const domainLimits = {};
+  for (const d of setupBlockedDomains) {
+    domainLimits[d] = setupDomainLimits[d] || {
+      maxGrants: 3,
+      maxMinutes: 10,
+      ...simpleOverrides
+    };
+  }
+
+  // Build app limits object
+  const appLimits = {};
+  for (const p of setupBlockedApps) {
+    appLimits[p] = setupAppLimits[p] || {
+      maxGrants: 3,
+      maxMinutes: 10,
+      ...simpleOverrides
+    };
+  }
+
+  setStatus('setup-status', 'Saving setup...', 'info');
+
+  // No provider/key is collected here any more: the coach reaches the hosted
+  // route through whatever access the paywall step set up, and a custom key
+  // is a Settings -> Advanced option for developers. Sending empty strings
+  // leaves saveSetup's existing defaults in charge.
+  await sendBg({
+    action: 'saveSetup',
+    config: {
+      provider: '',
+      apiKey: '',
+      model: '',
+      userContext,
+      contextProjects: projectsAns,
+      contextReasons: reasonsAns,
+      blockedDomains: setupBlockedDomains,
+      domainLimits,
+      blockedApps: setupBlockedApps,
+      appLimits,
+      appLabels: setupAppLabels,
+      blockingMode: setupBlockingMode,
+      simpleBehavior: setupSimpleBehavior,
+      simplePassMinutes: setupSimplePassMinutes
     }
+  });
 
-    // Build app limits object
-    const appLimits = {};
-    for (const p of setupBlockedApps) {
-      appLimits[p] = setupAppLimits[p] || {
-        maxGrants: 3,
-        maxMinutes: 10,
-        ...simpleOverrides
-      };
-    }
-
-    setStatus('setup-status', 'Saving setup...', 'info');
-
-    // Save and finalize
-    await sendBg({
-      action: 'saveSetup',
-      config: {
-        provider: isSimple ? '' : provider,
-        apiKey: isSimple ? '' : apiKey,
-        model: isSimple ? '' : model,
-        userContext,
-        contextProjects: projectsAns,
-        contextReasons: reasonsAns,
-        blockedDomains: setupBlockedDomains,
-        domainLimits,
-        blockedApps: setupBlockedApps,
-        appLimits,
-        appLabels: setupAppLabels,
-        blockingMode: setupBlockingMode,
-        simpleBehavior: setupSimpleBehavior,
-        simplePassMinutes: setupSimplePassMinutes
-      }
-    });
-
-    await renderCurrentView();
-  };
+  await renderCurrentView();
 }
 
 
@@ -853,8 +897,9 @@ function renderSetupApps() {
 // popular picks as plain text and drive everything through the one real
 // "Choose apps to block" button, mirroring wireIOSAppsCard.
 function renderSetupIOSApps() {
+  document.getElementById('setup-apps-title').textContent = 'Block distracting apps';
   document.getElementById('setup-apps-subtitle').textContent =
-    `Popular picks: ${COMMON_APPS.map(a => a.label).join(', ')}. Tap "Choose apps to block" to pick with Screen Time.`;
+    `Apps are blocked through Apple's Screen Time, so the picker below is Apple's own. Intention never learns which apps are on your phone, only how many you chose. Most people start with ${COMMON_APPS.slice(0, 4).map(a => a.label).join(', ')}. You can skip this and add apps later.`;
   document.getElementById('setup-open-add-app-btn').textContent = 'Choose apps to block';
   document.getElementById('setup-apps-recommend-grid').hidden = true;
   document.getElementById('setup-apps-recommend-grid').innerHTML = '';
@@ -869,18 +914,23 @@ async function refreshSetupIOSApps() {
   const st = await iosScreenTimeStatus();
 
   if (!st || !st.available) {
-    statusEl.textContent = 'App blocking needs iOS 16 or later.';
+    statusEl.textContent = 'App blocking needs iOS 16 or later. Website blocking still works.';
+    statusEl.className = 'setup-check';
     authorizeBtn.hidden = true;
     return;
   }
   if (!st.authorized) {
     statusEl.textContent = iosAuthGuidance(st);
+    statusEl.className = 'setup-check';
     authorizeBtn.hidden = false;
     return;
   }
   authorizeBtn.hidden = true;
   const n = st.selectionCount || 0;
-  statusEl.textContent = n === 0 ? 'No apps blocked yet.' : `${n} app${n === 1 ? '' : 's or categories'} blocked.`;
+  statusEl.className = n === 0 ? 'setup-check' : 'setup-check ok';
+  statusEl.textContent = n === 0
+    ? 'Screen Time access granted. No apps chosen yet, so tap "Choose apps to block" above.'
+    : `${n} app${n === 1 ? '' : 's or categories'} blocked.`;
 }
 
 // Unauthorized states need different guidance: before the first prompt it's a
@@ -888,9 +938,9 @@ async function refreshSetupIOSApps() {
 // Screen Time settings page where access can be turned back on.
 function iosAuthGuidance(st) {
   if (st.authorizationStatus === 'denied') {
-    return 'Screen Time access was declined, so the app picker can\'t load. Tap "Allow Screen Time" to try again; if no prompt appears, open Settings > Screen Time > Apps with Screen Time Access and turn on Intention.';
+    return 'Screen Time access was declined, so Apple\'s app picker can\'t load. Tap "Allow Screen Time" to try again; if no prompt appears, iOS has stopped asking, so open Settings → Screen Time → Apps with Screen Time Access and turn on Intention.';
   }
-  return 'Allow Intention to use Screen Time so it can shield the apps you choose. Choosing apps will ask for this automatically.';
+  return 'iOS will ask you to allow Screen Time access the first time you choose apps. Say yes: without it, Intention has no way to shield an app.';
 }
 
 // ---- Mobile Apps/Websites tab toggle ----

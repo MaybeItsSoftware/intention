@@ -71,6 +71,32 @@
     }, extra || {}));
   }
 
+  // Safari Web Extension enablement. iOS can neither flip that switch nor
+  // link straight to the page it lives on, so this exposes: "has Safari
+  // actually run the extension recently" (a heartbeat, see ViewController),
+  // the exact Settings path for this iOS version, a way to jump to the
+  // Settings app (openSettingsURLString — close, not exact), and a way out to
+  // Safari to trigger the heartbeat once it's on — enough for the setup
+  // wizard to guide the steps it can't perform itself.
+  function extensionCall(action, extra, callback) {
+    const cbId = window.IntentionCallbacks.register(callback);
+    window.webkit.messageHandlers.intentionNative.postMessage(Object.assign({
+      type: 'extension',
+      action: action,
+      callbackId: cbId
+    }, extra || {}));
+  }
+
+  window.intentionExtension = {
+    // Resolves { active, settingsPath, lastSeenAt }.
+    status: function(callback) { extensionCall('status', null, callback); },
+    openSettings: function(callback) { extensionCall('openSettings', null, callback); },
+    openSafari: function(callback) { extensionCall('openSafari', null, callback); },
+    // Lets the web layer own the enable-the-extension prompt during setup, so
+    // the native banner doesn't say the same thing over the top of it.
+    setSetupComplete: function(value, callback) { extensionCall('setSetupComplete', { value: !!value }, callback); }
+  };
+
   window.intentionBilling = {
     products: function(callback) { billingCall('products', null, callback); },
     purchase: function(productId, callback) { billingCall('purchase', { productId: productId }, callback); },

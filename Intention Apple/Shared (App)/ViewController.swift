@@ -35,6 +35,23 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     // banner back on next launch.
     private var extensionBannerDismissed = false
 
+    // Whether the options page has finished its setup wizard. Starts false so
+    // a fresh install never flashes the banner over the wizard's own (fuller)
+    // "turn on the Safari extension" step; the web layer reports the real
+    // value as soon as it knows it, via the `extension` bridge.
+    private var setupComplete = false
+
+    // There is no public deep link into Safari's extensions settings page, so
+    // both the banner and the wizard spell out the exact path — which moved in
+    // iOS 18 — rather than offering a button that can only land somewhere
+    // unrelated and make things more confusing.
+    private var safariExtensionSettingsPath: String {
+        if #available(iOS 18.0, *) {
+            return "Settings \u{2192} Apps \u{2192} Safari \u{2192} Extensions"
+        }
+        return "Settings \u{2192} Safari \u{2192} Extensions"
+    }
+
     private lazy var extensionBanner: UIView = makeExtensionBanner()
 #endif
 
@@ -91,6 +108,14 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
     @objc private func appDidBecomeActive() {
         updateExtensionBanner()
+        // Coming back from Settings or Safari is exactly when the setup
+        // wizard's "is the extension on yet?" answer changes, and a WKWebView
+        // gets no dependable visibilitychange for an app switch — so tell the
+        // page directly.
+        webView.evaluateJavaScript(
+            "window.dispatchEvent(new Event('intention-app-active'))",
+            completionHandler: nil
+        )
         // iOS stops the host's in-process timers as soon as the app leaves the
         // foreground, and a device restart takes them with it — so a granted pass
         // can have run out with nothing around to fire its check-in. Deliver
@@ -205,8 +230,44 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             let action = dict["action"] as? String ?? ""
             let callbackId = dict["callbackId"] as? String ?? ""
             handleBillingMessage(action: action, dict: dict, callbackId: callbackId)
+        case "extension":
+            let action = dict["action"] as? String ?? ""
+            let callbackId = dict["callbackId"] as? String ?? ""
+            handleExtensionMessage(action: action, dict: dict, callbackId: callbackId)
         default:
             break
+        }
+    }
+
+    // MARK: - Safari extension enablement bridge
+    //
+    // Backs the setup wizard's "Turn on the Safari extension" step. Same
+    // heartbeat the banner below reads — the difference is that the wizard can
+    // explain the step in context, so while setup is unfinished the banner
+    // stands down and lets it.
+
+    private func handleExtensionMessage(action: String, dict: [String: Any], callbackId: String) {
+        switch action {
+        case "status":
+            let seenAt = AppGroupStorage.extensionLastSeenAt()
+            let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
+            invokeBridgeCallback(callbackId, result: [
+                "active": isFresh,
+                "settingsPath": safariExtensionSettingsPath,
+                "lastSeenAt": seenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
+            ])
+        case "openSafari":
+            openSafari()
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "openSettings":
+            openSettings()
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "setSetupComplete":
+            setupComplete = (dict["value"] as? Bool) ?? false
+            updateExtensionBanner()
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        default:
+            invokeBridgeCallback(callbackId, result: ["error": "unknown extension action: \(action)"])
         }
     }
 
@@ -294,10 +355,6 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     // pullConfig native-messaging sync. If that heartbeat is stale (or has
     // never happened), we show a banner prompting the user to enable it.
 
-    // There is no public deep link into the Safari extensions settings page,
-    // so the banner spells out the exact path (which moved in iOS 18) instead
-    // of offering an "Open Settings" button that can only land somewhere
-    // unrelated and make things more confusing.
     private func makeExtensionBanner() -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -305,16 +362,9 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         container.layer.cornerRadius = 10
         container.isHidden = true
 
-        let settingsPath: String
-        if #available(iOS 18.0, *) {
-            settingsPath = "Settings \u{2192} Apps \u{2192} Safari \u{2192} Extensions"
-        } else {
-            settingsPath = "Settings \u{2192} Safari \u{2192} Extensions"
-        }
-
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "Intention's Safari extension isn't active yet.\n1. Go to \(settingsPath) and turn on Intention Safari Extension.\n2. Open Safari and load any page once to activate it."
+        label.text = "Intention's Safari extension isn't active yet, so blocked websites won't stop you.\n1. Go to \(safariExtensionSettingsPath) and turn on Intention Safari Extension.\n2. Open Safari and load any page once to activate it."
         label.textColor = UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)
         label.numberOfLines = 0
         label.font = .systemFont(ofSize: 13)
@@ -381,7 +431,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     @objc private func updateExtensionBanner() {
         let seenAt = AppGroupStorage.extensionLastSeenAt()
         let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
-        extensionBanner.isHidden = isFresh || extensionBannerDismissed
+        extensionBanner.isHidden = isFresh || extensionBannerDismissed || !setupComplete
         view.setNeedsLayout()
     }
 
@@ -398,6 +448,16 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     @objc private func dismissExtensionBanner() {
         extensionBannerDismissed = true
         updateExtensionBanner()
+    }
+
+    // There's no public URL scheme into the Safari Extensions settings page
+    // specifically, but openSettingsURLString does drop the user into the
+    // Settings app itself (on this app's own page) rather than leaving them to
+    // find it from the home screen — real help even though it can't land on
+    // the exact screen the wizard describes.
+    @objc private func openSettings() {
+        guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(settingsURL)
     }
 
     @objc private func openSafari() {

@@ -445,6 +445,99 @@ blockquote {
   color: #f1f5f9;
 }
 
+/* The setup steps toggle visibility with the `hidden` attribute, and several
+   of the lists below set `display: flex`, which outranks the UA sheet's
+   `[hidden] { display: none }` and leaves them stubbornly on screen. */
+.setup-checklist[hidden],
+.setup-steps-list[hidden] {
+  display: none;
+}
+
+/* Welcome-step agenda: what the wizard is about to ask for, and why. */
+.setup-checklist {
+  list-style: none;
+  margin: 14px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.setup-checklist li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 22px;
+  position: relative;
+}
+
+.setup-checklist li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.75);
+}
+
+.setup-checklist strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.setup-checklist span {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+/* Numbered instructions for steps the user has to carry out in iOS Settings,
+   where Intention can only tell them where to go. */
+.setup-steps-list {
+  margin: 14px 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.setup-steps-list li {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+
+/* Live readout of something the user changed outside this page (a Safari
+   toggle, a Screen Time permission) — muted until it turns green. */
+.setup-check {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.setup-check.ok {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.08);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+#setup-safari-skip-hint {
+  margin-top: 12px;
+}
+
+/* This one is followed by the button that acts on it, so it needs the gap. */
+#setup-ios-apps-status {
+  margin-bottom: 10px;
+}
+
 .chip-icon {
   width: 15px;
   height: 15px;
