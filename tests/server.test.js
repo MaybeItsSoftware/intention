@@ -16,6 +16,9 @@ process.env.INTENTION_TOKEN_SECRET = 'test-secret-do-not-use';
 process.env.INTENTION_LLM_API_KEY = 'test-llm-key';
 process.env.NODE_ENV = 'development';
 process.env.INTENTION_ALLOW_UNVERIFIED_RECEIPTS = '1';
+// The Google refund webhook now fails closed without this, since it deducts
+// credit — so an unconfigured secret must never mean "no auth required".
+process.env.INTENTION_WEBHOOK_SECRET = 'test-webhook-secret';
 
 const { handleRequest } = await import('../server/src/app.js');
 const { signToken, verifyToken, subjectFor } = await import('../server/src/tokens.js');
@@ -29,6 +32,8 @@ const { UpstreamError } = await import('../server/src/llm.js');
 const { creditMicrosForTopUp } = await import('../server/src/config.js');
 
 const SECRET = 'test-secret-do-not-use';
+const WEBHOOK_SECRET = 'test-webhook-secret';
+const webhookAuth = { authorization: `Bearer ${WEBHOOK_SECRET}` };
 
 // What the £1 tier actually credits once the default store commission (15%)
 // and top-up skim (20%) both come off — not the £1 face value 1:1.
@@ -468,7 +473,7 @@ describe('Refund webhooks & clawback', () => {
       }
     })).toString('base64');
 
-    const res = await post('/v1/webhooks/google', { message: { data: pubsubData } }, {}, d);
+    const res = await post('/v1/webhooks/google', { message: { data: pubsubData } }, webhookAuth, d);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.refund.deductedMicros).toBe(CREDIT1);
@@ -479,13 +484,13 @@ describe('Refund webhooks & clawback', () => {
 
   it('handles Google Pub/Sub test notifications', async () => {
     const d = deps();
-    const res = await post('/v1/webhooks/google', { testNotification: { version: '1.0' } }, {}, d);
+    const res = await post('/v1/webhooks/google', { testNotification: { version: '1.0' } }, webhookAuth, d);
     expect(res.status).toBe(200);
     expect(res.body.test).toBe(true);
   });
 
   it('rejects Google webhook missing message data', async () => {
-    const res = await post('/v1/webhooks/google', {}, {}, deps());
+    const res = await post('/v1/webhooks/google', {}, webhookAuth, deps());
     expect(res.status).toBe(400);
   });
 
@@ -654,5 +659,57 @@ describe('credit is reserved, not just checked', () => {
     const after = await post('/v1/chat', { messages: [{ role: 'user', content: 'b' }] },
       { authorization: `Bearer ${tokenFor(sub)}` }, d);
     expect(after.status).toBe(200);
+  });
+});
+
+// The refund webhook deducts credit, so an unset secret used to mean the whole
+// auth block was skipped: anyone could POST a voidedPurchaseNotification and
+// claw back another account's balance. It now fails closed.
+describe('the Google refund webhook authenticates', () => {
+  const pubsub = (obj) => ({ message: { data: Buffer.from(JSON.stringify(obj)).toString('base64') } });
+  const notification = pubsub({
+    voidedPurchaseNotification: { purchaseToken: 'ptoken-1', orderId: 'order-1' }
+  });
+
+  it('rejects a request presenting no secret', async () => {
+    const res = await post('/v1/webhooks/google', notification, {}, deps());
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('unauthorized');
+  });
+
+  it('rejects a wrong secret', async () => {
+    const res = await post('/v1/webhooks/google', notification,
+      { authorization: 'Bearer not-the-secret' }, deps());
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a secret of a different length without throwing', async () => {
+    // timingSafeEqual throws on a length mismatch, which would surface as a
+    // 500 rather than a clean 401.
+    const res = await post('/v1/webhooks/google', notification,
+      { authorization: 'Bearer x' }, deps());
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the secret as a query parameter, which is what Pub/Sub can send', async () => {
+    // Push subscriptions cannot set request headers, so ?token= is the only
+    // mechanism that works for real RTDN traffic. index.js used to discard the
+    // query string entirely, so this could never have worked.
+    const res = await handleRequest({
+      method: 'POST',
+      path: '/v1/webhooks/google',
+      query: { token: WEBHOOK_SECRET },
+      headers: {},
+      body: notification
+    }, deps());
+    expect(res.status).toBe(200);
+  });
+
+  it('no longer accepts the secret in the request body', async () => {
+    // That path never fired for real Pub/Sub traffic and put the secret
+    // somewhere body logging would capture it.
+    const res = await post('/v1/webhooks/google',
+      { ...notification, token: WEBHOOK_SECRET }, {}, deps());
+    expect(res.status).toBe(401);
   });
 });

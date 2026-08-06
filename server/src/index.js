@@ -67,6 +67,11 @@ export const server = http.createServer(async (req, res) => {
   const result = await handleRequest({
     method: req.method,
     path: url.pathname,
+    // url.pathname discards the query string, so the ?token= form that
+    // DEPLOYMENT.md documents for the Google refund webhook — and the only
+    // form Pub/Sub push can actually use, since it cannot set headers — never
+    // reached the handler at all.
+    query: Object.fromEntries(url.searchParams),
     headers: req.headers,
     body
   });

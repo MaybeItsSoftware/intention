@@ -38,6 +38,18 @@ export class TokenError extends Error {
   }
 }
 
+// Constant-time string comparison, for secrets compared outside the token
+// path (the webhook shared secret). Length is checked first because
+// timingSafeEqual throws on a length mismatch rather than returning false —
+// the same trap guarded below. Length is not itself secret here.
+export function safeEqualString(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
 export function verifyToken(token, secret) {
   if (!secret) throw new TokenError('token secret not configured');
   if (typeof token !== 'string') throw new TokenError('missing token');

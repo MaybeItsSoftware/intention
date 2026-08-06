@@ -1,7 +1,7 @@
 import { config, findTopUp, creditMicrosForTopUp, microsToCredits } from './config.js';
 import { verifyAppleReceipt, verifyAppleJWS, decodeJWS, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
-import { signToken, verifyToken, subjectFor, TokenError } from './tokens.js';
+import { signToken, verifyToken, subjectFor, safeEqualString, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, alreadyCredited, markCredited,
   getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode, store
@@ -19,7 +19,7 @@ const MAX_CONTENT_CHARS = 8000;
 // a pile of simultaneous upstream calls and burning the provider rate limit.
 const MAX_INFLIGHT_PER_SUBJECT = 2;
 
-export async function handleRequest({ method, path, headers = {}, body = null }, deps = {}) {
+export async function handleRequest({ method, path, headers = {}, body = null, query = {} }, deps = {}) {
   const backing = deps.store || store;
 
   if (method === 'GET' && path === '/health') {
@@ -37,7 +37,7 @@ export async function handleRequest({ method, path, headers = {}, body = null },
       case '/v1/entitlement/redeem': return redeemEndpoint(body, backing);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
-      case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing);
+      case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing, query);
       default:
         return json(404, { error: 'Not found', code: 'not_found' });
     }
@@ -169,14 +169,29 @@ async function appleWebhookEndpoint(body, deps, backing) {
   return json(200, { ok: true, processed: false, notificationType: notificationType || '' });
 }
 
-async function googleWebhookEndpoint(body, headers, deps, backing) {
+async function googleWebhookEndpoint(body, headers, deps, backing, query = {}) {
   const secret = config.google.webhookSecret;
-  if (secret) {
-    const authHeader = headers.authorization || headers.Authorization || '';
-    const tokenQuery = body?.token;
-    if (authHeader !== `Bearer ${secret}` && tokenQuery !== secret) {
-      return json(401, { error: 'Unauthorized webhook request', code: 'unauthorized' });
-    }
+  // Fail closed. This endpoint deducts credit, so an unconfigured secret used
+  // to mean anyone could POST a voidedPurchaseNotification and claw back
+  // another account's balance.
+  if (!secret) {
+    return json(503, {
+      error: 'Refund webhook is not configured',
+      code: 'not_configured'
+    });
+  }
+  // Pub/Sub push subscriptions cannot set arbitrary request headers, so the
+  // query parameter is the form that actually works for real RTDN traffic —
+  // and the one DEPLOYMENT.md documents. The bearer header is kept for manual
+  // testing. The body path that used to be read here never fired for real
+  // Pub/Sub traffic (whose body is {message, subscription}) and put the secret
+  // somewhere request-body logging would capture it.
+  const authHeader = headers.authorization || headers.Authorization || '';
+  const presented = authHeader.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length)
+    : (query.token || '');
+  if (!safeEqualString(presented, secret)) {
+    return json(401, { error: 'Unauthorized webhook request', code: 'unauthorized' });
   }
 
   if (body?.testNotification) {
