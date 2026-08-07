@@ -16,6 +16,22 @@ import { rateLimiter } from './ratelimit.js';
 
 const MAX_MESSAGES = 60;
 const MAX_CONTENT_CHARS = 8000;
+// The system prompt is built client-side and includes user-editable
+// coachInstructions, so this is sized from measurement, not guessed: the
+// largest realistic buildGateSystemPrompt output (every context field full,
+// default instructions) is ~12.5k chars, so 32k leaves room for elaborate
+// custom instructions while still bounding the field.
+const MAX_SYSTEM_CHARS = 32_000;
+// Per-field caps multiply: 60 messages x 8k chars is 480k chars ≈ 120k input
+// tokens on a single call, purchasable with one micro of credit. The
+// aggregate cap is the real cost bound; it comfortably fits the client's
+// 40-message transcript window plus prompt and tools.
+const MAX_TOTAL_INPUT_CHARS = 120_000;
+const MAX_TOOLS = 8;
+const TOOL_NAME_RE = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
+const MAX_TOOL_DESCRIPTION_CHARS = 2_000;
+const MAX_TOOL_SCHEMA_CHARS = 4_000;
+const MAX_TOOL_SCHEMA_DEPTH = 8;
 // Not about credit — that's the reservation below. This stops one token pinning
 // a pile of simultaneous upstream calls and burning the provider rate limit.
 const MAX_INFLIGHT_PER_SUBJECT = 2;
@@ -353,8 +369,48 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
     }
   }
 
-  const system = typeof body.system === 'string' ? body.system : '';
-  const tools = Array.isArray(body.tools) ? body.tools : [];
+  // Validate rather than coerce: a non-string `system` is a malformed request,
+  // not an empty prompt.
+  if (body.system !== undefined && typeof body.system !== 'string') {
+    return json(400, { error: 'system must be a string', code: 'bad_request' });
+  }
+  const system = body.system || '';
+  if (system.length > MAX_SYSTEM_CHARS) {
+    return json(400, { error: 'system prompt too long', code: 'bad_request' });
+  }
+
+  if (body.tools !== undefined && !Array.isArray(body.tools)) {
+    return json(400, { error: 'tools must be an array', code: 'bad_request' });
+  }
+  const rawTools = body.tools || [];
+  if (rawTools.length > MAX_TOOLS) {
+    return json(400, { error: 'too many tools', code: 'bad_request' });
+  }
+  const tools = [];
+  for (const tool of rawTools) {
+    if (!tool || typeof tool.name !== 'string' || !TOOL_NAME_RE.test(tool.name)) {
+      return json(400, { error: 'malformed tool name', code: 'bad_request' });
+    }
+    if (tool.description !== undefined &&
+        (typeof tool.description !== 'string' || tool.description.length > MAX_TOOL_DESCRIPTION_CHARS)) {
+      return json(400, { error: 'malformed tool description', code: 'bad_request' });
+    }
+    const schema = sanitizeToolSchema(tool.schema === undefined ? { type: 'object' } : tool.schema);
+    if (schema === INVALID_SCHEMA || JSON.stringify(schema).length > MAX_TOOL_SCHEMA_CHARS) {
+      return json(400, { error: 'malformed tool schema', code: 'bad_request' });
+    }
+    tools.push({ name: tool.name, description: tool.description || '', schema });
+  }
+
+  // The aggregate bound is what actually caps upstream cost — see the
+  // constants above for why per-field caps alone are not enough.
+  const totalChars = system.length
+    + messages.reduce((sum, m) => sum + m.content.length, 0)
+    + JSON.stringify(tools).length;
+  if (totalChars > MAX_TOTAL_INPUT_CHARS) {
+    return json(400, { error: 'request too large', code: 'bad_request' });
+  }
+
   const holds = deps.reservations || reservations;
 
   // Everything from here to holds.acquire() runs with no await, so no other
@@ -424,6 +480,37 @@ function estimateCostMicros({ system, messages, tools }) {
     + messages.reduce((sum, m) => sum + (m.content?.length || 0), 0)
     + JSON.stringify(tools || []).length;
   return priceMicros(Math.ceil(chars / 4), config.llm.maxTokens);
+}
+
+// Tool schemas reach the provider verbatim as input_schema, so bound their
+// depth and strip prototype-polluting keys before anything downstream walks
+// or merges them. Returns INVALID_SCHEMA when the shape is unacceptable.
+const INVALID_SCHEMA = Symbol('invalid schema');
+const FORBIDDEN_SCHEMA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function sanitizeToolSchema(node, depth = 0) {
+  if (depth > MAX_TOOL_SCHEMA_DEPTH) return INVALID_SCHEMA;
+  if (Array.isArray(node)) {
+    const out = [];
+    for (const item of node) {
+      const clean = sanitizeToolSchema(item, depth + 1);
+      if (clean === INVALID_SCHEMA) return INVALID_SCHEMA;
+      out.push(clean);
+    }
+    return out;
+  }
+  if (node && typeof node === 'object') {
+    const out = {};
+    for (const key of Object.keys(node)) {
+      if (FORBIDDEN_SCHEMA_KEYS.has(key)) continue;
+      const clean = sanitizeToolSchema(node[key], depth + 1);
+      if (clean === INVALID_SCHEMA) return INVALID_SCHEMA;
+      out[key] = clean;
+    }
+    return out;
+  }
+  if (node === null || ['string', 'number', 'boolean'].includes(typeof node)) return node;
+  return INVALID_SCHEMA; // functions/symbols can't appear in JSON bodies anyway
 }
 
 // ---- helpers --------------------------------------------------------------

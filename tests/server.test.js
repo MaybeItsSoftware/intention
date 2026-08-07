@@ -849,3 +849,84 @@ describe('rate limiting', () => {
     }
   });
 });
+
+// Per-field caps alone multiply into a huge bill (60 messages x 8k chars ≈
+// 120k input tokens on one call), and tools/system used to reach the provider
+// with no validation at all.
+describe('LLM input cost caps', () => {
+  const authed = (d) => {
+    adjustBalance('sub-caps', 10_000_000, d.store);
+    return { authorization: `Bearer ${signToken({ sub: 'sub-caps' }, SECRET, 60_000)}` };
+  };
+  const msg = (content) => ({ role: 'user', content });
+
+  it('rejects a non-string system instead of coercing it away', async () => {
+    const d = deps();
+    const res = await post('/v1/chat', { messages: [msg('hi')], system: { sneaky: true } }, authed(d), d);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects when the aggregate is huge even though every field is within its own cap', async () => {
+    const d = deps();
+    // 20 messages of 8000 chars each: individually legal, 160k chars total.
+    const messages = Array.from({ length: 20 }, () => msg('x'.repeat(8000)));
+    const res = await post('/v1/chat', { messages }, authed(d), d);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('bad_request');
+  });
+
+  it('still accepts a realistic full-size gate request', async () => {
+    const d = deps();
+    const res = await post('/v1/chat', {
+      messages: Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: 'x'.repeat(500) })),
+      system: 'y'.repeat(13_000),
+      tools: [{
+        name: 'grant_access',
+        description: 'd'.repeat(400),
+        schema: { type: 'object', properties: { minutes: { type: 'number' } }, required: ['minutes'] }
+      }]
+    }, authed(d), d);
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects malformed tool names and oversized schemas', async () => {
+    const d = deps();
+    const bad = await post('/v1/chat', {
+      messages: [msg('hi')],
+      tools: [{ name: 'evil tool; drop', schema: { type: 'object' } }]
+    }, authed(d), d);
+    expect(bad.status).toBe(400);
+
+    const big = await post('/v1/chat', {
+      messages: [msg('hi')],
+      tools: [{ name: 'ok_tool', schema: { type: 'object', description: 'z'.repeat(5000) } }]
+    }, authed(d), d);
+    expect(big.status).toBe(400);
+
+    let nested = { type: 'object' };
+    for (let i = 0; i < 12; i++) nested = { type: 'object', properties: { deep: nested } };
+    const deep = await post('/v1/chat', {
+      messages: [msg('hi')], tools: [{ name: 'ok_tool', schema: nested }]
+    }, authed(d), d);
+    expect(deep.status).toBe(400);
+  });
+
+  it('strips prototype-polluting keys from schemas before the provider sees them', async () => {
+    let seenTools;
+    const d = deps({
+      callCoachLLM: async ({ tools }) => {
+        seenTools = tools;
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    });
+    const schema = JSON.parse('{"type":"object","properties":{"a":{"type":"string"}},"__proto__":{"polluted":true},"constructor":{"x":1}}');
+    const res = await post('/v1/chat', {
+      messages: [msg('hi')], tools: [{ name: 'ok_tool', schema }]
+    }, authed(d), d);
+    expect(res.status).toBe(200);
+    const serialized = JSON.stringify(seenTools[0].schema);
+    expect(serialized).not.toContain('__proto__');
+    expect(serialized).not.toContain('constructor');
+    expect(seenTools[0].schema.properties.a.type).toBe('string');
+  });
+});
