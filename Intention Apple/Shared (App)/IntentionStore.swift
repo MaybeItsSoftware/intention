@@ -181,11 +181,39 @@ actor IntentionStore {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["platform": "apple", "receipt": receipt])
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
+            persistEntitlement(from: data, receipt: receipt)
+            return true
         } catch {
             return false
         }
+    }
+
+    // The verify response carries the access token the Safari extension's
+    // coach authenticates with. On iOS the JS layer also saves it (the app
+    // hosts options.html, whose billing.js runs verifyPurchase), but on macOS
+    // the app's window never runs that JS — this write into the App Group is
+    // the only path by which a Mac purchase reaches the extension, which
+    // pulls it via SafariWebExtensionHandler's pullConfig. Shaped to match
+    // billing.js's normalizeEntitlement so the JS side needs no changes.
+    private func persistEntitlement(from data: Data, receipt: String) {
+        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        let entitlement: [String: Any] = [
+            "active": (json["active"] as? Bool) ?? false,
+            "productId": (json["productId"] as? String) ?? "",
+            "source": "apple",
+            "token": (json["token"] as? String) ?? "",
+            "receipt": receipt,
+            "balanceMicros": json["balanceMicros"] ?? 0,
+            "balanceGbp": json["balanceGbp"] ?? 0,
+            "balanceCredits": json["balanceCredits"] ?? 0,
+            "pendingVerification": false,
+            "lastError": "",
+            // Milliseconds, matching the JS side's Date.now() stamps.
+            "updatedAt": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        AppGroupStorage.mergeConfig(["entitlement": entitlement])
     }
 
     // MARK: - Account token
