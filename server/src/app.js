@@ -10,6 +10,7 @@ import {
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
 import { rateLimiter } from './ratelimit.js';
+import { logEvent } from './log.js';
 
 // Request handling, kept transport-agnostic: `handleRequest` takes a plain
 // { method, path, headers, body, ip, query } and returns { status, body }.
@@ -504,6 +505,17 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
   const usage = result.usage || { inputTokens: 0, outputTokens: 0 };
   const costMicros = priceMicros(usage.inputTokens, usage.outputTokens);
   const newBalance = adjustBalance(claims.sub, -costMicros, backing);
+  // estimate-vs-actual is how the reservation's overdraft bound gets verified
+  // against production traffic; a persistent estimate < actual would mean the
+  // hold no longer covers the worst case.
+  logEvent('llm_spend', {
+    subject: claims.sub,
+    estimateMicros,
+    costMicros,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    balanceMicros: newBalance
+  });
 
   return json(200, {
     text: result.text || '',

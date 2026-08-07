@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { readFileSync, writeSync, renameSync, openSync, fsyncSync, closeSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config, findTopUp, creditMicrosForTopUp } from './config.js';
+import { logEvent } from './log.js';
 
 // Small pieces of server state: the coaching-credit balance ledger, the
 // idempotency record that stops a top-up being credited twice, and the
@@ -153,6 +154,9 @@ export function getBalanceMicros(subject, backing = store) {
 export function adjustBalance(subject, deltaMicros, backing = store) {
   const next = Number(backing.get(balanceKey(subject)) || 0) + deltaMicros;
   backing.set(balanceKey(subject), next, null);
+  // The audit line lives here, in the one place every credit movement passes
+  // through — top-ups, chat deductions and refund clawbacks all leave a trail.
+  logEvent('balance_adjust', { subject, deltaMicros, balanceMicros: next });
   return next;
 }
 

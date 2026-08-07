@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { config, assertBootConfig } from './config.js';
 import { handleRequest } from './app.js';
+import { logEvent, newRequestId } from './log.js';
 
 // node:http wrapper around handleRequest. No framework: the whole surface is
 // five POST routes and a health check.
@@ -68,6 +69,8 @@ let xffSamplesLeft = 5;
 export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const ip = clientIp(req);
+  const requestId = newRequestId();
+  const startedAt = Date.now();
   if (xffSamplesLeft > 0 && req.headers['x-forwarded-for']) {
     xffSamplesLeft -= 1;
     console.log(`[intention] X-Forwarded-For sample: ${JSON.stringify(req.headers['x-forwarded-for'])} -> client ip ${ip}`);
@@ -79,21 +82,38 @@ export const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const reply = (status, payload) => {
+    res.writeHead(status, {
+      'content-type': 'application/json',
+      'x-request-id': requestId,
+      ...CORS_HEADERS
+    });
+    res.end(JSON.stringify(payload));
+    // Access log: pathname only — the query string can carry the webhook
+    // secret, and headers/bodies carry tokens, receipts and message content.
+    logEvent('request', {
+      requestId,
+      method: req.method,
+      path: url.pathname,
+      status,
+      ms: Date.now() - startedAt,
+      ip
+    });
+  };
+
   let body = null;
   if (req.method === 'POST') {
     let raw;
     try {
       raw = await readBody(req);
     } catch (e) {
-      res.writeHead(413, { 'content-type': 'application/json', ...CORS_HEADERS });
-      res.end(JSON.stringify({ error: 'Payload too large', code: 'bad_request' }));
+      reply(413, { error: 'Payload too large', code: 'bad_request' });
       return;
     }
     try {
       body = raw ? JSON.parse(raw) : {};
     } catch (e) {
-      res.writeHead(400, { 'content-type': 'application/json', ...CORS_HEADERS });
-      res.end(JSON.stringify({ error: 'Invalid JSON', code: 'bad_request' }));
+      reply(400, { error: 'Invalid JSON', code: 'bad_request' });
       return;
     }
   }
@@ -111,8 +131,7 @@ export const server = http.createServer(async (req, res) => {
     ip
   });
 
-  res.writeHead(result.status, { 'content-type': 'application/json', ...CORS_HEADERS });
-  res.end(JSON.stringify(result.body));
+  reply(result.status, result.body);
 });
 
 // Only listen when run directly, so tests can import this module freely.
@@ -123,6 +142,32 @@ if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   if (!assertBootConfig()) {
     process.exit(1);
   }
+
+  // A malformed request line must not crash the process, and a genuinely
+  // unknown state must restart it (the store fsyncs every mutation, so an
+  // abrupt exit loses no committed credit).
+  server.on('clientError', (err, socket) => {
+    if (!socket.destroyed) socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+  });
+  server.on('error', (err) => {
+    logEvent('server_error', { error: String(err?.message || err) });
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    logEvent('unhandled_rejection', { error: String(reason?.stack || reason) });
+  });
+  process.on('uncaughtException', (err) => {
+    logEvent('uncaught_exception', { error: String(err?.stack || err) });
+    process.exit(1);
+  });
+  process.on('SIGTERM', () => {
+    logEvent('shutdown', { signal: 'SIGTERM' });
+    // Stop accepting, let in-flight requests finish; every store mutation is
+    // already fsynced, so nothing needs flushing on the way out.
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 10_000).unref();
+  });
+
   const host = process.env.HOST || '0.0.0.0';
   server.listen(config.port, host, () => {
     console.log(`[intention] backend listening on ${host}:${config.port}`);
