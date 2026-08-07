@@ -1,11 +1,6 @@
 {
   "homepage_url": null,
-  "permissions": [
-    "storage",
-    "alarms",
-    "tabs",
-    "webNavigation",
-    "declarativeNetRequest",
+  "permissions+": [
     "nativeMessaging"
   ],
   "background": {

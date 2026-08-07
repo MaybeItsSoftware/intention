@@ -4,13 +4,34 @@
 // invariant build.sh and ci.yml enforce by diff).
 
 import { describe, it, expect } from 'vitest';
-import { loadSource, loadTracking, VARIANTS } from './load.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadSource, loadTracking, VARIANTS, REPO_ROOT } from './load.js';
 
 const VARIANT_KEYS = ['chrome', 'firefox', 'apple'];
 
 describe('variant directories exist', () => {
   it('all three resolve', () => {
     for (const k of VARIANT_KEYS) expect(VARIANTS[k]).toBeTruthy();
+  });
+});
+
+// The Apple overlay once replaced the whole permissions array to add one
+// entry, so a permission added to the base silently never reached Safari.
+// Overlays now append with "permissions+"; this guards the outcome whatever
+// the overlays do.
+describe('generated manifests carry every base permission', () => {
+  const basePermissions = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'shared', 'manifest.base.json'), 'utf8')
+  ).permissions;
+
+  it.each(VARIANT_KEYS)('%s manifest includes them all', (variant) => {
+    const manifest = JSON.parse(
+      readFileSync(join(VARIANTS[variant], 'manifest.json'), 'utf8')
+    );
+    for (const p of basePermissions) {
+      expect(manifest.permissions, `${variant} is missing "${p}"`).toContain(p);
+    }
   });
 });
 
