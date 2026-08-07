@@ -32,6 +32,12 @@ final class BackgroundJSHost: NSObject {
     private var isReady = false
     private var pendingWork: [() -> Void] = []
     private var alarmTimers: [String: Timer] = [:]
+    // Leak stop for pendingCallbacks: if the page never answers (content
+    // process died mid-call, script error), the completion still fires with
+    // nil. Generous because a hosted-coach chat round trip includes an LLM
+    // call.
+    private var callbackTimeouts: [String: DispatchWorkItem] = [:]
+    private static let callbackTimeoutSeconds: TimeInterval = 120
 
     private override init() {
         super.init()
@@ -102,6 +108,15 @@ final class BackgroundJSHost: NSObject {
             completion(nil)
             return
         }
+
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, let callback = self.pendingCallbacks.removeValue(forKey: callbackId) else { return }
+            self.callbackTimeouts.removeValue(forKey: callbackId)
+            NSLog("[Intention] message %@ got no response — completing with nil", callbackId)
+            callback(nil)
+        }
+        callbackTimeouts[callbackId] = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.callbackTimeoutSeconds, execute: timeout)
 
         let script = "window.triggerMessage(\(messageLiteral), \(senderLiteral), \(JSBridgeCodec.jsLiteral(callbackId)))"
         hostedWebView.evaluateJavaScript(script) { _, error in
@@ -228,6 +243,7 @@ extension BackgroundJSHost: WKScriptMessageHandler {
             invokeJSCallback(callbackId, result: [String: Any]())
 
         case "messageResponse":
+            callbackTimeouts.removeValue(forKey: callbackId)?.cancel()
             let callback = pendingCallbacks.removeValue(forKey: callbackId)
             callback?(body["response"])
 
@@ -251,6 +267,26 @@ extension BackgroundJSHost: WKNavigationDelegate {
         pendingWork = []
         queued.forEach { $0() }
         catchUpOnDueWork()
+    }
+
+    // Without this the host silently died with the content process: every
+    // later sendMessage queued forever behind isReady, and every entry in
+    // pendingCallbacks leaked — breaking sendMessage's promise that
+    // `completion` is always called. Fail the in-flight calls (their
+    // responses died with the process; the callers' own retry/error paths
+    // handle nil), then reload the page — didFinish flips isReady back on,
+    // replays queued work and reconciles sessions.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        NSLog("[Intention] background web content process terminated — recovering")
+        let callbacks = pendingCallbacks
+        pendingCallbacks = [:]
+        callbackTimeouts.values.forEach { $0.cancel() }
+        callbackTimeouts = [:]
+        callbacks.values.forEach { $0(nil) }
+
+        isReady = false
+        guard let url = Bundle.main.url(forResource: "background", withExtension: "html") else { return }
+        webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     }
 }
 
