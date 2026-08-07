@@ -31,6 +31,7 @@ const {
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
 const { Reservations } = await import('../server/src/reservations.js');
+const { RateLimiter } = await import('../server/src/ratelimit.js');
 const { UpstreamError } = await import('../server/src/llm.js');
 const { creditMicrosForTopUp } = await import('../server/src/config.js');
 
@@ -57,9 +58,10 @@ const googleResult = {
 
 const deps = (overrides = {}) => ({
   store: new MemoryStore(),
-  // Fresh per test: holds are in-process state, so sharing them would let one
-  // test's in-flight call bound another's.
+  // Fresh per test: holds and rate-limit counters are in-process state, so
+  // sharing them would let one test's traffic throttle another's.
   reservations: new Reservations(),
+  rateLimiter: new RateLimiter(),
   verifyApple: async () => appleResult,
   verifyGoogle: async () => googleResult,
   consumeGoogle: async () => {},
@@ -762,5 +764,88 @@ describe('FileStore durability', () => {
     const file = stateFile();
     writeFileSync(file, '{definitely not json');
     expect(() => new FileStore(file)).toThrow();
+  });
+});
+
+// The backend had no rate limiting at all: nothing bounded chat volume per
+// token, and the short human-typeable linking codes were open to brute force.
+describe('rate limiting', () => {
+  const chatBody = { messages: [{ role: 'user', content: 'hi' }] };
+  const tokenFor = (sub) => signToken({ sub, platform: 'apple', productId: 'p' }, SECRET, 60_000);
+  const auth = (sub) => ({ authorization: `Bearer ${tokenFor(sub)}` });
+
+  it('throttles /v1/chat per subject, not per connection', async () => {
+    const d = deps();
+    adjustBalance('sub-chat', 10_000_000, d.store);
+    let last;
+    for (let i = 0; i < 31; i++) {
+      last = await post('/v1/chat', chatBody, auth('sub-chat'), d);
+    }
+    expect(last.status).toBe(429);
+    expect(last.body.code).toBe('rate_limited');
+
+    // A different subject through the same limiter is unaffected.
+    adjustBalance('sub-other', 10_000_000, d.store);
+    const other = await post('/v1/chat', chatBody, auth('sub-other'), d);
+    expect(other.status).toBe(200);
+  });
+
+  it('throttles unauthenticated verify per IP before verification runs', async () => {
+    let verifierCalls = 0;
+    const d = deps({ verifyApple: async () => { verifierCalls++; return appleResult; } });
+    let last;
+    for (let i = 0; i < 31; i++) {
+      last = await handleRequest({
+        method: 'POST', path: '/v1/entitlement/verify', headers: {},
+        body: { platform: 'apple', receipt: 'jws' }, ip: '203.0.113.9'
+      }, d);
+    }
+    expect(last.status).toBe(429);
+    expect(verifierCalls).toBe(30); // the 31st never reached the verifier
+
+    const otherIp = await handleRequest({
+      method: 'POST', path: '/v1/entitlement/verify', headers: {},
+      body: { platform: 'apple', receipt: 'jws' }, ip: '203.0.113.10'
+    }, d);
+    expect(otherIp.status).toBe(200);
+  });
+
+  it('locks out an IP that keeps guessing redeem codes', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      const res = await handleRequest({
+        method: 'POST', path: '/v1/entitlement/redeem', headers: {},
+        body: { code: `INT-WRONG-${i}` }, ip: '198.51.100.7'
+      }, d);
+      expect(res.status).toBe(404);
+    }
+    // Even a CORRECT code is refused once the miss budget is spent.
+    const { generateAccessCode } = await import('../server/src/store.js');
+    const { code } = generateAccessCode({ sub: 's', platform: 'apple', productId: 'p' }, { backing: d.store });
+    const blocked = await handleRequest({
+      method: 'POST', path: '/v1/entitlement/redeem', headers: {},
+      body: { code }, ip: '198.51.100.7'
+    }, d);
+    expect(blocked.status).toBe(429);
+
+    // A fresh IP with the real code still gets through.
+    const ok = await handleRequest({
+      method: 'POST', path: '/v1/entitlement/redeem', headers: {},
+      body: { code }, ip: '198.51.100.8'
+    }, d);
+    expect(ok.status).toBe(200);
+  });
+
+  it('successful redemptions do not consume the miss budget', async () => {
+    const d = deps();
+    const { generateAccessCode } = await import('../server/src/store.js');
+    for (let i = 0; i < 12; i++) {
+      const { code } = generateAccessCode({ sub: 's', platform: 'apple', productId: 'p' }, { backing: d.store });
+      const res = await handleRequest({
+        method: 'POST', path: '/v1/entitlement/redeem', headers: {},
+        body: { code }, ip: '198.51.100.9'
+      }, d);
+      expect(res.status).toBe(200);
+    }
   });
 });

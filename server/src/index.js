@@ -36,8 +36,32 @@ function readBody(req) {
   });
 }
 
+// The client IP for rate limiting. Counted from the END of X-Forwarded-For:
+// Railway (and any sane proxy) appends the peer address it actually observed,
+// so the trailing entries are trustworthy and the leading ones are whatever
+// the client chose to send. trustProxyHops says how many trailing entries our
+// own infrastructure adds.
+function clientIp(req) {
+  const raw = req.headers['x-forwarded-for'];
+  if (raw) {
+    const list = String(raw).split(',').map(s => s.trim()).filter(Boolean);
+    const hops = Math.max(1, config.trustProxyHops);
+    if (list.length >= hops) return list[list.length - hops];
+  }
+  return req.socket?.remoteAddress || '';
+}
+
+// Log a few raw forwarding headers after boot so the trustProxyHops
+// assumption can be checked against real traffic, then go quiet.
+let xffSamplesLeft = 5;
+
 export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  const ip = clientIp(req);
+  if (xffSamplesLeft > 0 && req.headers['x-forwarded-for']) {
+    xffSamplesLeft -= 1;
+    console.log(`[intention] X-Forwarded-For sample: ${JSON.stringify(req.headers['x-forwarded-for'])} -> client ip ${ip}`);
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS_HEADERS);
@@ -73,7 +97,8 @@ export const server = http.createServer(async (req, res) => {
     // reached the handler at all.
     query: Object.fromEntries(url.searchParams),
     headers: req.headers,
-    body
+    body,
+    ip
   });
 
   res.writeHead(result.status, { 'content-type': 'application/json', ...CORS_HEADERS });

@@ -32,6 +32,13 @@ export const config = {
   // which keeps tests and local dev hermetic but loses paid credit on restart.
   stateFile: process.env.INTENTION_STATE_FILE || '',
 
+  // How many trailing X-Forwarded-For entries were appended by proxies we
+  // control or trust (Railway's edge appends the peer it actually observed).
+  // The client IP is taken counting from the END of the list — the leading
+  // entries are attacker-supplied. index.js logs a few raw headers after boot
+  // so this assumption can be checked against real traffic.
+  trustProxyHops: Number(process.env.INTENTION_TRUST_PROXY_HOPS || 1),
+
   // The LLM the hosted coach runs on, under our key.
   llm: {
     provider: process.env.INTENTION_LLM_PROVIDER || 'anthropic',

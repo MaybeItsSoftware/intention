@@ -8,10 +8,11 @@ import {
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
+import { rateLimiter } from './ratelimit.js';
 
 // Request handling, kept transport-agnostic: `handleRequest` takes a plain
-// { method, path, headers, body } and returns { status, body }. index.js wraps
-// it in a node:http server; tests call it directly.
+// { method, path, headers, body, ip, query } and returns { status, body }.
+// index.js wraps it in a node:http server; tests call it directly.
 
 const MAX_MESSAGES = 60;
 const MAX_CONTENT_CHARS = 8000;
@@ -19,8 +20,33 @@ const MAX_CONTENT_CHARS = 8000;
 // a pile of simultaneous upstream calls and burning the provider rate limit.
 const MAX_INFLIGHT_PER_SUBJECT = 2;
 
-export async function handleRequest({ method, path, headers = {}, body = null, query = {} }, deps = {}) {
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+// Per-IP limits on everything reachable without a token, checked before the
+// route switch so expensive work (receipt verification, JWS parsing) never
+// starts for a flood. Sized well above legitimate client behaviour — verify
+// fires on app launch, redeem once per browser link.
+const IP_LIMITS = {
+  '/v1/entitlement/verify': { limit: 30, windowMs: 10 * MINUTE },
+  '/v1/entitlement/refresh': { limit: 60, windowMs: 10 * MINUTE },
+  '/v1/entitlement/redeem': { limit: 30, windowMs: HOUR },
+  '/v1/webhooks/apple': { limit: 120, windowMs: MINUTE },
+  '/v1/webhooks/google': { limit: 120, windowMs: MINUTE }
+};
+
+// Failed redemptions are tracked separately from volume: a miss means someone
+// is guessing codes, and this bound is what makes the short human-typeable
+// format safe against brute force (32^8 codes at 10 misses/hour/IP).
+const REDEEM_FAILS = { limit: 10, windowMs: HOUR };
+
+// Per-subject limits, checked inside the endpoints once the token is known.
+const CHAT_LIMIT = { limit: 30, windowMs: MINUTE };
+const CODE_LIMIT = { limit: 10, windowMs: HOUR };
+
+export async function handleRequest({ method, path, headers = {}, body = null, query = {}, ip = '' }, deps = {}) {
   const backing = deps.store || store;
+  const limiter = deps.rateLimiter || rateLimiter;
 
   if (method === 'GET' && path === '/health') {
     return json(200, { ok: true });
@@ -29,13 +55,18 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
     return json(405, { error: 'Method not allowed', code: 'method_not_allowed' });
   }
 
+  const ipLimit = IP_LIMITS[path];
+  if (ipLimit && !limiter.check(`ip:${path}`, ip || 'unknown', ipLimit.limit, ipLimit.windowMs)) {
+    return rateLimited();
+  }
+
   try {
     switch (path) {
       case '/v1/entitlement/verify': return await verifyEndpoint(body, deps, backing);
       case '/v1/entitlement/refresh': return refreshEndpoint(body, backing);
-      case '/v1/entitlement/code': return codeEndpoint(headers, backing);
-      case '/v1/entitlement/redeem': return redeemEndpoint(body, backing);
-      case '/v1/chat': return await chatEndpoint(headers, body, deps, backing);
+      case '/v1/entitlement/code': return codeEndpoint(headers, backing, limiter);
+      case '/v1/entitlement/redeem': return redeemEndpoint(body, backing, limiter, ip);
+      case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
       case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing, query);
       default:
@@ -273,8 +304,11 @@ function microsToGbp(micros) {
 
 // A signed-in mobile app mints a short-lived code so the same credit balance
 // can unlock the browser extension, where there is no store to buy through.
-function codeEndpoint(headers, backing) {
+function codeEndpoint(headers, backing, limiter) {
   const claims = verifyToken(bearer(headers), config.tokenSecret);
+  if (!limiter.check('code', claims.sub, CODE_LIMIT.limit, CODE_LIMIT.windowMs)) {
+    return rateLimited();
+  }
   const { code, expiresAt } = generateAccessCode({
     sub: claims.sub,
     platform: claims.platform,
@@ -283,9 +317,13 @@ function codeEndpoint(headers, backing) {
   return json(200, { code, expiresAt });
 }
 
-function redeemEndpoint(body, backing) {
+function redeemEndpoint(body, backing, limiter, ip) {
+  if (limiter.atLimit('redeem-fail', ip || 'unknown', REDEEM_FAILS.limit)) {
+    return rateLimited();
+  }
   const claims = redeemAccessCode(body?.code, backing);
   if (!claims) {
+    limiter.record('redeem-fail', ip || 'unknown', REDEEM_FAILS.windowMs);
     return json(404, { error: 'That code is not valid or has already been used.', code: 'entitlement_invalid' });
   }
   return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing));
@@ -293,8 +331,11 @@ function redeemEndpoint(body, backing) {
 
 // ---- Coaching proxy -------------------------------------------------------
 
-async function chatEndpoint(headers, body, deps, backing) {
+async function chatEndpoint(headers, body, deps, backing, limiter) {
   const claims = verifyToken(bearer(headers), config.tokenSecret);
+  if (!limiter.check('chat', claims.sub, CHAT_LIMIT.limit, CHAT_LIMIT.windowMs)) {
+    return rateLimited();
+  }
 
   const messages = Array.isArray(body?.messages) ? body.messages : null;
   if (!messages || !messages.length) {
@@ -395,4 +436,8 @@ function bearer(headers) {
 
 function json(status, body) {
   return { status, body };
+}
+
+function rateLimited() {
+  return json(429, { error: 'Too many requests. Slow down and try again shortly.', code: 'rate_limited' });
 }
