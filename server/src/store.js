@@ -190,6 +190,19 @@ export function getCreditRecord(platform, creditId, backing = store) {
 export function refundTopUp(platform, creditId, { subject = null, productId = null, creditMicros = null } = {}, backing = store) {
   const existing = getCreditRecord(platform, creditId, backing);
 
+  // A refund for a purchase that was never credited must not write anything:
+  // recording it would poison the idempotency key, so a later legitimate
+  // verify would see alreadyCredited and silently grant nothing.
+  if (!existing) {
+    return {
+      refunded: false,
+      noCreditRecord: true,
+      subject,
+      deductedMicros: 0,
+      balanceMicros: subject ? getBalanceMicros(subject, backing) : 0
+    };
+  }
+
   if (existing && typeof existing === 'object' && existing.refunded) {
     const s = existing.subject || subject;
     return {

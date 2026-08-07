@@ -202,6 +202,21 @@ async function appleWebhookEndpoint(body, deps, backing) {
       throw e;
     }
 
+    // Any Apple-signed transaction passes the JWS walk — including other
+    // developers' — so without this check anyone could replay a foreign
+    // signed transaction and trigger a clawback here.
+    const bundleId = info.bundleId || notification?.data?.bundleId || '';
+    if (bundleId && bundleId !== config.apple.bundleId) {
+      return json(401, { error: 'notification is for a different app', code: 'unauthorized' });
+    }
+    // A sandbox notification is genuine Apple traffic during TestFlight
+    // testing, so acknowledge rather than 401 (Apple retries on non-2xx) —
+    // but it must never claw back production credit.
+    const environment = info.environment || notification?.data?.environment || '';
+    if (environment && String(environment).toLowerCase() !== 'production' && config.apple.environment !== 'sandbox') {
+      return json(200, { ok: true, processed: false, reason: 'non-production environment' });
+    }
+
     const transactionId = String(info.transactionId || info.originalTransactionId || '');
     const appAccountToken = info.appAccountToken || '';
     const productId = info.productId || '';

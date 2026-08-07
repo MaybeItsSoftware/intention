@@ -144,6 +144,19 @@ async function fetchTransactionInfo(transactionId) {
  * credit it.
  * @returns {{ productId, creditId, appAccountToken }}
  */
+// Sandbox transactions chain to the same pinned Apple roots as production
+// ones, so signature verification alone lets a free sandbox Apple account
+// mint unlimited "valid" receipts. The payload's own environment field is the
+// discriminator; sandbox is only creditable when the server itself is
+// configured against the sandbox App Store (dev/staging).
+export function assertCreditableEnvironment(environment) {
+  if (!environment) return; // pre-StoreKit-2 payloads; the field is otherwise always stamped
+  const env = String(environment).toLowerCase();
+  if (env === 'production') return;
+  if (env === 'sandbox' && config.apple.environment === 'sandbox') return;
+  throw new VerificationError(`receipt is from the ${environment} environment`);
+}
+
 export async function verifyAppleReceipt(jws) {
   let payload;
   if (config.allowUnverifiedReceipts) {
@@ -155,6 +168,7 @@ export async function verifyAppleReceipt(jws) {
   if (payload.bundleId && payload.bundleId !== config.apple.bundleId) {
     throw new VerificationError('receipt is for a different app');
   }
+  assertCreditableEnvironment(payload.environment);
   if (payload.productId && !findTopUp('apple', payload.productId)) {
     throw new VerificationError('receipt is for an unknown product');
   }
@@ -174,6 +188,7 @@ export async function verifyAppleReceipt(jws) {
       ? decodeJWS(record.signedTransactionInfo).payload
       : verifyAppleJWS(record.signedTransactionInfo);
     if (info.revocationDate) throw new VerificationError('that purchase was refunded');
+    assertCreditableEnvironment(info.environment);
     productId = info.productId || productId;
     appAccountToken = info.appAccountToken || appAccountToken;
   }

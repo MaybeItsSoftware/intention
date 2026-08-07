@@ -382,6 +382,19 @@ describe('Apple transaction info (consumable verification)', () => {
     delete payload.appAccountToken;
     await expect(verifyAppleReceipt(fakeJWS(payload))).rejects.toThrow(/account token/);
   });
+
+  // Sandbox transactions chain to the same pinned Apple roots, so a free
+  // sandbox account could mint unlimited signature-valid receipts. The
+  // server is configured for production here, so sandbox must not credit.
+  it('rejects a sandbox receipt on a production deployment', async () => {
+    await expect(verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Sandbox' })))
+      .rejects.toThrow(/environment/i);
+  });
+
+  it('accepts a production receipt with the environment stamped', async () => {
+    const result = await verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Production' }));
+    expect(result.creditId).toBe('txn-100');
+  });
 });
 
 describe('Google product purchase verification', () => {
@@ -400,6 +413,17 @@ describe('Google product purchase verification', () => {
   it('rejects a missing purchase token', async () => {
     await expect(verifyGooglePurchase({ productId: 'intention_coach_credit_1' }))
       .rejects.toThrow(/purchase token/);
+  });
+
+  // The Play record's purchaseType is only present for licence-tester, promo
+  // and rewarded purchases — none of which moved real money.
+  it('rejects test and promo purchases from the Play record', async () => {
+    const { assertCreditablePlayPurchase } = await import('../server/src/google.js');
+    const base = { purchaseState: 0, obfuscatedExternalAccountId: 'acct' };
+    expect(() => assertCreditablePlayPurchase(base)).not.toThrow();
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 0 })).toThrow(/test and promo/i);
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 1 })).toThrow(/test and promo/i);
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseState: 1 })).toThrow(/cancelled/i);
   });
 });
 
@@ -464,6 +488,51 @@ describe('Refund webhooks & clawback', () => {
     expect(res.status).toBe(400);
   });
 
+  // Any Apple-signed transaction passes the JWS walk — including other
+  // developers' — so a replayed foreign transaction must not trigger a
+  // clawback here.
+  it('refuses an Apple notification for a different app', async () => {
+    const d = deps();
+    await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+
+    const signedPayload = fakeJWS({
+      notificationType: 'REFUND',
+      data: {
+        signedTransactionInfo: fakeJWS({
+          bundleId: 'com.someone.else',
+          transactionId: 'txn-1',
+          appAccountToken: 'acct-apple-1',
+          productId: 'uk.co.maybeitssoftware.intention.coach.credit1'
+        })
+      }
+    });
+    const res = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(res.status).toBe(401);
+    expect(getBalanceMicros(subjectFor('apple', 'acct-apple-1'), d.store)).toBe(CREDIT1);
+  });
+
+  it('acknowledges but ignores a sandbox Apple refund on a production deployment', async () => {
+    const d = deps();
+    await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+
+    const signedPayload = fakeJWS({
+      notificationType: 'REFUND',
+      data: {
+        signedTransactionInfo: fakeJWS({
+          bundleId: 'uk.co.maybeitssoftware.intention',
+          environment: 'Sandbox',
+          transactionId: 'txn-1',
+          appAccountToken: 'acct-apple-1',
+          productId: 'uk.co.maybeitssoftware.intention.coach.credit1'
+        })
+      }
+    });
+    const res = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(res.status).toBe(200); // 2xx so Apple does not retry genuine sandbox traffic
+    expect(res.body.processed).toBe(false);
+    expect(getBalanceMicros(subjectFor('apple', 'acct-apple-1'), d.store)).toBe(CREDIT1);
+  });
+
   it('processes a Google RTDN refund notification and claws back credit', async () => {
     const d = deps();
     const verified = await post('/v1/entitlement/verify',
@@ -499,14 +568,34 @@ describe('Refund webhooks & clawback', () => {
     expect(res.status).toBe(400);
   });
 
-  it('refundTopUp in store.js prevents subsequent re-crediting of refunded transaction', async () => {
+  it('refundTopUp prevents re-crediting a transaction that really was credited', async () => {
     const store = new MemoryStore();
     const sub = subjectFor('apple', 'acct-refund-test');
     adjustBalance(sub, CREDIT1, store);
+    markCredited('apple', 'txn-refunded', {
+      subject: sub, productId: 'uk.co.maybeitssoftware.intention.coach.credit1',
+      creditMicros: CREDIT1, refunded: false, creditId: 'txn-refunded'
+    }, store);
 
-    refundTopUp('apple', 'txn-refunded', { subject: sub, productId: 'uk.co.maybeitssoftware.intention.coach.credit1' }, store);
+    const result = refundTopUp('apple', 'txn-refunded', { subject: sub }, store);
+    expect(result.refunded).toBe(true);
+    expect(result.deductedMicros).toBe(CREDIT1);
     expect(alreadyCredited('apple', 'txn-refunded', store)).toBe(true);
     expect(getCreditRecord('apple', 'txn-refunded', store).refunded).toBe(true);
+  });
+
+  it('a refund for a never-credited purchase writes nothing, so a later verify still credits', async () => {
+    const d = deps();
+    // Refund arrives first (out of order, or hostile) — before any credit.
+    const result = refundTopUp('apple', 'txn-1', { subject: subjectFor('apple', 'acct-apple-1') }, d.store);
+    expect(result.refunded).toBe(false);
+    expect(result.noCreditRecord).toBe(true);
+    expect(alreadyCredited('apple', 'txn-1', d.store)).toBe(false);
+
+    // The legitimate purchase then verifies and must still credit in full.
+    const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+    expect(verified.status).toBe(200);
+    expect(verified.body.balanceMicros).toBe(CREDIT1);
   });
 });
 

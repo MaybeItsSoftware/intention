@@ -68,6 +68,24 @@ function productsUrl(productId, purchaseToken) {
 // purchase is creditable — a consumable has no renewal/grace concept.
 const CREDITABLE_PURCHASE_STATE = 0;
 
+// The creditability rules over the Play Developer API's purchase record.
+// Exported so the rules are testable without the network exchange around them.
+export function assertCreditablePlayPurchase(data) {
+  if (Number(data.purchaseState) !== CREDITABLE_PURCHASE_STATE) {
+    throw new VerificationError('that purchase was cancelled or is still pending');
+  }
+  // purchaseType is only present for non-standard purchases: 0 test (licence
+  // tester), 1 promo code, 2 rewarded. None of those moved real money, so
+  // none of them may mint real coaching credit unless explicitly allowed for
+  // a dev/staging deployment.
+  if (data.purchaseType !== undefined && !config.google.allowTestPurchases) {
+    throw new VerificationError('test and promo purchases are not creditable');
+  }
+  if (!data.obfuscatedExternalAccountId) {
+    throw new VerificationError('purchase has no linked account token');
+  }
+}
+
 /**
  * @returns {{ productId, creditId, purchaseToken, obfuscatedExternalAccountId }}
  */
@@ -98,12 +116,7 @@ export async function verifyGooglePurchase(receipt) {
   }
   const data = await res.json();
 
-  if (Number(data.purchaseState) !== CREDITABLE_PURCHASE_STATE) {
-    throw new VerificationError('that purchase was cancelled or is still pending');
-  }
-  if (!data.obfuscatedExternalAccountId) {
-    throw new VerificationError('purchase has no linked account token');
-  }
+  assertCreditablePlayPurchase(data);
 
   return {
     productId,

@@ -106,7 +106,11 @@ export const config = {
     clientEmail: process.env.GOOGLE_CLIENT_EMAIL || '',
     privateKey: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     // Optional secret for Google Pub/Sub webhook authorization
-    webhookSecret: process.env.INTENTION_WEBHOOK_SECRET || ''
+    webhookSecret: process.env.INTENTION_WEBHOOK_SECRET || '',
+    // Play purchases carrying a purchaseType (licence-tester, promo code,
+    // rewarded) moved no real money and are rejected unless a dev/staging
+    // deployment explicitly opts in. Logged loudly at boot.
+    allowTestPurchases: bool('INTENTION_ALLOW_TEST_PURCHASES')
   },
 
   // Development escape hatches. Both are ignored outside NODE_ENV=development.
@@ -166,5 +170,11 @@ export function assertBootConfig(log = console) {
   }
   if (config.allowUnverifiedReceipts) {
     log.warn('[intention] INTENTION_ALLOW_UNVERIFIED_RECEIPTS is on. Never use this outside local development.');
+  }
+  if (config.google.allowTestPurchases) {
+    log.warn('[intention] INTENTION_ALLOW_TEST_PURCHASES is on — Play test/promo purchases will mint real credit. Never use this in production.');
+  }
+  if (config.apple.environment === 'sandbox') {
+    log.warn('[intention] APPLE_ENVIRONMENT=sandbox — sandbox receipts will mint real credit. Never use this in production.');
   }
 }
