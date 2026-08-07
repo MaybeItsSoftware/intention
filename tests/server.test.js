@@ -26,14 +26,15 @@ process.env.INTENTION_WEBHOOK_SECRET = 'test-webhook-secret';
 const { handleRequest } = await import('../server/src/app.js');
 const { signToken, verifyToken, subjectFor } = await import('../server/src/tokens.js');
 const {
-  MemoryStore, FileStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited, refundTopUp, getCreditRecord
+  MemoryStore, FileStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited, refundTopUp, getCreditRecord,
+  getTokenVersion, bumpTokenVersion
 } = await import('../server/src/store.js');
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
 const { Reservations } = await import('../server/src/reservations.js');
 const { RateLimiter } = await import('../server/src/ratelimit.js');
 const { UpstreamError } = await import('../server/src/llm.js');
-const { creditMicrosForTopUp } = await import('../server/src/config.js');
+const { creditMicrosForTopUp, config } = await import('../server/src/config.js');
 
 const SECRET = 'test-secret-do-not-use';
 const WEBHOOK_SECRET = 'test-webhook-secret';
@@ -1017,5 +1018,77 @@ describe('LLM input cost caps', () => {
     expect(serialized).not.toContain('__proto__');
     expect(serialized).not.toContain('constructor');
     expect(seenTools[0].schema.properties.a.type).toBe('string');
+  });
+});
+
+// Refresh used to rebuild the token payload with no exp carried over, so
+// every refresh stamped a fresh full TTL: tokens were infinitely renewable
+// and unrevocable.
+describe('token lifetime and revocation', () => {
+  it('caps a refreshed token at the lineage absolute lifetime', async () => {
+    const d = deps();
+    const origIat = Date.now() - (config.tokenMaxLifetimeMs - 60_000); // lineage nearly over
+    const token = signToken({ sub: 's1', platform: 'apple', productId: 'p', origIat }, SECRET, 60_000);
+    const res = await post('/v1/entitlement/refresh', { token }, {}, d);
+    expect(res.status).toBe(200);
+    const claims = verifyToken(res.body.token, SECRET);
+    expect(claims.origIat).toBe(origIat);
+    expect(claims.exp).toBeLessThanOrEqual(origIat + config.tokenMaxLifetimeMs);
+    expect(claims.exp).toBeLessThan(Date.now() + config.tokenTtlMs); // NOT a fresh full TTL
+  });
+
+  it('a lineage past its absolute lifetime cannot refresh into a usable token', async () => {
+    const d = deps();
+    const origIat = Date.now() - config.tokenMaxLifetimeMs - 1000;
+    const token = signToken({ sub: 's1', platform: 'apple', productId: 'p', origIat }, SECRET, 60_000);
+    const res = await post('/v1/entitlement/refresh', { token }, {}, d);
+    // The response token is already expired, so the client's next call 401s
+    // and it falls back to re-verifying its stored receipt.
+    expect(() => verifyToken(res.body.token, SECRET)).toThrow(/expired/i);
+  });
+
+  it('bumping the token version revokes outstanding tokens at once', async () => {
+    const d = deps();
+    adjustBalance('s2', 1_000_000, d.store);
+    const token = signToken({ sub: 's2', tv: getTokenVersion('s2', d.store) }, SECRET, 60_000);
+    const before = await post('/v1/chat', { messages: [{ role: 'user', content: 'hi' }] },
+      { authorization: `Bearer ${token}` }, d);
+    expect(before.status).toBe(200);
+
+    bumpTokenVersion('s2', d.store);
+    const after = await post('/v1/chat', { messages: [{ role: 'user', content: 'hi' }] },
+      { authorization: `Bearer ${token}` }, d);
+    expect(after.status).toBe(401);
+  });
+
+  it('tokens issued before versioning existed still verify as version 0', async () => {
+    const d = deps();
+    adjustBalance('s3', 1_000_000, d.store);
+    const legacy = signToken({ sub: 's3' }, SECRET, 60_000); // no tv claim
+    const res = await post('/v1/chat', { messages: [{ role: 'user', content: 'hi' }] },
+      { authorization: `Bearer ${legacy}` }, d);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('health reflects store readiness', () => {
+  it('is ok when the store round-trips', async () => {
+    const res = await handleRequest({ method: 'GET', path: '/health' }, deps());
+    expect(res.status).toBe(200);
+  });
+
+  it('is 503 when the store cannot write (volume gone)', async () => {
+    const broken = { set() { throw new Error('EIO: disk gone'); }, get() { return null; }, delete() {}, increment() { return 1; } };
+    const res = await handleRequest({ method: 'GET', path: '/health' }, deps({ store: broken }));
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('store_unavailable');
+  });
+});
+
+describe('assertBootConfig', () => {
+  it('returns true on a healthy boot, not undefined', async () => {
+    const { assertBootConfig } = await import('../server/src/config.js');
+    const silent = { warn() {}, error() {} };
+    expect(assertBootConfig(silent)).toBe(true);
   });
 });

@@ -18,20 +18,30 @@ const CORS_HEADERS = {
   'access-control-max-age': '86400'
 };
 
+class PayloadTooLargeError extends Error {}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let overLimit = false;
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        reject(new Error('payload too large'));
-        req.destroy();
+        // Drain rather than destroy: killing the socket before the response
+        // is written shows the client ECONNRESET instead of the 413 JSON.
+        // Truly runaway uploads still get cut off.
+        overLimit = true;
+        chunks.length = 0;
+        if (size > MAX_BODY_BYTES * 8) req.destroy();
         return;
       }
-      chunks.push(chunk);
+      if (!overLimit) chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('end', () => {
+      if (overLimit) reject(new PayloadTooLargeError('payload too large'));
+      else resolve(Buffer.concat(chunks).toString('utf8'));
+    });
     req.on('error', reject);
   });
 }
@@ -107,7 +117,12 @@ export const server = http.createServer(async (req, res) => {
 
 // Only listen when run directly, so tests can import this module freely.
 if (process.argv[1] && process.argv[1].endsWith('index.js')) {
-  assertBootConfig();
+  // Fail fast rather than listen broken: with Railway's ON_FAILURE restart
+  // policy, exiting keeps the previous deployment serving instead of
+  // promoting one whose every /v1/chat would 401.
+  if (!assertBootConfig()) {
+    process.exit(1);
+  }
   const host = process.env.HOST || '0.0.0.0';
   server.listen(config.port, host, () => {
     console.log(`[intention] backend listening on ${host}:${config.port}`);

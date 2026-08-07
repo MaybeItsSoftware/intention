@@ -115,9 +115,21 @@ async function refreshEntitlement(entitlement, backendUrl) {
         });
     return normalizeEntitlement({ ...data, source: entitlement.source, receipt: entitlement.receipt });
   } catch (e) {
-    // An entitlement the backend explicitly rejected is dead; anything else
-    // (offline, 5xx) leaves the stored one alone.
+    // A rejected token is not necessarily a dead entitlement: tokens now age
+    // out at an absolute lifetime, and the stored receipt is the durable
+    // proof. Re-verify from it before declaring the entitlement dead.
     if (e.code === 'entitlement_invalid' || e.code === 'entitlement_expired') {
+      if (entitlement.receipt && entitlement.source && entitlement.source !== 'code') {
+        try {
+          const data = await postBackend(backendUrl, '/v1/entitlement/verify', {
+            platform: entitlement.source,
+            receipt: entitlement.receipt
+          });
+          return normalizeEntitlement({ ...data, source: entitlement.source, receipt: entitlement.receipt });
+        } catch (e2) {
+          // fall through: the receipt itself no longer verifies either
+        }
+      }
       return { ...entitlement, active: false, pendingVerification: false, lastError: e.code };
     }
     return { ...entitlement, pendingVerification: true, lastError: String(e.message || e) };

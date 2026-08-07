@@ -173,7 +173,22 @@ describe('refreshEntitlement', () => {
     expect(refreshed.pendingVerification).toBe(true);
   });
 
-  it('drops access when the backend explicitly rejects the entitlement', async () => {
+  // Tokens now age out at an absolute lifetime, so a rejected token with a
+  // stored receipt re-proves the purchase through verify instead of dying.
+  it('re-verifies from the stored receipt when the token is rejected', async () => {
+    const fetch = makeMockFetch((url) =>
+      url.endsWith('/refresh')
+        ? { status: 401, json: { code: 'entitlement_expired' } }
+        : { active: true, token: 'fresh-token', balanceGbp: 1 }
+    );
+    const { ctx } = loadBilling({ fetch });
+    const refreshed = await ctx.refreshEntitlement(stored);
+    expect(fetch.calls.map(c => c.url.split('/').pop())).toEqual(['refresh', 'verify']);
+    expect(refreshed.active).toBe(true);
+    expect(refreshed.token).toBe('fresh-token');
+  });
+
+  it('drops access when both the token and the receipt are rejected', async () => {
     const fetch = makeMockFetch({ status: 401, json: { code: 'entitlement_invalid' } });
     const { ctx } = loadBilling({ fetch });
     const refreshed = await ctx.refreshEntitlement(stored);

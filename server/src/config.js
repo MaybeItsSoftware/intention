@@ -26,6 +26,11 @@ export const config = {
   // nothing is lost by a long life. The only reason for any expiry at all is
   // bounding a leaked token's blast radius.
   tokenTtlMs: Number(process.env.INTENTION_TOKEN_TTL_MS || 180 * 24 * 60 * 60 * 1000),
+  // Absolute cap on a token lineage: refresh used to re-stamp a fresh full
+  // TTL every time, making tokens infinitely renewable and unrevocable. The
+  // original issue time is carried through refresh, and once this lifetime is
+  // up the client must re-verify from its stored receipt.
+  tokenMaxLifetimeMs: Number(process.env.INTENTION_TOKEN_MAX_LIFETIME_MS || 365 * 24 * 60 * 60 * 1000),
 
   // Path to the durable state file (balances, purchase-idempotency records).
   // Point it at a mounted volume in production; unset means in-memory only,
@@ -154,12 +159,15 @@ function parseTopUps() {
   });
 }
 
+// Returns true on a healthy boot, false when required configuration is
+// missing — callers exit on false, so the explicit `return true` matters (a
+// bare fall-through return would read as falsy and kill a healthy boot).
 export function assertBootConfig(log = console) {
   const problems = [];
   if (!config.tokenSecret) problems.push('INTENTION_TOKEN_SECRET is not set');
   if (!config.llm.apiKey) problems.push('INTENTION_LLM_API_KEY is not set');
   if (problems.length) {
-    (log.error || log.warn)(`[intention] CRITICAL WARNING: Missing required environment configuration:\n  - ${problems.join('\n  - ')}\n[intention] Server will listen for health checks, but auth/coaching calls require these variables.`);
+    (log.error || log.warn)(`[intention] FATAL: Missing required environment configuration:\n  - ${problems.join('\n  - ')}\n[intention] Refusing to start — every auth/coaching call would fail.`);
     return false;
   }
   if (!config.apple.issuerId || !config.apple.privateKey) {
@@ -177,4 +185,5 @@ export function assertBootConfig(log = console) {
   if (config.apple.environment === 'sandbox') {
     log.warn('[intention] APPLE_ENVIRONMENT=sandbox — sandbox receipts will mint real credit. Never use this in production.');
   }
+  return true;
 }

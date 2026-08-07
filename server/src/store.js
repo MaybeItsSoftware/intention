@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { readFileSync, writeSync, renameSync, openSync, fsyncSync, closeSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config, findTopUp, creditMicrosForTopUp } from './config.js';
@@ -283,7 +284,27 @@ export function redeemAccessCode(code, backing = store) {
   return claims;
 }
 
+// CSPRNG, not Math.random(): V8's PRNG state is recoverable from a few
+// observed outputs, so one legitimately minted code could leak the generator
+// and make every other live code predictable.
 function defaultRandom(max) {
-  return Math.floor(Math.random() * max);
+  return crypto.randomInt(max);
+}
+
+// ---- Token revocation -----------------------------------------------------
+//
+// A per-subject integer stamped into every issued token and checked on every
+// verify. Bumping it invalidates all of a subject's outstanding tokens at
+// once — constant storage, unlike a jti denylist. Absent record means
+// version 0, which is also what pre-versioning tokens carry.
+
+export function getTokenVersion(subject, backing = store) {
+  return Number(backing.get(`tv:${subject}`) || 0);
+}
+
+export function bumpTokenVersion(subject, backing = store) {
+  const next = getTokenVersion(subject, backing) + 1;
+  backing.set(`tv:${subject}`, next, null);
+  return next;
 }
 

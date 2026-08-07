@@ -4,7 +4,8 @@ import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, safeEqualString, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, alreadyCredited, markCredited,
-  getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode, store
+  getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode,
+  getTokenVersion, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
@@ -65,7 +66,17 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
   const limiter = deps.rateLimiter || rateLimiter;
 
   if (method === 'GET' && path === '/health') {
-    return json(200, { ok: true });
+    // Readiness, not liveness: a store round-trip (a real write, so a
+    // FileStore whose volume unmounted after boot fails here rather than at
+    // the next purchase). Boot-time config problems already stop the process.
+    try {
+      backing.set('health:probe', Date.now(), 60_000);
+      if (!(Number(backing.get('health:probe')) > 0)) throw new Error('probe read back empty');
+      return json(200, { ok: true });
+    } catch (e) {
+      console.error('[intention] health probe failed', e);
+      return json(503, { ok: false, code: 'store_unavailable' });
+    }
   }
   if (method !== 'POST') {
     return json(405, { error: 'Method not allowed', code: 'method_not_allowed' });
@@ -131,8 +142,8 @@ async function verifyEndpoint(body, deps, backing) {
 // balance — it never re-grants credit. Granting only ever happens once, at
 // verify time, guarded by the idempotency key in creditTopUp.
 function refreshEndpoint(body, backing) {
-  const claims = verifyToken(body?.token, config.tokenSecret);
-  return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing));
+  const claims = assertTokenCurrent(verifyToken(body?.token, config.tokenSecret), backing);
+  return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing, claims));
 }
 
 // Credits a top-up exactly once per store purchase (keyed by the
@@ -314,9 +325,23 @@ async function googleWebhookEndpoint(body, headers, deps, backing, query = {}) {
   return json(200, { ok: true, refund: result });
 }
 
-function entitlementResponse(subject, platform, productId, backing) {
+function entitlementResponse(subject, platform, productId, backing, priorClaims = null) {
   const balanceMicros = getBalanceMicros(subject, backing);
-  const payload = { sub: subject, platform, productId };
+  const now = Date.now();
+  // A refresh used to rebuild the payload from scratch, so every refresh
+  // stamped a fresh full TTL — tokens were infinitely renewable. The original
+  // issue time now rides along, and the lineage dies at the absolute
+  // lifetime; the client then re-verifies from its stored receipt.
+  const origIat = Number(priorClaims?.origIat) || now;
+  const exp = Math.min(now + config.tokenTtlMs, origIat + config.tokenMaxLifetimeMs);
+  const payload = {
+    sub: subject,
+    platform,
+    productId,
+    origIat,
+    tv: getTokenVersion(subject, backing),
+    exp
+  };
   return {
     active: balanceMicros > 0,
     productId: productId || '',
@@ -329,6 +354,16 @@ function entitlementResponse(subject, platform, productId, backing) {
   };
 }
 
+// Checked after every verifyToken: a token whose version is behind the
+// subject's current one has been revoked (bumpTokenVersion), whatever its exp
+// says. Missing tv means a pre-versioning token, which counts as version 0.
+function assertTokenCurrent(claims, backing) {
+  if (Number(claims.tv || 0) !== getTokenVersion(claims.sub, backing)) {
+    throw new TokenError('token has been revoked');
+  }
+  return claims;
+}
+
 function microsToGbp(micros) {
   return Math.round(micros / 10000) / 100;
 }
@@ -336,7 +371,7 @@ function microsToGbp(micros) {
 // A signed-in mobile app mints a short-lived code so the same credit balance
 // can unlock the browser extension, where there is no store to buy through.
 function codeEndpoint(headers, backing, limiter) {
-  const claims = verifyToken(bearer(headers), config.tokenSecret);
+  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
   if (!limiter.check('code', claims.sub, CODE_LIMIT.limit, CODE_LIMIT.windowMs)) {
     return rateLimited();
   }
@@ -363,7 +398,7 @@ function redeemEndpoint(body, backing, limiter, ip) {
 // ---- Coaching proxy -------------------------------------------------------
 
 async function chatEndpoint(headers, body, deps, backing, limiter) {
-  const claims = verifyToken(bearer(headers), config.tokenSecret);
+  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
   if (!limiter.check('chat', claims.sub, CHAT_LIMIT.limit, CHAT_LIMIT.windowMs)) {
     return rateLimited();
   }
