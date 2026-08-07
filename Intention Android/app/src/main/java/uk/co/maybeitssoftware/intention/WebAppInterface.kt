@@ -34,13 +34,13 @@ class WebAppInterface(
     @JavascriptInterface
     fun getStorage(keysJson: String, callbackId: String) {
         val result = BackgroundJsHelper.getSharedStorage(context, keysJson)
-        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(result)})")
+        runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(result)})")
     }
 
     @JavascriptInterface
     fun setStorage(itemsJson: String, callbackId: String) {
         BackgroundJsHelper.setSharedStorage(context, itemsJson)
-        runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{}')")
+        runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},'{}')")
     }
 
     @JavascriptInterface
@@ -50,7 +50,7 @@ class WebAppInterface(
             val action = json.optString("action")
             if (action == "closeCurrentTab") {
                 onClose?.invoke()
-                runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{\"ok\":true}')")
+                runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},'{\"ok\":true}')")
                 return
             }
             // The shared handler routes this through chrome.tabs/openOptionsPage,
@@ -58,13 +58,13 @@ class WebAppInterface(
             // hosts the same options page, instead of silently doing nothing.
             if (action == "openOptions") {
                 openOptions(json.optString("section").takeIf { it.isNotEmpty() })
-                runOnJs("window.AndroidCallbacks.invoke('$callbackId', '{\"ok\":true}')")
+                runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},'{\"ok\":true}')")
                 return
             }
         } catch (e: Exception) {}
 
         BackgroundJsHelper.sendMessage(messageJson) { response ->
-            runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(response ?: "")})")
+            runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(response ?: "")})")
         }
     }
 
@@ -111,7 +111,7 @@ class WebAppInterface(
     }
 
     private fun respond(callbackId: String, payload: JSONObject) {
-        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(payload.toString())})")
+        runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(payload.toString())})")
     }
 
     @JavascriptInterface
@@ -140,7 +140,7 @@ class WebAppInterface(
         for ((pkg, label, icon) in apps) {
             array.put(JSONObject().put("packageName", pkg).put("label", label).put("icon", icon))
         }
-        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(array.toString())})")
+        runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(array.toString())})")
     }
 
     private fun openOptions(section: String? = null) {
@@ -248,7 +248,7 @@ class WebAppInterface(
         } catch (e: Exception) {
             Log.e("WebAppInterface", "Error in getAppUsageStats: ", e)
         }
-        runOnJs("window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(result.toString())})")
+        runOnJs("window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(result.toString())})")
     }
 
     private fun runOnJs(script: String) {

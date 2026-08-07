@@ -39,13 +39,13 @@ object BackgroundJsHelper {
                 @JavascriptInterface
                 fun getStorage(keysJson: String, callbackId: String) {
                     val result = getSharedStorage(context, keysJson)
-                    runOnJs(wv, "window.AndroidCallbacks.invoke('$callbackId', ${JSONObject.quote(result)})")
+                    runOnJs(wv, "window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},${JSONObject.quote(result)})")
                 }
 
                 @JavascriptInterface
                 fun setStorage(itemsJson: String, callbackId: String) {
                     setSharedStorage(context, itemsJson)
-                    runOnJs(wv, "window.AndroidCallbacks.invoke('$callbackId', '{}')")
+                    runOnJs(wv, "window.AndroidCallbacks.invoke(${JSONObject.quote(callbackId)},'{}')")
                 }
 
                 @JavascriptInterface
