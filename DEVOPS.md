@@ -40,7 +40,7 @@ Add these secrets in your GitHub repository settings under **Settings → Secret
 *   `CHROME_CLIENT_SECRET`: Your Google Developer OAuth Client Secret.
 *   `CHROME_REFRESH_TOKEN`: The authorized OAuth Refresh Token.
 
-The storefront publishing triggers automatically on tag creation once secrets are configured.
+The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself) once secrets are configured.
 
 ---
 
@@ -60,7 +60,7 @@ Add these secrets to your GitHub repository:
 *   `AMO_JWT_ISSUER`: Your AMO JWT Issuer key.
 *   `AMO_JWT_SECRET`: Your AMO JWT Secret token.
 
-The storefront publishing triggers automatically on tag creation once secrets are configured.
+The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself) once secrets are configured.
 
 ---
 
@@ -161,7 +161,7 @@ graph TD
     A[Git Push / PR / Merge to main] --> B{Branch / Trigger}
     B -- PR or Push to main --> C[CI Workflow]
     B -- Push/Merge to main --> D[Automated Release Workflow]
-    D -- Pushes Tag v* --> E[Store Publish Workflows]
+    D -- workflow_run completed --> E[Store Publish Workflows]
     
     subgraph CI Workflow
         C --> C1[npm ci]
@@ -190,7 +190,7 @@ graph TD
 
 ## 🔒 Critical Rules for DevOps / Engineers
 
-1. **Do Not Modify Shared JS/CSS Directly:**
-   All files in the `SHARED_FILES` list must remain byte-identical across the platforms (Chrome, Firefox, Safari wrapper). If they drift, CI/CD validation will fail. Apply modifications to `Intention Chrome/` first, then run `./build.sh` to compile/sync to Firefox, Apple, and Android.
+1. **Never Edit Platform Copies of Shared Files:**
+   `shared/` is the single source of truth; its files must remain byte-identical across the platform directories (Chrome, Firefox, Safari wrapper, Android assets), and CI/CD validation fails if they drift. Edit `shared/`, then run `npm run sync` (or `./build.sh`, which includes it) to propagate to all four platforms.
 2. **Never Commit Secrets:**
    Ensure `env.txt` and developer configuration files are kept in `.gitignore`. Store all release credentials and signing certificates inside secure GitHub Secrets.

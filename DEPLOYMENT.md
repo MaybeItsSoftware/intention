@@ -25,7 +25,7 @@ Do these once, before the first submission of each platform.
    - Updates files using `scripts/bump-version.sh`.
    - Compiles and packages Chrome/Firefox extensions.
    - Tags the commit and creates a GitHub Release with build zips and `CHANGELOG.md`.
-4. **Publishing to Stores**: The tag push triggers the store publishing workflows:
+4. **Publishing to Stores**: Successful completion of the `Automated Release` workflow triggers the store publishing workflows via `workflow_run` (pushing a tag by hand does **not** trigger them):
    - **`publish-chrome.yml`** — uploads a draft build to the Chrome Web Store, *if* the secrets below are configured. This only primes the new version in the dashboard; it does **not** submit it for review — do that manually in the Developer Dashboard when ready.
    - **`publish-firefox.yml`** — submits to AMO, *if* configured.
    - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured.
@@ -66,7 +66,7 @@ Unlike Chrome, `web-ext sign --channel=listed` can handle the *first* submission
 
 **One-time setup:** create the app record manually in [App Store Connect](https://appstoreconnect.apple.com) (My Apps → +) — Apple requires this before any API/CLI upload can target it, same as Chrome/Play. Already done for Intention (app ID `6791299221`, team `6NQNU5YSC2`). If forking under a different bundle identifier, also set your own Team under **Signing & Capabilities** for all targets in `Intention Apple/Intention Safari.xcodeproj` — the bundle identifiers are set to `uk.co.maybeitssoftware.intention...` (Xcode → target → General → Bundle Identifier). `scripts/bump-version.sh` keeps `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in sync on every release; it doesn't touch bundle identifiers or signing.
 
-**Every release after that** is CLI-automated via Fastlane + [match](https://docs.fastlane.tools/actions/match/) — no Xcode GUI needed for signing or upload — and runs automatically via `publish-apple.yml` on every `v*` tag push, same as Chrome/Firefox/Android. To run it locally instead:
+**Every release after that** is CLI-automated via Fastlane + [match](https://docs.fastlane.tools/actions/match/) — no Xcode GUI needed for signing or upload — and runs automatically via `publish-apple.yml` when the `Automated Release` workflow completes, same as Chrome/Firefox/Android. To run it locally instead:
 
 ```bash
 cd "Intention Apple"
@@ -195,7 +195,7 @@ Refund webhooks are implemented on the backend to automatically claw back coachi
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
 | `auto-release.yml` | push to `main` | Calculates next version, runs tests, bumps versions, zips Chrome + Firefox, tags the commit, and creates a GitHub Release |
-| `publish-chrome.yml` | `v*` tag push (or manual) | Uploads a draft to the Chrome Web Store (not submitted for review), if secrets are configured; skips gracefully otherwise |
-| `publish-firefox.yml` | `v*` tag push (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
-| `publish-android.yml` | `v*` tag push (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |
-| `publish-apple.yml` | `v*` tag push (or manual) | Builds + uploads signed iOS/macOS binaries to App Store Connect via Fastlane + match (not submitted for review), if secrets are configured; skips gracefully otherwise |
+| `publish-chrome.yml` | `Automated Release` completion (or manual) | Uploads a draft to the Chrome Web Store (not submitted for review), if secrets are configured; skips gracefully otherwise |
+| `publish-firefox.yml` | `Automated Release` completion (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
+| `publish-android.yml` | `Automated Release` completion (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |
+| `publish-apple.yml` | `Automated Release` completion (or manual) | Builds + uploads signed iOS/macOS binaries to App Store Connect via Fastlane + match (not submitted for review). **Fails loudly** if secrets are missing on a release-triggered run (lenient only for manual `workflow_dispatch`), so a dead release channel cannot look healthy |

@@ -50,6 +50,14 @@ jobs:
               exit 1
             fi
           fi
+          GRADLE="Intention Android/app/build.gradle.kts"
+          if [[ -f "$GRADLE" ]]; then
+            ANDROID_VERSION=$(grep -oE 'versionName = "[0-9.]+"' "$GRADLE" | sed -E 's/versionName = "([0-9.]+)"/\1/')
+            if [[ "$ANDROID_VERSION" != "$CHROME_VERSION" ]]; then
+              echo "::error::Android versionName ($ANDROID_VERSION) doesn't match manifest version ($CHROME_VERSION)"
+              exit 1
+            fi
+          fi
           echo "✓ Versions in sync"
 
       - name: Check JS syntax
@@ -58,9 +66,6 @@ jobs:
           find "Intention Chrome/" -name '*.js' -exec node --check {} +
           echo "Checking Firefox JS files..."
           find "Intention Firefox/" -name '*.js' -exec node --check {} +
-
-      - name: Install deploy tooling
-        run: npm install
 
       - name: Lint Firefox extension (AMO validation)
         run: npx web-ext lint --source-dir="Intention Firefox"

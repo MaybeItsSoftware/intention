@@ -87,5 +87,6 @@ fi
 echo ""
 echo "Done. Next steps:"
 echo "  ./build.sh --all   # verify builds + cross-platform sync"
-echo "  git add -A && git commit -m \"Bump version to $VERSION\""
-echo "  git tag v$VERSION && git push origin v$VERSION"
+echo "  git add -A && git commit -m \"chore: bump version to $VERSION\""
+echo "  git push           # Automated Release tags and (via workflow_run) publishes;"
+echo "                     # pushing a tag by hand does NOT trigger the publish workflows"

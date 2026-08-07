@@ -28,7 +28,6 @@ node_modules/
 *.sw?
 
 # Xcode / OS X (Just in case the wrapper project is ever moved into this folder)
-build/
 *.pbxuser
 !default.pbxuser
 *.mode1v3

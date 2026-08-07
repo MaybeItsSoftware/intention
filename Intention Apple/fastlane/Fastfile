@@ -16,7 +16,26 @@ require "dotenv"
 Dotenv.load(File.join(ROOT, "..", ".env"))
 
 PROJECT = File.join(ROOT, "Intention Safari.xcodeproj")
+PBXPROJ = File.join(PROJECT, "project.pbxproj")
 TEAM_ID = ENV["TEAM_ID"] || "6NQNU5YSC2"
+
+# apply_manual_signing rewrites the committed project.pbxproj (release lanes
+# set "Apple Distribution", dev lanes "Apple Development"), and that churn
+# used to be left in the working tree after every local run — ready to be
+# accidentally committed. Snapshot before any lane and restore afterwards,
+# success or failure; every lane re-applies the signing it needs at build
+# time, so the committed state stays canonical.
+before_all do
+  @pbxproj_snapshot = File.read(PBXPROJ)
+end
+
+after_all do
+  File.write(PBXPROJ, @pbxproj_snapshot) if @pbxproj_snapshot
+end
+
+error do
+  File.write(PBXPROJ, @pbxproj_snapshot) if @pbxproj_snapshot
+end
 
 # target name -> bundle identifier, split by platform since macOS only
 # embeds one extension while iOS embeds five.
