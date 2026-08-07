@@ -1,14 +1,24 @@
-import { findTopUp, creditMicrosForTopUp } from './config.js';
+import { readFileSync, writeSync, renameSync, openSync, fsyncSync, closeSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { config, findTopUp, creditMicrosForTopUp } from './config.js';
 
 // Small pieces of server state: the coaching-credit balance ledger, the
 // idempotency record that stops a top-up being credited twice, and the
 // one-time codes that link a browser to credit bought in a mobile app.
 //
-// All in-memory by design — a single process is enough to run this, and none
-// of it is worth a database on its own. Swap MemoryStore for a Redis/KV
-// implementation of the same four methods when running more than one instance;
-// nothing else has to change (the balance and idempotency keys move with it
-// for free — they're just get/set).
+// Two backings share one four-method interface. MemoryStore (the default —
+// tests and local dev stay hermetic, no file appears) keeps everything in a
+// Map and loses it on restart. FileStore layers synchronous persistence on
+// top, selected by INTENTION_STATE_FILE, so a redeploy no longer wipes paid
+// balances and re-arms every store receipt for re-crediting.
+//
+// THE GOVERNING CONSTRAINT: all four methods are synchronous, and callers
+// depend on that — chatEndpoint's balance reservation and creditTopUp's
+// check-then-set are only race-free because there is no await between the
+// check and the write (see reservations.js). Any replacement backing that
+// forces callers to become async silently reopens those races. If this ever
+// outgrows one process, the swap target is a synchronous embedded store
+// (node:sqlite's DatabaseSync), not Redis.
 
 export class MemoryStore {
   constructor() {
@@ -43,7 +53,86 @@ export class MemoryStore {
   }
 }
 
-export const store = new MemoryStore();
+// Durable variant: the in-memory Map stays the authoritative synchronous
+// read/write path (preserving the constraint above), and every mutation is
+// flushed to disk before the call returns — write temp, fsync, rename, so the
+// file on disk is always either the old state or the new one, never partial.
+//
+// Synchronous-on-every-mutation is affordable because the durable store only
+// ever sees rare writes: purchases, refunds, one deduction per chat message,
+// the occasional access code. High-churn counters (rate limiting) must go in
+// a separate always-in-memory MemoryStore, never here — losing them on
+// restart is fine, and keeping them out is what keeps this fsync-per-write.
+export class FileStore extends MemoryStore {
+  constructor(filePath) {
+    super();
+    this.filePath = filePath;
+    mkdirSync(dirname(filePath), { recursive: true });
+    this.load();
+  }
+
+  load() {
+    let raw;
+    try {
+      raw = readFileSync(this.filePath, 'utf8');
+    } catch (e) {
+      if (e.code === 'ENOENT') return; // first boot on a fresh volume
+      throw e;
+    }
+    // A parse failure throws and stops boot on purpose: starting empty would
+    // silently zero balances and re-arm every receipt — the exact failure
+    // this store exists to prevent. The atomic write below means the file is
+    // never half-written by us, so corruption here needs an operator anyway.
+    const entries = JSON.parse(raw);
+    const now = Date.now();
+    for (const { key, value, expiresAt } of entries) {
+      if (expiresAt && expiresAt < now) continue;
+      this.map.set(key, { value, expiresAt: expiresAt || 0 });
+    }
+  }
+
+  persist() {
+    const now = Date.now();
+    const entries = [];
+    for (const [key, entry] of this.map) {
+      if (entry.expiresAt && entry.expiresAt < now) continue;
+      entries.push({ key, value: entry.value, expiresAt: entry.expiresAt || 0 });
+    }
+    const tmp = `${this.filePath}.tmp`;
+    const fd = openSync(tmp, 'w');
+    try {
+      writeSync(fd, JSON.stringify(entries));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, this.filePath);
+    // fsync the directory too, or the rename itself can be lost on power cut.
+    try {
+      const dirFd = openSync(dirname(this.filePath), 'r');
+      fsyncSync(dirFd);
+      closeSync(dirFd);
+    } catch (e) {} // not supported on some platforms; rename already landed
+  }
+
+  set(key, value, ttlMs) {
+    super.set(key, value, ttlMs);
+    this.persist();
+  }
+
+  delete(key) {
+    super.delete(key);
+    this.persist();
+  }
+
+  increment(key, ttlMs) {
+    const current = super.increment(key, ttlMs);
+    this.persist();
+    return current;
+  }
+}
+
+export const store = config.stateFile ? new FileStore(config.stateFile) : new MemoryStore();
 
 // ---- Coaching-credit balance ----------------------------------------------
 //

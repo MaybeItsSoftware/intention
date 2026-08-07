@@ -91,15 +91,29 @@ It is ignored unless `NODE_ENV=development`, and it is logged loudly at boot.
 ## State
 
 The credit balance ledger, purchase-idempotency records, and browser-linking
-codes all live in an in-memory `MemoryStore` (`src/store.js`). One process is
-enough to run this. To run several, implement the same
-`get`/`set`/`delete`/`increment` against Redis or a KV store and pass it in —
-nothing else changes (the balance and idempotency keys move with it for free).
+codes live in `src/store.js` behind a four-method
+`get`/`set`/`delete`/`increment` interface with two backings:
 
-A server restart between crediting a purchase and a client's next retry can in
-principle lose that credit record along with the balance itself — a known,
-accepted gap while the store stays in-memory; it goes away once the store
-above is backed by something persistent.
+- **`MemoryStore`** (default, no configuration): everything in a Map, lost on
+  restart. Right for tests and local development — no file ever appears.
+- **`FileStore`** (set `INTENTION_STATE_FILE=/data/intention-state.json`, on a
+  mounted volume in production): the same Map as the live read/write path,
+  with every mutation flushed to disk synchronously (write-temp, fsync,
+  rename) before the call returns. A restart reloads it, so paid balances
+  survive redeploys and a spent store receipt stays spent.
+
+**Do not swap in an async backing (Redis, a network KV).** Every store method
+is deliberately synchronous and callers rely on that: the balance reservation
+in `/v1/chat` and the purchase-idempotency check are race-free only because
+there is no `await` between check and write. An async store would make those
+callers `async` and silently reopen the double-spend race the reservation
+exists to close. If this ever outgrows one process, the swap target is a
+synchronous embedded store (`node:sqlite`'s `DatabaseSync`), not Redis.
+
+Rate-limit counters are deliberately kept out of the durable store — they are
+high-churn and fine to lose on restart, and keeping them in memory is what
+makes fsync-per-mutation affordable for the rare durable writes (purchases,
+refunds, one deduction per chat message).
 
 ## Tests
 

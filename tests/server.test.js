@@ -11,6 +11,9 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import crypto from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.INTENTION_TOKEN_SECRET = 'test-secret-do-not-use';
 process.env.INTENTION_LLM_API_KEY = 'test-llm-key';
@@ -23,7 +26,7 @@ process.env.INTENTION_WEBHOOK_SECRET = 'test-webhook-secret';
 const { handleRequest } = await import('../server/src/app.js');
 const { signToken, verifyToken, subjectFor } = await import('../server/src/tokens.js');
 const {
-  MemoryStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited, refundTopUp, getCreditRecord
+  MemoryStore, FileStore, adjustBalance, getBalanceMicros, alreadyCredited, markCredited, refundTopUp, getCreditRecord
 } = await import('../server/src/store.js');
 const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = await import('../server/src/apple.js');
 const { verifyGooglePurchase } = await import('../server/src/google.js');
@@ -711,5 +714,53 @@ describe('the Google refund webhook authenticates', () => {
     const res = await post('/v1/webhooks/google',
       { ...notification, token: WEBHOOK_SECRET }, {}, deps());
     expect(res.status).toBe(401);
+  });
+});
+
+// The store used to be memory-only, so a redeploy wiped paid balances and —
+// worse — forgot which receipts were already credited, letting the same Apple
+// JWS be re-POSTed for fresh credit after every restart.
+describe('FileStore durability', () => {
+  const stateFile = () => join(mkdtempSync(join(tmpdir(), 'intention-store-')), 'state.json');
+
+  it('does not re-credit an already-spent receipt after a restart', async () => {
+    const file = stateFile();
+    const first = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws' }, {}, deps({ store: new FileStore(file) }));
+    expect(first.status).toBe(200);
+    expect(first.body.balanceMicros).toBe(CREDIT1);
+
+    // A second store over the same file is a process restart.
+    const again = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws' }, {}, deps({ store: new FileStore(file) }));
+    expect(again.status).toBe(200);
+    expect(again.body.balanceMicros).toBe(CREDIT1); // unchanged, not doubled
+  });
+
+  it('keeps balances, including spend, across a restart', () => {
+    const file = stateFile();
+    const before = new FileStore(file);
+    adjustBalance('sub-1', 500_000, before);
+    adjustBalance('sub-1', -100_000, before);
+
+    const after = new FileStore(file);
+    expect(getBalanceMicros('sub-1', after)).toBe(400_000);
+  });
+
+  it('drops expired entries on reload instead of resurrecting them', () => {
+    const file = stateFile();
+    const before = new FileStore(file);
+    before.set('code:INT-EXPIRED', { sub: 'x' }, -1);
+    before.set('keep', 'me', null);
+
+    const after = new FileStore(file);
+    expect(after.get('code:INT-EXPIRED')).toBe(null);
+    expect(after.get('keep')).toBe('me');
+  });
+
+  it('refuses to boot from a corrupt state file rather than starting empty', () => {
+    const file = stateFile();
+    writeFileSync(file, '{definitely not json');
+    expect(() => new FileStore(file)).toThrow();
   });
 });

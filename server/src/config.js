@@ -27,6 +27,11 @@ export const config = {
   // bounding a leaked token's blast radius.
   tokenTtlMs: Number(process.env.INTENTION_TOKEN_TTL_MS || 180 * 24 * 60 * 60 * 1000),
 
+  // Path to the durable state file (balances, purchase-idempotency records).
+  // Point it at a mounted volume in production; unset means in-memory only,
+  // which keeps tests and local dev hermetic but loses paid credit on restart.
+  stateFile: process.env.INTENTION_STATE_FILE || '',
+
   // The LLM the hosted coach runs on, under our key.
   llm: {
     provider: process.env.INTENTION_LLM_PROVIDER || 'anthropic',

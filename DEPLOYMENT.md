@@ -114,6 +114,11 @@ Intention was rejected under **Guideline 3.1.1** for unlocking its core feature 
 
 - `INTENTION_TOKEN_SECRET` — `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
 - `INTENTION_LLM_API_KEY` — Intention's own provider key
+- `INTENTION_STATE_FILE` — path to the durable state file holding balances and
+  purchase-idempotency records, e.g. `/data/intention-state.json` on a mounted
+  volume (on Railway: attach a Volume to the service and point this at it).
+  Without it the server runs in-memory and a restart wipes paid credit and
+  re-arms every store receipt for re-crediting.
 - the Apple and Google credentials in the tables below
 
 The three top-up tiers (£1/£2/£5), the per-model LLM pricing table, and the USD→GBP rate/margin multiplier all live in `server/src/config.js` — the defaults there match the product IDs set up below and are fine to leave as-is; override via `INTENTION_TOPUPS`/`INTENTION_USD_TO_GBP_RATE`/`INTENTION_MARGIN_MULTIPLIER` only if the product IDs or pricing actually need to differ from the defaults.
