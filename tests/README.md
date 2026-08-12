@@ -120,6 +120,34 @@ To regenerate the wrapper from the latest Chrome sources:
 xcrun safari-web-extension-converter "./Intention Chrome" --project-location . --app-name "Intention Safari"
 ```
 
+## Smoke test (a real browser, a real block)
+
+```bash
+npm run test:smoke          # headless
+npm run test:smoke:headed   # watch it happen, and print the real system prompt
+```
+
+`tests/smoke/gate.smoke.mjs` loads the actual `Intention Chrome` directory as
+an unpacked extension in Playwright's Chromium, configures it through the
+extension's own `saveSettings` message, and navigates to a genuinely blocked
+site. Everything the vitest suite cannot answer lives here: whether the
+redirect rule is really registered, whether the gate actually replaces the
+page, and — since the blocked page never loads on that path — whether the
+background can still tell the coach *which* page it was.
+
+The only thing faked is the LLM: the extension's `backendUrl` is pointed at a
+local stub, which answers in the hosted route's shape and captures the exact
+system prompt for assertions. No provider is called and no credit is spent.
+
+`--print-prompt` dumps that captured prompt. It is the only way to see what the
+coach is actually sent, and worth reading after any change to `prompts.js` —
+two defects (a usage line reporting the cap where it claimed to report minutes,
+and an empty `"Earlier today you came here for ……"`) were found that way and by
+no test.
+
+Not part of `npm test`: it needs a browser and network access. Run it before
+shipping prompt or gating changes.
+
 ## CI
 
 `.github/workflows/ci.yml` runs `npm ci && npm test` before the JSON/JS/sync

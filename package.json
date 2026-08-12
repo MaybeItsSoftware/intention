@@ -8,6 +8,8 @@
     "start": "node server/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:smoke": "node tests/smoke/gate.smoke.mjs",
+    "test:smoke:headed": "node tests/smoke/gate.smoke.mjs --headed --print-prompt",
     "sync": "scripts/sync.sh",
     "sync:check": "scripts/sync.sh --check",
     "dev:firefox": "web-ext run --source-dir \"Intention Firefox\"",

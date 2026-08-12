@@ -130,10 +130,101 @@ describe('tracking.js parity across variants', () => {
     for (const v of VARIANT_KEYS) {
       const { ctx } = loadTracking({ variant: v });
       await ctx.recordGrant('x.com', 10, 'focus task');
-      await ctx.recordSessionMinutes('x.com', 12);
+      await ctx.recordSessionMinutes('x.com', 12, 'closed_early');
       results.push(await ctx.getStatsForDomain('x.com'));
     }
-    expect(results[1]).toEqual(results[0]);
-    expect(results[2]).toEqual(results[0]);
+    // Each variant records its own grant a moment after the last, so the
+    // wall-clock stamps on today's sessions differ by a millisecond or two.
+    // That is the loop, not a parity difference — normalise it away and
+    // assert the stamps merely exist.
+    const normalise = (stats) => ({
+      ...stats,
+      sessionsToday: stats.sessionsToday.map(s => ({ ...s, grantedAt: typeof s.grantedAt }))
+    });
+    expect(normalise(results[1])).toEqual(normalise(results[0]));
+    expect(normalise(results[2])).toEqual(normalise(results[0]));
+    expect(results[0].sessionsToday[0]).toMatchObject({
+      reason: 'focus task', grantedMinutes: 10, usedMinutes: 12, outcome: 'closed_early'
+    });
+  });
+});
+
+// content.css is ALSO embedded in content.js as the OVERLAY_CSS template
+// string, because the overlay has to style itself on pages whose CSP or
+// stylesheet timing can't be relied on. Two copies of the same rules, with
+// nothing keeping them honest: scripts/sync.sh copies whole files between
+// platforms, but it cannot see a rule edited in one copy and not the other.
+//
+// The overlay is deliberately a superset (it carries a few rules the injected
+// stylesheet has no need for), so the contract is one-way: everything in
+// content.css must appear in OVERLAY_CSS, saying the same thing.
+describe('the overlay CSS copy does not drift from content.css', () => {
+  // Splits a stylesheet into selector -> declarations, flattening one level of
+  // at-rule nesting (@keyframes is the only one either copy uses).
+  function parseRules(css) {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const rules = new Map();
+    const atRule = /(@[\w-]+[^{]*)\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/g;
+    let remainder = stripped;
+    let match;
+    while ((match = atRule.exec(stripped)) !== null) {
+      const prefix = match[1].trim().replace(/\s+/g, ' ');
+      for (const [selector, body] of parseRules(match[2])) {
+        rules.set(`${prefix} { ${selector}`, body);
+      }
+      remainder = remainder.replace(match[0], '');
+    }
+    const flat = /([^{}]+)\{([^{}]*)\}/g;
+    while ((match = flat.exec(remainder)) !== null) {
+      const selector = match[1].trim().replace(/\s+/g, ' ');
+      const body = match[2]
+        .split(';')
+        .map(d => d.trim().replace(/\s+/g, ' '))
+        .filter(Boolean)
+        .sort()
+        .join('; ');
+      if (selector) rules.set(selector, body);
+    }
+    return rules;
+  }
+
+  const contentCss = parseRules(readFileSync(join(VARIANTS.chrome, 'content.css'), 'utf8'));
+  const overlayCss = parseRules(
+    /const OVERLAY_CSS = `([\s\S]*?)`;/.exec(
+      readFileSync(join(VARIANTS.chrome, 'content.js'), 'utf8')
+    )[1]
+  );
+
+  it('parses both copies (guards the test itself against a rewrite)', () => {
+    expect(contentCss.size).toBeGreaterThan(20);
+    expect(overlayCss.size).toBeGreaterThanOrEqual(contentCss.size);
+    // Nested at-rules survive the flattening rather than being dropped, which
+    // would quietly exempt every rule inside them.
+    expect([...contentCss.keys()].some(k => k.startsWith('@keyframes'))).toBe(true);
+  });
+
+  // A drift check that passes on identical files proves nothing unless it can
+  // fail. Both real failure modes, against synthetic input.
+  it('would actually catch drift', () => {
+    const base = '.int-btn { color: red; padding: 2px }\n@keyframes k { to { opacity: 1 } }';
+    const edited = parseRules('.int-btn { color: blue; padding: 2px }\n@keyframes k { to { opacity: 1 } }');
+    const dropped = parseRules('@keyframes k { to { opacity: 1 } }');
+    const original = parseRules(base);
+
+    expect(edited.get('.int-btn')).not.toBe(original.get('.int-btn'));
+    expect(dropped.has('.int-btn')).toBe(false);
+    expect(original.get('@keyframes k { to')).toBe('opacity: 1');
+  });
+
+  it('has every content.css rule in OVERLAY_CSS', () => {
+    const missing = [...contentCss.keys()].filter(selector => !overlayCss.has(selector));
+    expect(missing).toEqual([]);
+  });
+
+  it('gives those rules the same declarations in both copies', () => {
+    const diverged = [...contentCss.entries()]
+      .filter(([selector, body]) => overlayCss.has(selector) && overlayCss.get(selector) !== body)
+      .map(([selector, body]) => `${selector}\n  content.css: ${body}\n  OVERLAY_CSS: ${overlayCss.get(selector)}`);
+    expect(diverged).toEqual([]);
   });
 });
