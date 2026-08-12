@@ -33,6 +33,8 @@ function makeElement(tag = 'div') {
     remove() {},
     addEventListener() {},
     removeEventListener() {},
+    _attrs: {},
+    getAttribute(name) { return node._attrs[name] ?? null; },
     querySelector: () => makeElement(),
     contains: () => true,
     focus() {},
@@ -42,7 +44,7 @@ function makeElement(tag = 'div') {
   return node;
 }
 
-function makeDom(href = 'https://www.instagram.com/explore/') {
+function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta = {} } = {}) {
   const url = new URL(href);
   const created = [];
   const byId = {};
@@ -51,7 +53,26 @@ function makeDom(href = 'https://www.instagram.com/explore/') {
   const document = {
     documentElement,
     body,
+    title,
     visibilityState: 'visible',
+    // Only enough of a selector engine for the page-context extractor: meta
+    // tags answer from `meta`, everything else is an empty node. Nodes reached
+    // through the body answer as missing once the body has been emptied, which
+    // is the whole point — extraction after the gate wipes the page sees
+    // nothing, so it has to happen before.
+    querySelector(selector) {
+      const metaMatch = /meta\[(?:property|name)="([^"]+)"\]/.exec(selector);
+      if (metaMatch) {
+        if (!(metaMatch[1] in meta)) return null;
+        const node = makeElement('meta');
+        node._attrs.content = meta[metaMatch[1]];
+        return node;
+      }
+      // ensureBodyAndStop() sets body.innerHTML = "", which is exactly when
+      // every body-derived field stops being readable.
+      if (body.innerHTML === '') return null;
+      return makeElement();
+    },
     createElement(tag) {
       const el = makeElement(tag);
       created.push(el);
@@ -72,7 +93,13 @@ function makeDom(href = 'https://www.instagram.com/explore/') {
     removeEventListener() {}
   };
   const window = {
-    location: { href, hostname: url.hostname, reload() {} },
+    location: {
+      href,
+      hostname: url.hostname,
+      pathname: url.pathname,
+      search: url.search,
+      reload() {}
+    },
     stopped: false,
     stop() { window.stopped = true; },
     close() {},
@@ -83,10 +110,12 @@ function makeDom(href = 'https://www.instagram.com/explore/') {
 }
 
 // Load content.js the way the browser does: as a plain script over a DOM.
-function loadContent({ storage = {}, sendMessage } = {}) {
+// `withPageContext` also loads page_context.js first, as the manifest does —
+// content.js only extracts page context when that file is present.
+function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageContext = false } = {}) {
   const chrome = makeMockChrome(storage);
   chrome.runtime.sendMessage = sendMessage || (() => {});
-  const dom = makeDom();
+  const dom = domOptions ? makeDom(domOptions.href, domOptions) : makeDom();
   const observers = [];
   const sandbox = {
     chrome,
@@ -113,12 +142,20 @@ function loadContent({ storage = {}, sendMessage } = {}) {
     setTimeout,
     clearTimeout,
     setInterval,
-    clearInterval
+    clearInterval,
+    URL,
+    AbortController,
+    fetch: async () => { throw new Error('offline'); }
   };
   sandbox.globalThis = sandbox;
+  const files = withPageContext ? ['page_context.js', 'content.js'] : ['content.js'];
+  const source = files
+    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
+    .join('\n;\n');
   const path = join(VARIANTS.chrome, 'content.js');
-  vm.runInContext(readFileSync(path, 'utf8'), vm.createContext(sandbox), { filename: path });
-  return { ...dom, chrome, observers };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(source, context, { filename: path });
+  return { ...dom, chrome, observers, context };
 }
 
 // Whether the page was stopped and replaced — i.e. the user was gated.
@@ -270,5 +307,72 @@ describe('the check-in overlay blocks the page', () => {
 
     showCheckin(dom);
     expect(badgeObserver.observing).toBe(false);
+  });
+});
+
+// The gate empties the document before it opens the chat, so a page context
+// extracted at send time — which is what the chat used to do — is extracted
+// from a blank page. Everything the coach could have said about the video,
+// thread or post the user was actually opening was lost that way.
+describe('page context is captured before the page is wiped', () => {
+  const REEL = {
+    href: 'https://www.instagram.com/reel/Cabc123/',
+    title: 'Sourdough starter in 30 seconds • Instagram',
+    meta: { 'og:title': 'Sourdough starter in 30 seconds' }
+  };
+
+  it('sends what the page said about itself along with the block check', async () => {
+    let sent = null;
+    loadContent({
+      withPageContext: true,
+      dom: REEL,
+      sendMessage: (message, cb) => {
+        if (message.action === 'checkPageMatch') sent = message;
+        cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null });
+      }
+    });
+    await vi.waitFor(() => expect(sent).not.toBeNull());
+    expect(sent.pageContext.contentType).toBe('Instagram Reel');
+    expect(sent.pageContext.threadTitle).toBe('Sourdough starter in 30 seconds');
+  });
+
+  it('still knows what the page was after the gate has emptied it', async () => {
+    const dom = loadContent({
+      withPageContext: true,
+      dom: REEL,
+      sendMessage: (message, cb) => cb({
+        setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com',
+        accessRoute: 'hosted', session: null
+      })
+    });
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+
+    // The document is now empty — this is precisely the state the chat's own
+    // extraction used to run against.
+    expect(dom.document.querySelector('h1')).toBeNull();
+    const captured = dom.context.capturePageContext();
+    expect(captured.threadTitle).toBe('Sourdough starter in 30 seconds');
+    expect(captured.contentType).toBe('Instagram Reel');
+  });
+
+  it('drops what it captured if the tab has moved to a different page', async () => {
+    const dom = loadContent({
+      withPageContext: true,
+      dom: REEL,
+      sendMessage: (message, cb) => cb({ setupComplete: true, isBlocked: false })
+    });
+    await vi.waitFor(() => expect(dom.context.capturePageContext()).not.toBeNull());
+
+    dom.window.location.href = 'https://www.instagram.com/reel/Zxyz789/';
+    dom.window.location.pathname = '/reel/Zxyz789/';
+    const captured = dom.context.capturePageContext();
+
+    // Nothing from the previous reel may survive into the new one's context:
+    // describing the wrong video is worse than describing none. (A real page
+    // would serve its own meta tags here; the stub reuses one set, so the
+    // address is what distinguishes them.)
+    expect(captured.url).toContain('Zxyz789');
+    expect(captured.url).not.toContain('Cabc123');
+    expect(captured.title).not.toContain('Cabc123');
   });
 });

@@ -18,6 +18,15 @@ const tab = (id, host = 'instagram.com') => ({ tab: { id }, url: `https://${host
 const EXT_PAGE = { url: 'chrome-extension://test/coaching.html' };
 const NATIVE = {};
 
+// Transcripts are keyed per (site, day) — deliberately NOT per tab like
+// sessions and alarms, so the coach remembers a conversation you continue in
+// another tab, and forgets it tomorrow.
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const transcript = (domain) => `site:${domain}:${today()}`;
+
 // An LLM reply that grants `minutes`, in Anthropic's response shape.
 function grantingFetch(minutes = 10, reason = 'check DMs') {
   return makeMockFetch({
@@ -92,10 +101,11 @@ describe('chat from a native host (no sender.tab)', () => {
     );
 
     const histories = chrome.storage._store.chatHistories;
-    expect(Object.keys(histories).sort()).toEqual(['target:instagram.com', 'target:youtube.com']);
+    expect(Object.keys(histories).sort())
+      .toEqual([transcript('instagram.com'), transcript('youtube.com')]);
     // Neither conversation may see the other's turns.
-    expect(histories['target:instagram.com'].map(m => m.content)).toContain('one');
-    expect(histories['target:instagram.com'].map(m => m.content)).not.toContain('two');
+    expect(histories[transcript('instagram.com')].map(m => m.content)).toContain('one');
+    expect(histories[transcript('instagram.com')].map(m => m.content)).not.toContain('two');
   });
 
   it('keeps a separate session per target, so a second grant does not evict the first', async () => {
@@ -320,10 +330,15 @@ describe('extension tab keying still holds', () => {
       tab(2)
     );
 
+    // A pass belongs to one tab, so the sessions stay separate...
     expect(Object.keys(chrome.storage._store.activeSessions).sort())
       .toEqual(['tab:1:instagram.com', 'tab:2:instagram.com']);
-    expect(Object.keys(chrome.storage._store.chatHistories).sort())
-      .toEqual(['tab:1:instagram.com', 'tab:2:instagram.com']);
+    // ...but the conversation does not. Opening the same site in a second tab
+    // continues the argument rather than meeting a coach with no memory of it.
+    const histories = chrome.storage._store.chatHistories;
+    expect(Object.keys(histories)).toEqual([transcript('instagram.com')]);
+    expect(histories[transcript('instagram.com')].map(m => m.content))
+      .toEqual(expect.arrayContaining(['a', 'b']));
   });
 
   it('closing a tab records its minutes and clears its state', async () => {
@@ -337,9 +352,11 @@ describe('extension tab keying still holds', () => {
     await listeners.tabRemoved(5);
 
     expect(chrome.storage._store.activeSessions['tab:5:instagram.com']).toBeUndefined();
-    expect(chrome.storage._store.chatHistories['tab:5:instagram.com']).toBeUndefined();
     const stats = await ctx.getStatsForDomain('instagram.com');
     expect(stats.minutesToday).toBe(4);
+    // The transcript outlives the tab on purpose: coming back later the same
+    // day should not reset the coach's memory of why you were here.
+    expect(chrome.storage._store.chatHistories[transcript('instagram.com')]).toBeDefined();
   });
 
   it('reports a session to checkPageMatch only while it is live', async () => {
@@ -381,7 +398,7 @@ describe('concurrent writes', () => {
     ]);
 
     const histories = chrome.storage._store.chatHistories;
-    expect(Object.keys(histories).sort()).toEqual(['target:a.com', 'target:b.com']);
+    expect(Object.keys(histories).sort()).toEqual([transcript('a.com'), transcript('b.com')]);
   });
 
   it('does not let concurrent stats writes drop each other', async () => {
@@ -820,8 +837,8 @@ describe('a pass is confined to the site it was earned on', () => {
     );
 
     const histories = chrome.storage._store.chatHistories;
-    expect(JSON.stringify(histories['tab:42:instagram.com'])).toContain('something private');
-    expect(JSON.stringify(histories['tab:42:reddit.com'])).not.toContain('something private');
+    expect(JSON.stringify(histories[transcript('instagram.com')])).toContain('something private');
+    expect(JSON.stringify(histories[transcript('reddit.com')])).not.toContain('something private');
   });
 
   it('lets one tab hold a live pass on two sites at once', async () => {
@@ -854,7 +871,9 @@ describe('a pass is confined to the site it was earned on', () => {
     await listeners.tabRemoved(42);
 
     expect(chrome.storage._store.activeSessions).toEqual({});
-    expect(chrome.storage._store.chatHistories).toEqual({});
+    // Both transcripts survive the tab closing — memory is per site, per day.
+    expect(Object.keys(chrome.storage._store.chatHistories).sort())
+      .toEqual([transcript('instagram.com'), transcript('reddit.com')]);
     expect((await ctx.getStatsForDomain('instagram.com')).minutesToday).toBe(3);
     expect((await ctx.getStatsForDomain('reddit.com')).minutesToday).toBe(2);
   });
@@ -1093,5 +1112,152 @@ describe('the intended URL survives worker suspension', () => {
     listeners.tabRemoved(5);
     await new Promise(r => setTimeout(r, 0));
     expect(chrome.storage._sessionStore.tabNavContext).toEqual({});
+  });
+});
+
+// The gate's overlay empties the document before the chat opens, and on the
+// redirect path the blocked page is never loaded at all — so the content
+// script's extraction at document_start is the only look at the page anyone
+// gets. It used to be sent to checkPageMatch and dropped on the floor, leaving
+// the coach with whatever could be guessed from the address.
+describe('what the user was actually opening reaches the coach', () => {
+  const SEED = { ...CONFIGURED, blockedDomains: ['instagram.com'], setupComplete: true };
+  const REEL = {
+    url: 'https://instagram.com/reel/abc123',
+    contentType: 'Instagram Reel',
+    title: 'Sourdough starter in 30 seconds',
+    source: 'dom'
+  };
+  const systemPromptOf = (fetch) => JSON.parse(fetch.calls.at(-1).init.body).system;
+
+  it('remembers the content script\'s extraction and uses it in the chat', async () => {
+    const { ctx, fetch } = loadBackground({ seed: SEED });
+    await ctx.handleMessage(
+      { action: 'checkPageMatch', host: 'instagram.com', pageContext: REEL },
+      tab(3)
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'hi' },
+      tab(3)
+    );
+    expect(systemPromptOf(fetch)).toContain('Sourdough starter in 30 seconds');
+  });
+
+  it('falls back to the recorded navigation when nothing was extracted', async () => {
+    const { ctx, fetch, listeners } = loadBackground({ seed: SEED });
+    listeners.beforeNavigate({
+      frameId: 0, tabId: 4, url: 'https://instagram.com/explore/tags/woodworking/'
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'hi' },
+      tab(4)
+    );
+    expect(systemPromptOf(fetch)).toContain('#woodworking');
+  });
+
+  // A recorded navigation lives for a day and the tab may have moved on since.
+  // Describing the wrong site is worse than describing none, because the coach
+  // will quote it back to the user as fact.
+  it('refuses page context describing a different site than the one gated', async () => {
+    const { ctx, fetch } = loadBackground({
+      seed: { ...SEED, blockedDomains: ['instagram.com', 'youtube.com'] }
+    });
+    await ctx.handleMessage(
+      {
+        action: 'checkPageMatch',
+        host: 'youtube.com',
+        pageContext: { url: 'https://youtube.com/watch?v=xyz', title: 'A long video', source: 'dom' }
+      },
+      tab(6, 'youtube.com')
+    );
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'hi' },
+      tab(6)
+    );
+    const system = systemPromptOf(fetch);
+    expect(system).not.toContain('A long video');
+    expect(system).not.toContain('untrusted_page_data');
+  });
+
+  it('tells the coach how earlier passes ended', async () => {
+    const { ctx, fetch } = loadBackground({ seed: SEED, fetch: grantingFetch(10, 'check DMs') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(7)
+    );
+    await ctx.handleMessage(
+      { action: 'endSession', domain: 'instagram.com', reason: 'fulfilled' },
+      tab(7)
+    );
+
+    const [session] = (await ctx.getStatsForDomain('instagram.com')).sessionsToday;
+    expect(session.outcome).toBe('closed_early');
+    expect(session.reason).toBe('check DMs');
+
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'again' },
+      tab(8)
+    );
+    expect(systemPromptOf(fetch)).toContain('closed early');
+  });
+
+  it('records a pass that ran its clock out as such', async () => {
+    const { ctx, chrome, listeners } = loadBackground({
+      seed: SEED, fetch: grantingFetch(10, 'check DMs')
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(9)
+    );
+    // Wind the session back so its full ten minutes have elapsed, then fire
+    // the check-in alarm the way the browser would.
+    const key = 'tab:9:instagram.com';
+    const sessions = chrome.storage._store.activeSessions;
+    sessions[key] = { ...sessions[key], startTime: Date.now() - 10 * 60 * 1000 };
+    await ctx.bankExpiredSession(key);
+
+    const [session] = (await ctx.getStatsForDomain('instagram.com')).sessionsToday;
+    expect(session.outcome).toBe('ran_out');
+    expect(session.usedMinutes).toBe(10);
+  });
+});
+
+// Memory that outlives the tab has to end somewhere, or every site the user
+// ever argued with accumulates in storage forever.
+describe('transcripts expire with the day', () => {
+  const SEED = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
+
+  it('drops transcripts from earlier days on the next write', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED });
+    chrome.storage._store.chatHistories = {
+      'site:instagram.com:2020-01-01': [{ role: 'user', content: 'ancient' }],
+      'site:reddit.com:2020-01-02': [{ role: 'user', content: 'also ancient' }],
+      context: [{ role: 'user', content: 'keep me' }]
+    };
+
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'today' },
+      tab(1)
+    );
+
+    const histories = chrome.storage._store.chatHistories;
+    expect(Object.keys(histories).sort()).toEqual(['context', transcript('instagram.com')]);
+    // The named namespaces the options page owns are not day-scoped.
+    expect(histories.context[0].content).toBe('keep me');
+  });
+
+  it('starts the day fresh rather than continuing yesterday', async () => {
+    const { ctx, chrome, fetch } = loadBackground({ seed: SEED });
+    chrome.storage._store.chatHistories = {
+      'site:instagram.com:2020-01-01': [{ role: 'user', content: 'yesterday I said this' }]
+    };
+
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'hello' },
+      tab(1)
+    );
+
+    const sent = JSON.parse(fetch.calls.at(-1).init.body);
+    expect(JSON.stringify(sent.messages)).not.toContain('yesterday I said this');
   });
 });

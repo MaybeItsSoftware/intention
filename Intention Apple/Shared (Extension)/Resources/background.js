@@ -62,6 +62,23 @@ function readNavContext(tabId) {
   });
 }
 
+// The content script's DOM extraction is the only look at the page anyone
+// gets: on the redirect path the blocked page is never loaded at all, and by
+// the time the gate's chat opens the overlay has already emptied the document.
+// So whatever the content script saw at document_start is kept here, beside
+// the recorded URL, where a chat opened later — including one from
+// coaching.html, which has no access to the blocked page — can still read it.
+function recordTabPageContext(tabId, pageCtx) {
+  if (tabId == null || !pageCtx || typeof pageCtx !== 'object') return;
+  const existing = tabNavContext[tabId] || {};
+  tabNavContext[tabId] = {
+    url: pageCtx.url || existing.url || '',
+    pageCtx,
+    timestamp: Date.now()
+  };
+  persistNavContext();
+}
+
 if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
   try {
     // Our own pages are skipped by extension origin rather than by the
@@ -378,7 +395,7 @@ async function bankExpiredSession(sessionKey) {
   const session = activeSessions[sessionKey];
   if (!session || isBanked(session)) return;
   const elapsed = (Date.now() - session.startTime) / 60000;
-  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
+  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes), 'ran_out');
   await mutateStorage('activeSessions', (sessions) => {
     if (sessions[sessionKey]) sessions[sessionKey].endedAt = Date.now();
   });
@@ -505,6 +522,46 @@ function hostMatchesDomain(host, domain) {
   return !!host && !!domain && (host === domain || host.endsWith('.' + domain));
 }
 
+// Where a conversation's transcript lives.
+//
+// Sessions, alarms and DNR rules are per (tab, target) — they have to be, a
+// pass belongs to one tab. Memory doesn't. Keying transcripts the same way
+// meant the coach forgot an argument it had two minutes earlier the moment you
+// opened the site in a second tab, and forgot it again every time a pass
+// ended, so "you already told me that" was unsayable. Per (target, day)
+// instead: continuous within the day the usage stats are also scoped to, and
+// gone the next morning, which is the fresh start the user actually wants.
+//
+// The UI never renders stored history — it opens on an empty chat window — so
+// this changes what the coach remembers, not what the user sees.
+function transcriptKeyFor(mode, { domain, changeType }) {
+  if (mode === 'context' || mode === 'setup') return mode;
+  if (mode === 'settings_gate') return `settings_gate:${changeType}:${domain || 'all'}`;
+  if (!domain) return null;
+  return `site:${domain}:${dateKey()}`;
+}
+
+// Yesterday's conversations are never read again — the key has the date in it
+// — so they would otherwise accumulate in storage forever.
+const TRANSCRIPT_KEY = /^site:(.+):(\d{4}-\d{2}-\d{2})$/;
+function pruneStaleTranscripts(histories) {
+  const today = dateKey();
+  for (const key of Object.keys(histories)) {
+    const match = TRANSCRIPT_KEY.exec(key);
+    if (match && match[2] !== today) delete histories[key];
+  }
+}
+
+function pageContextMatchesDomain(pageCtx, domain) {
+  const url = pageCtx && typeof pageCtx.url === 'string' ? pageCtx.url : '';
+  if (!url || !domain) return false;
+  try {
+    return hostMatchesDomain(new URL(url).hostname, domain);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function handleMessage(message, sender) {
   // `sender.tab` is the trustworthy source and always wins — content scripts
   // can't opt out of it. Safari doesn't populate it for extension pages
@@ -514,7 +571,7 @@ async function handleMessage(message, sender) {
   // looks under, and the site re-gates the moment the pass is granted.
   const tabId = sender.tab?.id ?? (typeof message.tabId === 'number' ? message.tabId : undefined);
   switch (message.action) {
-    case 'checkPageMatch': return checkPageMatch(message.host, tabId);
+    case 'checkPageMatch': return checkPageMatch(message.host, tabId, message.pageContext);
     case 'getConfig': {
       const config = await getFullConfig();
       // Only extension pages (options, coaching) may read the API key —
@@ -545,14 +602,16 @@ async function handleMessage(message, sender) {
         pageContext: message.pageContext
       });
     case 'clearChatHistory': {
-      // A caller-supplied key is honoured only for the fixed non-session
-      // namespaces the options page uses — otherwise a content script could
-      // wipe another tab's transcript by guessing its session key. Everything
-      // else falls back to the sender's own session key.
+      // A caller-supplied key is honoured only for the fixed namespaces the
+      // options page uses — otherwise a content script could wipe another
+      // site's transcript by naming its key. Everything else clears the
+      // transcript for the site the caller is actually on.
       const requested = message.historyKey;
       const namespaced = requested === 'context' || requested === 'setup' ||
         (typeof requested === 'string' && requested.startsWith('settings_gate:'));
-      return clearChatHistory(namespaced ? requested : sessionKeyFor(tabId, message.domain));
+      return clearChatHistory(namespaced
+        ? requested
+        : transcriptKeyFor('gate', { domain: message.domain }));
     }
     case 'endSession':
       return endSession({ tabId, domain: message.domain, reason: message.reason });
@@ -669,11 +728,16 @@ async function handleMessage(message, sender) {
   }
 }
 
-async function checkPageMatch(host, tabId) {
+async function checkPageMatch(host, tabId, pageContext) {
   // Throttled no-op outside the Safari Web Extension runtime — see tracking.js.
   await syncConfigFromNative();
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
   const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
+  // This is the one moment the page is still intact — the gate has not yet
+  // emptied it — so bank what the content script saw before it goes. Only for
+  // a blocked page: this is material for the coach, not a browsing log, and
+  // the store it lands in is disk-backed on Safari before 16.4.
+  if (matchedDomain) recordTabPageContext(tabId, pageContext);
   // readSession also covers the target-only key, the fallback for a pass
   // granted where no tab id was available (the coaching page on Safari, or a
   // native port). Without it the grant is invisible here and the page gates
@@ -873,11 +937,21 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   }
 
   // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
+  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit';
   let pageCtx = pageContext || null;
-  if (!pageCtx && tabId != null && typeof extractPageContextFromUrl === 'function') {
+  if (!pageCtx && tabId != null) {
     const nav = await readNavContext(tabId);
-    if (nav?.url) pageCtx = extractPageContextFromUrl(nav.url);
+    // What the content script actually saw beats anything we can infer from
+    // the address alone.
+    if (nav?.pageCtx) pageCtx = nav.pageCtx;
+    else if (nav?.url && typeof extractPageContextFromUrl === 'function') pageCtx = extractPageContextFromUrl(nav.url);
   }
+  // Whatever the source, it has to describe the site actually being gated. A
+  // recorded navigation lives for a day and the tab may have moved on since;
+  // telling the coach about the wrong site is worse than telling it nothing,
+  // because it will confidently quote it back to the user. getIntendedUrl
+  // makes the same check before it hands a URL out.
+  if (pageCtx && !isAppTarget && !pageContextMatchesDomain(pageCtx, domain)) pageCtx = null;
   if (pageCtx && typeof enrichPageContext === 'function') {
     try {
       pageCtx = await enrichPageContext(pageCtx);
@@ -888,18 +962,20 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // the pseudo-target "apps" for the iOS Screen Time pass); prompts get a
   // human-readable display name instead.
   let displayName = domain;
+  // Apps get their own context block in place of the page one — there is no
+  // page to describe, and saying nothing let the coach invent a screen it
+  // cannot see. See renderAppContextBlock.
+  let appCtx = null;
   if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit') {
     const { appLabels = {} } = await getStorage(['appLabels']);
     const label = appLabel || appLabels[domain];
     displayName = label ? `the ${label} app` : 'a blocked app';
+    appCtx = { appId: domain, appLabel: label || '' };
   }
 
   const sessionKey = sessionKeyFor(tabId, domain);
 
-  let historyKey;
-  if (mode === 'context' || mode === 'setup') historyKey = mode;
-  else if (mode === 'settings_gate') historyKey = `settings_gate:${changeType}:${domain || 'all'}`;
-  else historyKey = sessionKey;
+  const historyKey = transcriptKeyFor(mode, { domain, changeType });
   if (!historyKey) return { error: 'No history context' };
   const { chatHistories = {} } = await getStorage(['chatHistories']);
   const history = chatHistories[historyKey] || [];
@@ -922,8 +998,12 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll,
+      minutesWeekSite: stats.minutesWeek,
       reasonsToday: stats.reasonsToday,
-      pageContext: pageCtx
+      sessionsToday: stats.sessionsToday,
+      recentDays: stats.recentDays,
+      pageContext: pageCtx,
+      appContext: appCtx
     });
     tools = [GRANT_TOOL];
   } else if (mode === 'checkin') {
@@ -946,8 +1026,12 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
+      minutesWeekSite: stats.minutesWeek,
       reasonsToday: stats.reasonsToday,
-      pageContext: pageCtx
+      sessionsToday: stats.sessionsToday,
+      recentDays: stats.recentDays,
+      pageContext: pageCtx,
+      appContext: appCtx
     });
     tools = [GRANT_TOOL];
   } else if (mode === 'settings_gate') {
@@ -1131,6 +1215,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   try {
     await mutateStorage('chatHistories', (histories) => {
       histories[historyKey] = history.slice(-40);
+      pruneStaleTranscripts(histories);
     });
   } catch (e) {
     console.warn('Intention: failed to persist chat history', e);
@@ -1222,7 +1307,7 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason 
   const previous = activeSessions[sessionKey];
   if (previous && !isBanked(previous)) {
     const elapsed = (Date.now() - previous.startTime) / 60000;
-    await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes));
+    await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes), 'extended');
   }
 
   const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
@@ -1270,11 +1355,14 @@ async function clearChatHistory(historyKey) {
   return { ok: true };
 }
 
-// Retires one session key: banks whatever time it earned, drops its transcript
-// and its check-in alarm. Deliberately does no DNR or redirect-rule work — the
-// callers below own that, because a tab's allow rule is shared by every session
-// on that tab and must only be touched once the sweep is complete.
-async function retireSessionKey(sessionKey) {
+// Retires one session key: banks whatever time it earned and drops its
+// check-in alarm. The transcript deliberately survives — it is keyed per
+// (site, day) now, so the next visit continues the same conversation instead
+// of meeting a coach with no memory of the last one. Deliberately does no DNR
+// or redirect-rule work — the callers below own that, because a tab's allow
+// rule is shared by every session on that tab and must only be touched once
+// the sweep is complete.
+async function retireSessionKey(sessionKey, outcome) {
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const session = activeSessions[sessionKey];
   if (session) {
@@ -1282,10 +1370,19 @@ async function retireSessionKey(sessionKey) {
     // twice — drop it, but don't re-record its minutes.
     if (!isBanked(session)) {
       const elapsed = (Date.now() - session.startTime) / 60000;
-      await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes));
+      const used = Math.min(elapsed, session.intervalMinutes);
+      // Closing the tab with time still on the clock is the win the coach is
+      // told to celebrate, so only claim it when they genuinely left time
+      // unused — otherwise this was just the pass running its course.
+      const resolved = outcome === 'ended'
+        ? (used < session.intervalMinutes - 0.5 ? 'closed_early' : 'finished')
+        : outcome;
+      await recordSessionMinutes(session.domain, used, resolved);
     }
     await mutateStorage('activeSessions', (sessions) => { delete sessions[sessionKey]; });
   }
+  // Legacy per-session transcripts (and any written before this key change)
+  // still need clearing out; the live one is per (site, day) and stays.
   await mutateStorage('chatHistories', (chatHistories) => { delete chatHistories[sessionKey]; });
   chrome.alarms.clear(`checkin-${sessionKey}`);
 }
@@ -1315,7 +1412,7 @@ async function endSession({ tabId, domain, reason }) {
   const sessionKey = sessionKeyFor(tabId, domain);
   if (!sessionKey) return { ok: true };
 
-  await retireSessionKey(sessionKey);
+  await retireSessionKey(sessionKey, 'ended');
   await settleTabRule(tabId);
   // The pass is over: this domain needs its redirect rule back.
   await syncBlockingRules();
@@ -1335,7 +1432,7 @@ async function endAllSessionsForTab(tabId, reason) {
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const keys = sessionKeysForTab(activeSessions, tabId);
   for (const key of keys) {
-    await retireSessionKey(key);
+    await retireSessionKey(key, reason === 'closed' ? 'tab_closed' : 'ended');
   }
   removeSessionRule(tabId);
   if (keys.length) await syncBlockingRules();

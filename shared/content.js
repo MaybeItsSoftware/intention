@@ -262,15 +262,55 @@ let currentSession = null;
 let matchedDomain = null;
 let matchedBlockConfig = null;
 let handled = false;
+// The best look at this page we have managed to get. It has to be captured
+// while the document still exists: the gate calls ensureBodyAndStop(), which
+// empties the body, so anything extracted afterwards has lost every
+// body-derived field (video title, tweet text, issue title, channel name).
+// Re-extracting at send time — which is what the chat used to do — therefore
+// asked a blank page what was on it.
+let capturedPageCtx = null;
 // Guards against a second check running while the first is still working
 // through its retries (visibilitychange and pageshow can both fire mid-flight).
 let checking = false;
+
+// Extracts what the page says about itself and folds it into whatever we
+// already had. A field only ever gets overwritten by a NEW non-empty value —
+// extractPageContextFromDOM drops empty fields entirely — so a later, poorer
+// look at a stopped or emptied page can add detail but never erase it.
+// A move to a different page is the one case where old detail is worse than
+// none: it would describe the wrong video, so the cache is dropped instead.
+function capturePageContext() {
+  if (typeof extractPageContextFromDOM !== "function") return capturedPageCtx;
+  let fresh = null;
+  try {
+    fresh = extractPageContextFromDOM(document, window);
+  } catch (e) {
+    return capturedPageCtx;
+  }
+  if (!fresh) return capturedPageCtx;
+  if (capturedPageCtx && !samePage(capturedPageCtx.url, fresh.url)) capturedPageCtx = null;
+  capturedPageCtx = { ...(capturedPageCtx || {}), ...fresh };
+  return capturedPageCtx;
+}
+
+function samePage(a, b) {
+  if (!a || !b) return true; // nothing to contradict
+  try {
+    const urlA = new URL(a);
+    const urlB = new URL(b);
+    return urlA.host === urlB.host && urlA.pathname === urlB.pathname && urlA.search === urlB.search;
+  } catch (e) {
+    return a === b;
+  }
+}
 
 function showGate(why) {
   if (handled) return;
   handled = true;
   console.log(INT_LOG, "showGate ->", why);
   try {
+    // Last chance: after this the body is gone.
+    capturePageContext();
     ensureBodyAndStop();
     injectOverlayStyle();
     renderChatUI({
@@ -335,10 +375,9 @@ async function runCheck() {
   checking = true;
   try {
     const host = window.location.hostname;
-    const pageContext =
-      typeof extractPageContextFromDOM === "function"
-        ? extractPageContextFromDOM(document, window)
-        : null;
+    // Sent along so the background can hold on to it: on the redirect path the
+    // page is never loaded again, and this is the only DOM anyone will see.
+    const pageContext = capturePageContext();
 
     const deadline = Date.now() + CHECK_TOTAL_BUDGET_MS;
     for (let attempt = 0; ; attempt++) {
@@ -730,7 +769,10 @@ function renderChatUI({ mode, domain, blockConfig }) {
 
     let resp;
     try {
-      const pageContext = typeof extractPageContextFromDOM === 'function' ? extractPageContextFromDOM(document, window) : null;
+      // capturePageContext() merges rather than replaces, so this picks up
+      // anything the page has revealed since — at check-in the page ran fully
+      // — without discarding what was captured before the overlay wiped it.
+      const pageContext = capturePageContext();
       resp = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
         chrome.runtime.sendMessage(
@@ -1061,6 +1103,10 @@ function setupInterruptionListener() {
         if (badgeTeardown) badgeTeardown();
         handled = true;
         try {
+          // The page they actually ended up on is the whole point of a
+          // check-in — capture it before the overlay empties the document,
+          // otherwise the coach can't tell they drifted off what they asked for.
+          capturePageContext();
           ensureBodyAndStop();
           injectOverlayStyle();
           renderChatUI({
