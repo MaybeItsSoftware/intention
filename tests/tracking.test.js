@@ -57,6 +57,97 @@ describe('recordGrant -> getStatsForDomain', () => {
   });
 });
 
+// Minutes alone cannot tell "asked for 10, left after 4" from "asked for 10
+// and had to be interrupted at 10" — and that is the only real evidence for
+// how many minutes the next grant deserves.
+describe('session outcomes', () => {
+  it('stamps the outcome onto the grant that opened the session', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'check DMs');
+    await ctx.recordSessionMinutes('twitter.com', 4, 'closed_early');
+
+    const [session] = (await ctx.getStatsForDomain('twitter.com')).sessionsToday;
+    expect(session.outcome).toBe('closed_early');
+    expect(session.usedMinutes).toBe(4);
+    expect(session.grantedMinutes).toBe(10);
+  });
+
+  it('stamps each grant separately, oldest open one first', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'first');
+    await ctx.recordSessionMinutes('twitter.com', 10, 'ran_out');
+    await ctx.recordGrant('twitter.com', 5, 'second');
+    await ctx.recordSessionMinutes('twitter.com', 2, 'closed_early');
+
+    const sessions = (await ctx.getStatsForDomain('twitter.com')).sessionsToday;
+    expect(sessions.map(s => [s.reason, s.outcome])).toEqual([
+      ['first', 'ran_out'],
+      ['second', 'closed_early']
+    ]);
+  });
+
+  it('leaves a still-running session unstamped', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'in progress');
+    const [session] = (await ctx.getStatsForDomain('twitter.com')).sessionsToday;
+    expect(session.outcome).toBeNull();
+    expect(session.usedMinutes).toBeNull();
+  });
+
+  it('records an outcome even when the pass earned no minutes at all', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'check DMs');
+    await ctx.recordSessionMinutes('twitter.com', 0, 'closed_early');
+
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.minutesToday).toBe(0);
+    expect(stats.sessionsToday[0].outcome).toBe('closed_early');
+  });
+
+  it('banks minutes as before when no outcome is given', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'check DMs');
+    await ctx.recordSessionMinutes('twitter.com', 6);
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.minutesToday).toBe(6);
+    expect(stats.sessionsToday[0].outcome).toBeNull();
+  });
+});
+
+// A pattern is only visible across days. The coach used to see today and
+// nothing else, so "fourth evening running" was unsayable.
+describe('recentDays', () => {
+  const dayKey = (ctx, back) => ctx.daysAgoKeys(back + 1)[back];
+
+  it('reports earlier days for this site, most recent first, excluding today', async () => {
+    const probe = loadSource('tracking.js');
+    const seed = {
+      dailyStats: {
+        [dayKey(probe, 0)]: { 'reddit.com': { minutes: 5, grants: 1, sessions: [{ reason: 'today' }] } },
+        [dayKey(probe, 1)]: { 'reddit.com': { minutes: 30, grants: 2, sessions: [{ reason: 'yesterday' }] } },
+        [dayKey(probe, 3)]: { 'reddit.com': { minutes: 12, grants: 1, sessions: [{ reason: 'three days ago' }] } }
+      }
+    };
+    const { ctx } = loadTracking({ seed });
+    const { recentDays } = await ctx.getStatsForDomain('reddit.com');
+
+    expect(recentDays.map(d => d.date)).toEqual([dayKey(ctx, 1), dayKey(ctx, 3)]);
+    expect(recentDays[0]).toMatchObject({ minutes: 30, grants: 2, reasons: ['yesterday'] });
+  });
+
+  it('ignores other domains and days beyond the week', async () => {
+    const probe = loadSource('tracking.js');
+    const seed = {
+      dailyStats: {
+        [dayKey(probe, 1)]: { 'twitter.com': { minutes: 10, grants: 1, sessions: [] } },
+        [dayKey(probe, 20)]: { 'reddit.com': { minutes: 90, grants: 5, sessions: [] } }
+      }
+    };
+    const { ctx } = loadTracking({ seed });
+    expect((await ctx.getStatsForDomain('reddit.com')).recentDays).toEqual([]);
+  });
+});
+
 describe('recordSessionMinutes', () => {
   it('accumulates minutesToday and minutesTodayAll', async () => {
     const { ctx } = fresh();

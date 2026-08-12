@@ -152,12 +152,38 @@ async function recordGrant(domain, minutes, reason) {
   });
 }
 
-async function recordSessionMinutes(domain, elapsedMinutes) {
-  if (!domain || elapsedMinutes <= 0) return;
+// How a pass ended, written back onto the grant that opened it. Minutes alone
+// can't tell "asked for 10, left after 4" from "asked for 10 and had to be
+// interrupted at 10" — and that difference is the only real evidence for how
+// much time the next grant deserves. Stamped on the most recent grant for this
+// domain that doesn't have an outcome yet; a pass opened before midnight has
+// no entry in today's list, so this is best-effort by design.
+function stampSessionOutcome(daySites, domain, outcome, usedMinutes) {
+  const sessions = daySites?.[domain]?.sessions;
+  if (!outcome || !Array.isArray(sessions)) return;
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    if (sessions[i] && !sessions[i].outcome) {
+      sessions[i].outcome = outcome;
+      sessions[i].usedMinutes = Math.round(usedMinutes * 10) / 10;
+      sessions[i].endedAt = Date.now();
+      return;
+    }
+  }
+}
+
+async function recordSessionMinutes(domain, elapsedMinutes, outcome) {
+  // Closing the tab the instant the pass opens banks no minutes, but it is the
+  // single strongest thing the coach can know about someone — so an outcome is
+  // still worth writing down when there is no time to record.
+  const minutes = elapsedMinutes > 0 ? elapsedMinutes : 0;
+  if (!domain || (!minutes && !outcome)) return;
   await withDailyStats((stats, today) => {
     if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
-    stats[today][domain].minutes += elapsedMinutes;
+    stats[today][domain].minutes += minutes;
+    stampSessionOutcome(stats[today], domain, outcome, minutes);
   });
+
+  if (!minutes) return;
 
   await mutateStorage('allTimeStats', async (allTimeStats) => {
     if (allTimeStats[domain] === undefined) {
@@ -188,6 +214,10 @@ async function getStatsForDomain(domain) {
   let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
   let reasonsToday = [];
+  let sessionsToday = [];
+  // Per-day rollup for this site, today excluded — a pattern is only visible
+  // across days, and the coach was previously shown today and nothing else.
+  const recentDays = [];
 
   for (const [k, entries] of Object.entries(dailyStats)) {
     for (const [d, site] of Object.entries(entries)) {
@@ -198,6 +228,24 @@ async function getStatsForDomain(domain) {
           reasonsToday = (site.sessions || [])
             .map(s => (s && s.reason ? String(s.reason).trim() : ''))
             .filter(Boolean);
+          sessionsToday = (site.sessions || [])
+            .filter(Boolean)
+            .map(s => ({
+              reason: s.reason ? String(s.reason).trim() : '',
+              grantedMinutes: s.grantedMinutes || 0,
+              grantedAt: s.grantedAt || null,
+              usedMinutes: typeof s.usedMinutes === 'number' ? s.usedMinutes : null,
+              outcome: s.outcome || null
+            }));
+        } else if (weekKeys.includes(k)) {
+          recentDays.push({
+            date: k,
+            minutes: Math.round(site.minutes || 0),
+            grants: site.grants || 0,
+            reasons: (site.sessions || [])
+              .map(s => (s && s.reason ? String(s.reason).trim() : ''))
+              .filter(Boolean)
+          });
         }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
         if (monthKeys.includes(k)) minutesMonth += site.minutes || 0;
@@ -219,6 +267,8 @@ async function getStatsForDomain(domain) {
     minutesAllTime = sumDaily;
   }
 
+  recentDays.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
   return {
     minutesToday: Math.round(minutesToday),
     minutesWeek: Math.round(minutesWeek),
@@ -228,7 +278,9 @@ async function getStatsForDomain(domain) {
     grantsToday,
     minutesTodayAll: Math.round(minutesTodayAll),
     minutesWeekAll: Math.round(minutesWeekAll),
-    reasonsToday
+    reasonsToday,
+    sessionsToday,
+    recentDays
   };
 }
 
