@@ -27,7 +27,9 @@ The coach runs on **coaching credit**, a one-time top-up bought through the App 
 - **Credit-powered coach**: coaching credit is bought with Apple In-App Purchase / Google Play Billing as a repurchasable top-up and routes through Intention's backend, which holds the provider key.
 - **Optional custom key**: Settings → Advanced → Custom API key points the coach at your own Anthropic, OpenAI, Groq, or Gemini account instead, bypassing the coaching-credit balance.
 - **Context-via-chat guardrail**: the system prompt ("about you") is updated only through a conversation with the coach, using an `update_context` tool. Prevents trivial self-deception.
-- **Time awareness**: the AI sees minutes spent today on this site, today across all blocked sites, and across the past week.
+- **Time awareness**: the AI sees the current day and time, minutes spent today on this site, this site over the past week, today across all blocked sites, and across the past week.
+- **Track record**: every pass records how it ended — closed early, ran the clock out, asked for more — alongside the reason given for it, and the coach sees the last week of them. "You said ten minutes and closed at four" and "that's the fourth evening running" are things it can actually say.
+- **Knows where you're going**: the coach is told the specific page — video title, channel and length, thread and subreddit, Instagram/TikTok destination, or the search term you typed. When only the address is known it is told to say so and ask, rather than guess at content it hasn't seen.
 - **Exponential difficulty**: scaling skepticism per grant per day, plus a hard daily cap (3). Past the cap the chat continues for motivational support, but no more time is given out.
 - **Positive reinforcement tone**: the system prompt pushes the AI to be warm, curious, non-judgmental — offering concrete alternatives, naming procrastination gently, celebrating the close-tab choice.
 
