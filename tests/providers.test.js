@@ -193,6 +193,51 @@ describe('callLLM dispatch', () => {
   });
 });
 
+// The system prompt travels either as one string or as the cache-split block
+// array splitSystemForCache produces. Only Anthropic understands per-block
+// cache hints; the rest must see the same words as one joined string.
+describe('system cache blocks', () => {
+  const SPLIT = [{ text: 'STABLE', cache: true }, { text: 'VOLATILE' }];
+
+  it('callAnthropic maps the split into cache_control blocks', async () => {
+    const fetch = makeMockFetch({ json: { content: [{ type: 'text', text: 'ok' }] } });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callAnthropic({ apiKey: 'k', model: 'm', system: SPLIT, messages: MESSAGES });
+    expect(lastBody(fetch).system).toEqual([
+      { type: 'text', text: 'STABLE', cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'VOLATILE' }
+    ]);
+  });
+
+  it('callAnthropic leaves a bare string system untouched', async () => {
+    const fetch = makeMockFetch({ json: { content: [] } });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callAnthropic({ apiKey: 'k', model: 'm', system: 'SYS', messages: MESSAGES });
+    expect(lastBody(fetch).system).toBe('SYS');
+  });
+
+  it('callOpenAICompatible joins blocks back into one system message', async () => {
+    const fetch = makeMockFetch({ json: { choices: [{ message: { content: 'x' } }] } });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callOpenAICompatible({ baseUrl: 'https://x/v1', apiKey: 'k', model: 'm', system: SPLIT, messages: MESSAGES });
+    expect(lastBody(fetch).messages[0]).toEqual({ role: 'system', content: 'STABLE\nVOLATILE' });
+  });
+
+  it('callGemini joins blocks into systemInstruction', async () => {
+    const fetch = makeMockFetch({ json: { candidates: [{ content: { parts: [{ text: 'x' }] } }] } });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callGemini({ apiKey: 'k', model: 'm', system: SPLIT, messages: MESSAGES });
+    expect(lastBody(fetch).systemInstruction).toEqual({ parts: [{ text: 'STABLE\nVOLATILE' }] });
+  });
+
+  it('the hosted route forwards the block array untouched', async () => {
+    const fetch = makeMockFetch({ text: 'ok', toolCalls: [] });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callLLM({ provider: 'intention', accessToken: 't', system: SPLIT, messages: MESSAGES });
+    expect(lastBody(fetch).system).toEqual(SPLIT);
+  });
+});
+
 describe('isNetworkError', () => {
   it('treats fetch TypeErrors and known browser network-failure messages as network errors', () => {
     const { ctx } = loadProviders();

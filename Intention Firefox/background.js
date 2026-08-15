@@ -398,8 +398,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     await chrome.tabs.sendMessage(tabId, { action: 'showCheckin' });
   } catch (e) {
-    // Tab is gone, or has no content script to show the check-in in — drop the
-    // session rather than leaving a pass nothing will ever close.
+    // Tab is gone, or has no content script to show the check-in in — bank the
+    // pass before dropping it. Deleting without banking silently lost every
+    // minute of a pass whose tab disappeared before its check-in: nothing else
+    // ever records a deleted session's time. Sequential awaits on purpose —
+    // bankExpiredSession runs its own mutateStorage, and nesting it inside the
+    // delete's mutator would deadlock the storage queue.
+    await bankExpiredSession(sessionKey);
     await mutateStorage('activeSessions', (activeSessions) => {
       delete activeSessions[sessionKey];
     });
@@ -629,7 +634,45 @@ async function handleMessage(message, sender) {
         ? requested
         : transcriptKeyFor('gate', { domain: message.domain }));
     }
+    case 'getHistory': {
+      // Reading is held to a stricter bar than clearChatHistory's: clearing a
+      // guessed key destroys disposable history, but reading one leaks what
+      // the user told their coach. So the fixed namespaces (context/setup/
+      // settings gates) are only readable by our own extension pages, and a
+      // content script can only ever read the transcript of the site it is
+      // actually running on.
+      const requested = message.historyKey;
+      const namespaced = requested === 'context' || requested === 'setup' ||
+        (typeof requested === 'string' && requested.startsWith('settings_gate:'));
+      let key;
+      if (namespaced && senderTrust(sender) === 'extension') {
+        key = requested;
+      } else {
+        if (senderTrust(sender) === 'content' &&
+            !hostMatchesDomain(senderPageHost(sender), message.domain)) {
+          return { turns: [] };
+        }
+        key = transcriptKeyFor('gate', { domain: message.domain });
+      }
+      if (!key) return { turns: [] };
+      const { chatHistories = {} } = await getStorage(['chatHistories']);
+      // The open markers and "(Intention: …)" correction turns are machinery,
+      // not conversation — rendering them would show the user words they
+      // never typed under their own name.
+      const turns = (chatHistories[key] || [])
+        .filter(t => t && !isSyntheticUserTurn(t.content))
+        .map(t => ({ role: t.role, content: t.content }));
+      return { turns };
+    }
     case 'endSession':
+      // A hostile page must not inflate another site's walk-away streak — the
+      // prompt trusts that number as evidence. Content senders may only end
+      // sessions for the site they are running on, the same bar simpleGrant
+      // applies.
+      if (senderTrust(sender) === 'content' &&
+          !hostMatchesDomain(senderPageHost(sender), message.domain)) {
+        return { ok: true };
+      }
       return endSession({ tabId, domain: message.domain, reason: message.reason });
     case 'simpleGrant': {
       // Simple-mode passes skip the coach entirely, so they must only exist
@@ -945,8 +988,25 @@ async function saveSettings(partial) {
   return { ok: true };
 }
 
+// Keeps a "credit remaining" indicator live after every message, rather than
+// only updating the next time the settings page reconciles. Called after each
+// successful hosted LLM call — a coaching turn can now involve two.
+async function applyHostedBalance(access, llmResponse) {
+  if (access.route !== 'hosted') return;
+  await mutateStorage('entitlement', (entitlement) => {
+    if (!entitlement || typeof entitlement !== 'object') return entitlement;
+    return {
+      ...entitlement,
+      balanceMicros: llmResponse.balanceMicros,
+      balanceGbp: llmResponse.balanceGbp,
+      balanceCredits: llmResponse.balanceCredits,
+      updatedAt: Date.now()
+    };
+  }, null);
+}
+
 async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext }) {
-  const { userContext, contextProjects, contextReasons, coachInstructions } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions']);
+  const { userContext, contextProjects, contextReasons, coachInstructions, coachObservations = [] } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'coachObservations']);
   const access = await resolveAIRoute();
   if (access.route === 'locked') {
     return { error: 'You need coaching credit to talk to your coach.', locked: true };
@@ -1018,10 +1078,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       reasonsToday: stats.reasonsToday,
       sessionsToday: stats.sessionsToday,
       recentDays: stats.recentDays,
+      walkedAwayToday: stats.walkedAwayToday,
+      walkedAwayWeek: stats.walkedAwayWeek,
+      observations: coachObservations,
       pageContext: pageCtx,
       appContext: appCtx
     });
-    tools = [GRANT_TOOL];
+    tools = [GRANT_TOOL, NOTE_OBSERVATION_TOOL];
   } else if (mode === 'checkin') {
     const { activeSessions = {} } = await getStorage(['activeSessions']);
     // Deliberately live: false — by check-in time the native ports have
@@ -1046,10 +1109,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       reasonsToday: stats.reasonsToday,
       sessionsToday: stats.sessionsToday,
       recentDays: stats.recentDays,
+      walkedAwayToday: stats.walkedAwayToday,
+      walkedAwayWeek: stats.walkedAwayWeek,
+      observations: coachObservations,
       pageContext: pageCtx,
       appContext: appCtx
     });
-    tools = [GRANT_TOOL];
+    tools = [GRANT_TOOL, NOTE_OBSERVATION_TOOL];
   } else if (mode === 'settings_gate') {
     const stats = await getStatsForDomain(domain);
     systemPrompt = buildSettingsGateSystemPrompt({
@@ -1077,8 +1143,24 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     return { error: `Unknown chat mode: ${mode}` };
   }
 
-  if (userMessage) history.push({ role: 'user', content: userMessage });
-  if (history.length === 0) history.push({ role: 'user', content: '(user just opened the conversation)' });
+  if (userMessage) {
+    history.push({ role: 'user', content: userMessage });
+  } else {
+    // The coach speaks first now: an empty send means Intention opened the
+    // conversation, and the marker tells the model which situation it is
+    // opening into. Guarded against stacking — an LLM failure below returns
+    // before persistence, so a retry re-reads a clean transcript, but a
+    // client retrying against un-persisted in-memory state must not send the
+    // same marker twice in a row.
+    const opener = mode === 'checkin' ? CHECKIN_OPEN_MARKER : CHAT_OPEN_MARKER;
+    if (history.length === 0 || history[history.length - 1].content !== opener) {
+      history.push({ role: 'user', content: opener });
+    }
+  }
+
+  // Split once and reuse for both calls below: the cacheable prefix has to be
+  // byte-identical between them or the second call re-writes the cache.
+  const systemBlocks = splitSystemForCache(systemPrompt);
 
   let llmResponse;
   try {
@@ -1088,7 +1170,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       model: access.model,
       accessToken: access.accessToken,
       backendUrl: access.backendUrl,
-      system: systemPrompt,
+      system: systemBlocks,
       messages: history,
       tools
     });
@@ -1100,25 +1182,17 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     return { error: friendlyLlmErrorMessage(e), networkError: isNetworkError(e), errorCode: e && e.code };
   }
 
-  // Keeps a "credit remaining" indicator live after every message, rather
-  // than only updating the next time the settings page reconciles.
-  if (access.route === 'hosted') {
-    await mutateStorage('entitlement', (entitlement) => {
-      if (!entitlement || typeof entitlement !== 'object') return entitlement;
-      return {
-        ...entitlement,
-        balanceMicros: llmResponse.balanceMicros,
-        balanceGbp: llmResponse.balanceGbp,
-        balanceCredits: llmResponse.balanceCredits,
-        updatedAt: Date.now()
-      };
-    }, null);
-  }
+  await applyHostedBalance(access, llmResponse);
 
   let grantedSession = null;
   let contextUpdated = null;
   let settingApproved = null;
-  let appendedNote = '';
+  // Two channels, deliberately separate: systemNote is a short user-facing
+  // fact the UI renders outside the chat bubble; correction is a message FOR
+  // THE MODEL, sent back in a second turn so the coach's own spoken words
+  // match what actually happened instead of promising minutes it never gave.
+  let systemNote = '';
+  let correction = '';
 
   // Each tool call is processed independently: a malformed/unexpected input on
   // one call must not prevent the others from running, and must never abort
@@ -1139,22 +1213,42 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
 
         if (grantsLimitReached || minutesLimitReached) {
-          const reasonStr = grantsLimitReached ? "daily grant cap reached" : `absolute max of ${limits.maxMinutes} minutes reached`;
-          appendedNote = `\n\n_(Intention: ${reasonStr} — no more time can be granted today, but I'm still here to talk.)_`;
+          const reasonStr = grantsLimitReached ? 'daily grant cap reached' : `absolute max of ${limits.maxMinutes} minutes reached`;
+          systemNote = grantsLimitReached
+            ? 'Daily grant cap reached — no more time can be granted today.'
+            : `Absolute max of ${limits.maxMinutes} minutes reached — no more time can be granted today.`;
+          correction = `Your grant_access call was NOT applied: ${reasonStr}. No time can be granted today.`;
           continue;
         }
 
-        let minutes = Math.max(1, Math.min(60, Math.round(Number(input.minutes) || 0)));
+        // The number the model actually asked for, kept before clamping so the
+        // correction below can name the gap instead of pretending it granted
+        // what was requested.
+        const requested = Math.round(Number(input.minutes) || 0);
+        let minutes = Math.max(1, Math.min(60, requested));
+        // Which constraint actually bound matters for the correction below: a
+        // no-cap user whose 90-minute ask hits the 60-minute ceiling must not
+        // be told about a "daily cap" they never set.
+        let clampCause = minutes < requested ? 'the 60-minute ceiling on any single pass' : '';
         if (limits.maxMinutes > 0) {
           const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
           if (minutes > remainingMinutes) {
             minutes = remainingMinutes;
+            clampCause = "the user's daily minutes cap";
           }
         }
 
         if (minutes <= 0) {
-          appendedNote = `\n\n_(Intention: absolute max reached — no more time can be granted today.)_`;
+          systemNote = `Absolute max of ${limits.maxMinutes} minutes reached — no more time can be granted today.`;
+          correction = `Your grant_access call was NOT applied: the user's daily minutes cap is already used up. No time can be granted today.`;
           continue;
+        }
+
+        if (minutes < requested) {
+          correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${clampCause}. The pass was granted for ${minutes} minutes.`;
+          systemNote = clampCause === "the user's daily minutes cap"
+            ? `Only ${minutes} minutes were available under your daily cap — your pass is ${minutes} minutes.`
+            : `Passes top out at 60 minutes — your pass is ${minutes} minutes.`;
         }
 
         const reason = String(input.reason || '').slice(0, 240);
@@ -1163,6 +1257,17 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         // skips it silently disables both the daily cap checked above and the
         // escalating skepticism the check-in prompt is built on.
         grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason });
+      } else if (tc.name === 'note_observation' && (mode === 'gate' || mode === 'checkin')) {
+        // The coach's cross-day memory. Capped, deduplicated, and readable in
+        // settings — a bounded notepad, not a dossier.
+        const text = String(input.observation || '').trim().slice(0, 300);
+        if (text) {
+          await mutateStorage('coachObservations', (list) => {
+            if (list.some(o => o && o.text === text)) return list;
+            list.push({ text, domain, at: Date.now() });
+            return list.slice(-10);
+          }, []);
+        }
       } else if (tc.name === 'update_context' && mode === 'context') {
         const newContext = String(input.new_context || '').slice(0, 5000).trim();
         if (newContext) {
@@ -1181,7 +1286,10 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
             const dom = String(item.domain).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
             domainLimits[dom] = {
               maxGrants: Number(item.max_grants_per_day) || 3,
-              maxMinutes: Number(item.max_minutes_per_day) ?? -1
+              // `Number(undefined) ?? -1` was NaN — Number() never yields the
+              // nullish value ?? tests for — so an omitted per-day cap stored
+              // NaN instead of the -1 "unlimited" sentinel.
+              maxMinutes: Number.isFinite(Number(item.max_minutes_per_day)) ? Number(item.max_minutes_per_day) : -1
             };
           }
         }
@@ -1197,7 +1305,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       }
     } catch (e) {
       console.warn(`Intention: tool call "${tc.name}" failed`, e);
-      appendedNote += `\n\n_(Intention: something went wrong applying that — try describing what you want again.)_`;
+      // systemNote only, no correction: an executor bug is ours to surface to
+      // the user, not something to spend a second LLM turn explaining. A
+      // correction set before the throw (the clamp path assigns it before
+      // grantSession runs) must be cleared too, or the honesty turn would
+      // assert a grant that never actually landed.
+      correction = '';
+      systemNote = 'Something went wrong applying that — try describing what you want again.';
     }
   }
 
@@ -1218,8 +1332,45 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
   }
-  const assistantText = (rawText || acceptanceFallback) + appendedNote;
-  history.push({ role: 'assistant', content: assistantText || '(…)' });
+  const firstText = rawText || acceptanceFallback;
+
+  // When a grant was rejected or clamped, the model's spoken text still
+  // promises whatever it asked for — and silently shipping that text is a lie
+  // in the coach's own voice. One extra turn (never more) tells the model what
+  // actually happened and lets it say so itself. On failure the synthetic user
+  // turn is popped so the transcript keeps alternating roles (Gemini rejects
+  // two consecutive same-role turns).
+  let secondText = '';
+  if (correction && (mode === 'gate' || mode === 'checkin')) {
+    history.push({ role: 'assistant', content: firstText || '(…)' });
+    history.push({ role: 'user', content: `(Intention: ${correction} Tell the user what actually happened, honestly and in your own words, and keep coaching. Do not repeat the request.)` });
+    try {
+      const second = await callLLM({
+        provider: access.provider,
+        apiKey: access.apiKey,
+        model: access.model,
+        accessToken: access.accessToken,
+        backendUrl: access.backendUrl,
+        system: systemBlocks,
+        messages: history,
+        tools: []
+      });
+      await applyHostedBalance(access, second);
+      // Tool calls from the correction turn are ignored wholesale: the state
+      // has already been settled above, and honouring a fresh grant here
+      // would reopen the loop this turn exists to close.
+      secondText = (second.text || '').trim();
+      history.push({ role: 'assistant', content: secondText || '(…)' });
+    } catch (e) {
+      console.warn('Intention: correction turn failed', e);
+      secondText = '';
+      history.pop();
+    }
+  } else {
+    history.push({ role: 'assistant', content: firstText || '(…)' });
+  }
+
+  const assistantText = [firstText, secondText].filter(Boolean).join('\n\n');
   // Re-read under the lock: the LLM call above took seconds, and writing back
   // the copy of chatHistories read before it would drop any other
   // conversation's turns committed in the meantime.
@@ -1237,7 +1388,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     console.warn('Intention: failed to persist chat history', e);
   }
 
-  return { assistantText, grantedSession, contextUpdated, approved: settingApproved ? true : false };
+  return {
+    assistantText: assistantText || '(…)',
+    grantedSession,
+    contextUpdated,
+    approved: settingApproved ? true : false,
+    systemNote: systemNote || undefined
+  };
 }
 
 // Maps provider.js's stable err.code classifications to messages a user can
@@ -1427,6 +1584,20 @@ async function settleTabRule(tabId) {
 async function endSession({ tabId, domain, reason }) {
   const sessionKey = sessionKeyFor(tabId, domain);
   if (!sessionKey) return { ok: true };
+
+  if (reason === 'walked_away') {
+    // Closing the gate without ever taking time is the exact habit this tool
+    // exists to build, so it is counted — but only when no session exists
+    // (live OR banked): with one, this "walk away" is really an early close
+    // and falls through to the normal retire path below. No retire and no tab
+    // close here — the client shows its walk-away moment first and owns the
+    // close timing, so closing the tab from this side would cut it off.
+    const { activeSessions = {} } = await getStorage(['activeSessions']);
+    if (!readSession(activeSessions, tabId, domain, { live: false })) {
+      await recordWalkAway(domain);
+      return { ok: true };
+    }
+  }
 
   await retireSessionKey(sessionKey, 'ended');
   await settleTabRule(tabId);

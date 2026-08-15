@@ -37,6 +37,14 @@ function grantingFetch(minutes = 10, reason = 'check DMs') {
   });
 }
 
+// The system prompt of the most recent request. handleChat now sends the
+// cache-split block array (splitSystemForCache), so normalise string-or-blocks
+// back to one string before asserting on its contents.
+const systemPromptOf = (fetch) => {
+  const s = JSON.parse(fetch.calls.at(-1).init.body).system;
+  return typeof s === 'string' ? s : s.map(b => b.text).join('\n');
+};
+
 describe('sessionKeyFor', () => {
   it('keys on the tab id when there is one', () => {
     const { ctx } = loadBackground();
@@ -213,6 +221,24 @@ describe('check-in alarm', () => {
     // The mock's tabs.sendMessage rejects, standing in for a closed tab.
     await listeners.alarm({ name: 'checkin-tab:42:instagram.com' });
     expect(chrome.storage._store.activeSessions['tab:42:instagram.com']).toBeUndefined();
+  });
+
+  it('banks the minutes of an unreachable tab before dropping its session', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(42)
+    );
+    chrome.storage._store.activeSessions['tab:42:instagram.com'].startTime = Date.now() - 10 * 60000;
+
+    // Deleting without banking used to lose these minutes entirely: nothing
+    // else ever records a deleted session's time.
+    await listeners.alarm({ name: 'checkin-tab:42:instagram.com' });
+
+    expect(chrome.storage._store.activeSessions['tab:42:instagram.com']).toBeUndefined();
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.minutesToday).toBe(10);
+    expect(stats.sessionsToday[0].outcome).toBe('ran_out');
   });
 });
 
@@ -786,7 +812,7 @@ describe('an AI-granted pass is recorded like any other', () => {
   });
 
   it('refuses a fourth grant and says why, instead of granting forever', async () => {
-    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(5, 'one more look') });
+    const { ctx, chrome, fetch } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(5, 'one more look') });
     for (let i = 0; i < 3; i++) {
       await ctx.handleMessage(
         { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
@@ -803,11 +829,16 @@ describe('an AI-granted pass is recorded like any other', () => {
     );
     expect(fourth.grantedSession ?? null).toBe(null);
     expect(chrome.storage._store.activeSessions['target:instagram.com']).toBeUndefined();
-    expect(fourth.assistantText).toMatch(/daily grant cap reached/);
+    // The fact lives in systemNote for the UI to render outside the chat; the
+    // rejection also fires the honesty turn, so the reply is two texts joined
+    // and the fourth conversation cost two calls (3 grants + 2 = 5 total).
+    expect(fourth.systemNote).toMatch(/daily grant cap reached/i);
+    expect(fetch.calls.length).toBe(5);
+    expect(fourth.assistantText).toBe('Okay.\n\nOkay.');
   });
 
   it('honours a per-domain cap lower than the default', async () => {
-    const { ctx, chrome } = loadBackground({
+    const { ctx, chrome, fetch } = loadBackground({
       seed: { ...CONFIGURED, domainLimits: { 'instagram.com': { maxGrants: 1 } } },
       fetch: grantingFetch(5)
     });
@@ -822,7 +853,10 @@ describe('an AI-granted pass is recorded like any other', () => {
       NATIVE
     );
     expect(second.grantedSession ?? null).toBe(null);
-    expect(second.assistantText).toMatch(/daily grant cap reached/);
+    expect(second.systemNote).toMatch(/daily grant cap reached/i);
+    // Rejection + honesty turn: one call for the first grant, two for this.
+    expect(fetch.calls.length).toBe(3);
+    expect(second.assistantText).toBe('Okay.\n\nOkay.');
   });
 
   it('feeds the stated reason back into the prompt context', async () => {
@@ -1196,8 +1230,6 @@ describe('what the user was actually opening reaches the coach', () => {
     title: 'Sourdough starter in 30 seconds',
     source: 'dom'
   };
-  const systemPromptOf = (fetch) => JSON.parse(fetch.calls.at(-1).init.body).system;
-
   it('remembers the content script\'s extraction and uses it in the chat', async () => {
     const { ctx, fetch } = loadBackground({ seed: SEED });
     await ctx.handleMessage(
@@ -1327,5 +1359,372 @@ describe('transcripts expire with the day', () => {
 
     const sent = JSON.parse(fetch.calls.at(-1).init.body);
     expect(JSON.stringify(sent.messages)).not.toContain('yesterday I said this');
+  });
+});
+
+// The coach speaks first now: an empty send means Intention opened the
+// conversation, and a synthetic user turn tells the model which situation it
+// is opening into.
+describe('the coach opens the conversation', () => {
+  it('sends the gate marker when the user typed nothing', async () => {
+    const { ctx, chrome, fetch } = loadBackground({ seed: CONFIGURED });
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com' },
+      tab(1)
+    );
+    expect(res.error).toBeUndefined();
+    const sent = JSON.parse(fetch.calls.at(-1).init.body).messages;
+    expect(sent).toEqual([{ role: 'user', content: ctx.CHAT_OPEN_MARKER }]);
+    const history = chrome.storage._store.chatHistories[transcript('instagram.com')];
+    expect(history.map(t => t.role)).toEqual(['user', 'assistant']);
+    expect(history[0].content).toBe(ctx.CHAT_OPEN_MARKER);
+  });
+
+  it('sends the check-in marker in checkin mode', async () => {
+    const { ctx, fetch } = loadBackground({ seed: CONFIGURED });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'checkin', domain: 'instagram.com' },
+      tab(1)
+    );
+    const sent = JSON.parse(fetch.calls.at(-1).init.body).messages;
+    expect(sent.at(-1).content).toBe(ctx.CHECKIN_OPEN_MARKER);
+  });
+
+  it('does not stack markers when the first attempt failed', async () => {
+    let call = 0;
+    const fetch = makeMockFetch(() => {
+      call += 1;
+      if (call === 1) return { status: 500, json: 'down' };
+      return { content: [{ type: 'text', text: 'hello' }] };
+    });
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
+
+    const first = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com' },
+      tab(1)
+    );
+    expect(first.error).toBeDefined();
+    // The failure returned before persistence, so the retry starts clean...
+    expect(chrome.storage._store.chatHistories ?? {}).toEqual({});
+
+    const second = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com' },
+      tab(1)
+    );
+    expect(second.assistantText).toBe('hello');
+    // ...and the model sees exactly one marker, however many retries happened.
+    const sent = JSON.parse(fetch.calls.at(-1).init.body).messages;
+    expect(sent.filter(m => m.content === ctx.CHAT_OPEN_MARKER)).toHaveLength(1);
+  });
+});
+
+// When a grant is clamped or rejected, the model's spoken text still promises
+// whatever it asked for. A single extra turn tells the model what actually
+// happened so it can say so itself — and never more than one turn.
+describe('the honesty turn after a clamped or rejected grant', () => {
+  // 3 of a 5-minute daily cap already used, so only 2 minutes remain.
+  const clampSeed = () => ({
+    ...CONFIGURED,
+    domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
+    dailyStats: {
+      [today()]: {
+        'instagram.com': { minutes: 3, grants: 1, sessions: [{ reason: 'earlier', grantedMinutes: 3, grantedAt: Date.now() }] }
+      }
+    }
+  });
+
+  it('grants the real minutes and lets the coach restate them', async () => {
+    const fetch = grantingFetch(10, 'check DMs');
+    const { ctx, chrome } = loadBackground({ seed: clampSeed(), fetch });
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+
+    expect(res.grantedSession.intervalMinutes).toBe(2);
+    expect(res.systemNote).toBe('Only 2 minutes were available under your daily cap — your pass is 2 minutes.');
+    expect(fetch.calls.length).toBe(2);
+
+    // The correction turn carries no tools (an empty array is omitted from
+    // the request body) and ends on the synthetic user turn naming the gap.
+    const secondBody = JSON.parse(fetch.calls[1].init.body);
+    expect(secondBody.tools).toBeUndefined();
+    const lastMsg = secondBody.messages.at(-1);
+    expect(lastMsg.role).toBe('user');
+    expect(lastMsg.content).toMatch(/^\(Intention:/);
+    expect(lastMsg.content).toContain('asked for 10 minutes');
+    expect(lastMsg.content).toContain('only 2 were available');
+
+    // Both texts reach the user, joined.
+    expect(res.assistantText).toBe('Okay.\n\nOkay.');
+
+    // Persisted transcript alternates roles around the synthetic turn.
+    const history = chrome.storage._store.chatHistories[transcript('instagram.com')];
+    expect(history.map(t => t.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(history[2].content).toMatch(/^\(Intention:/);
+  });
+
+  it('names the 60-minute ceiling, not a daily cap the user never set', async () => {
+    // No per-domain limits at all: the only thing clamping a 90-minute ask
+    // is the hard per-pass ceiling, and the correction must say so.
+    const fetch = grantingFetch(90, 'watch a lecture');
+    const { ctx } = loadBackground({ seed: CONFIGURED, fetch });
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+
+    expect(res.grantedSession.intervalMinutes).toBe(60);
+    expect(res.systemNote).toBe('Passes top out at 60 minutes — your pass is 60 minutes.');
+    expect(res.systemNote).not.toMatch(/daily cap/);
+    const secondBody = JSON.parse(fetch.calls[1].init.body);
+    expect(secondBody.messages.at(-1).content).toContain('60-minute ceiling');
+    expect(secondBody.messages.at(-1).content).not.toContain('daily');
+  });
+
+  it('never loops: tool calls on the correction turn are ignored', async () => {
+    // Static mock: the correction turn ALSO answers with a grant_access call.
+    const fetch = grantingFetch(10, 'check DMs');
+    const { ctx, chrome } = loadBackground({ seed: clampSeed(), fetch });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+    expect(fetch.calls.length).toBe(2);
+    expect(Object.keys(chrome.storage._store.activeSessions)).toEqual(['tab:1:instagram.com']);
+  });
+
+  it('keeps the grant and the first reply when the honesty turn fails', async () => {
+    let call = 0;
+    const fetch = makeMockFetch(() => {
+      call += 1;
+      if (call === 1) {
+        return {
+          content: [
+            { type: 'text', text: 'Okay.' },
+            { type: 'tool_use', id: 't1', name: 'grant_access', input: { minutes: 10, reason: 'check DMs' } }
+          ]
+        };
+      }
+      return { status: 500, json: 'down' };
+    });
+    const { ctx, chrome } = loadBackground({ seed: clampSeed(), fetch });
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+
+    // The grant already landed; a failed follow-up must not turn it into an error.
+    expect(res.error).toBeUndefined();
+    expect(res.grantedSession.intervalMinutes).toBe(2);
+    expect(res.systemNote).toBeTruthy();
+    expect(res.assistantText).toBe('Okay.');
+    // The synthetic user turn was popped, so the transcript still alternates.
+    const history = chrome.storage._store.chatHistories[transcript('instagram.com')];
+    expect(history.at(-1).role).toBe('assistant');
+    expect(history.at(-1).content).toBe('Okay.');
+  });
+});
+
+// Reading a transcript leaks what the user told their coach, so getHistory is
+// held to a stricter bar than clearChatHistory: named namespaces open only to
+// our own pages, and content scripts only ever see their own site's transcript.
+describe('getHistory', () => {
+  const seedHistories = () => ({
+    ...CONFIGURED,
+    chatHistories: {
+      context: [
+        { role: 'user', content: 'about me' },
+        { role: 'assistant', content: 'noted' }
+      ],
+      [transcript('instagram.com')]: [
+        { role: 'user', content: '(user just opened the conversation)' },
+        { role: 'assistant', content: 'hey' },
+        { role: 'user', content: '(Intention: your grant was clamped.)' },
+        { role: 'assistant', content: 'actually 2 minutes' },
+        { role: 'user', content: 'fine' }
+      ]
+    }
+  });
+
+  it('lets an extension page read the named namespaces', async () => {
+    const { ctx } = loadBackground({ seed: seedHistories() });
+    const res = await ctx.handleMessage({ action: 'getHistory', historyKey: 'context' }, EXT_PAGE);
+    expect(res.turns).toEqual([
+      { role: 'user', content: 'about me' },
+      { role: 'assistant', content: 'noted' }
+    ]);
+  });
+
+  it('coerces a content sender to its own site and filters synthetic turns', async () => {
+    const { ctx } = loadBackground({ seed: seedHistories() });
+    const res = await ctx.handleMessage(
+      { action: 'getHistory', domain: 'instagram.com' },
+      tab(3, 'www.instagram.com')
+    );
+    expect(res.turns.map(t => t.content)).toEqual(['hey', 'actually 2 minutes', 'fine']);
+  });
+
+  it('gives a content sender on another host nothing', async () => {
+    const { ctx } = loadBackground({ seed: seedHistories() });
+    const res = await ctx.handleMessage(
+      { action: 'getHistory', domain: 'instagram.com' },
+      tab(3, 'evil.com')
+    );
+    expect(res.turns).toEqual([]);
+  });
+
+  it('does not let a content sender read a namespaced transcript by naming its key', async () => {
+    const { ctx } = loadBackground({ seed: seedHistories() });
+    const res = await ctx.handleMessage(
+      { action: 'getHistory', historyKey: 'context', domain: 'instagram.com' },
+      tab(3, 'www.instagram.com')
+    );
+    // Coerced to the site's own transcript, never the options page's.
+    expect(res.turns.map(t => t.content)).not.toContain('about me');
+    expect(res.turns.map(t => t.content)).toContain('hey');
+  });
+});
+
+describe('walking away from the gate', () => {
+  it('counts the walk-away and leaves tab closing to the client', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED });
+    const removed = [];
+    chrome.tabs.remove = (id) => removed.push(id);
+
+    const res = await ctx.handleMessage(
+      { action: 'endSession', domain: 'instagram.com', reason: 'walked_away' },
+      tab(4)
+    );
+
+    expect(res.ok).toBe(true);
+    // The client shows its walk-away moment first and owns the close timing.
+    expect(removed).toEqual([]);
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.walkedAwayToday).toBe(1);
+    expect(stats.walkedAwayWeek).toBe(1);
+  });
+
+  it("cannot be spoofed by a page for another site's streak", async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED });
+    // A hostile page on evil.example posting a walk-away for instagram.com:
+    // the streak the prompt trusts must not be inflatable cross-domain.
+    const res = await ctx.handleMessage(
+      { action: 'endSession', domain: 'instagram.com', reason: 'walked_away' },
+      tab(4, 'evil.example')
+    );
+    expect(res.ok).toBe(true);
+    expect((await ctx.getStatsForDomain('instagram.com')).walkedAwayToday).toBe(0);
+  });
+
+  it('retires a live pass instead of counting it as a walk-away', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(10) });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(4)
+    );
+
+    const res = await ctx.handleMessage(
+      { action: 'endSession', domain: 'instagram.com', reason: 'walked_away' },
+      tab(4)
+    );
+
+    expect(res.ok).toBe(true);
+    expect(chrome.storage._store.activeSessions['tab:4:instagram.com']).toBeUndefined();
+    expect((await ctx.getStatsForDomain('instagram.com')).walkedAwayToday).toBe(0);
+  });
+});
+
+// An LLM reply that saves one coach observation, in Anthropic's response shape.
+function notingFetch(observation) {
+  return makeMockFetch({
+    content: [
+      { type: 'text', text: 'Noted.' },
+      { type: 'tool_use', id: 'n1', name: 'note_observation', input: { observation } }
+    ]
+  });
+}
+
+describe('note_observation', () => {
+  const tenNotes = () => Array.from({ length: 10 }, (_, i) => ({ text: `note ${i}`, domain: 'x.com', at: 1 }));
+
+  it('stores the note and shows it to the next conversation', async () => {
+    const fetch = notingFetch('They reach for Instagram mid-afternoon.');
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+    expect(chrome.storage._store.coachObservations).toEqual([
+      expect.objectContaining({ text: 'They reach for Instagram mid-afternoon.', domain: 'instagram.com' })
+    ]);
+
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'b' },
+      tab(1)
+    );
+    const system = systemPromptOf(fetch);
+    expect(system).toContain("Things you've noticed before");
+    expect(system).toContain('They reach for Instagram mid-afternoon.');
+  });
+
+  it('does not store the same note twice', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, coachObservations: tenNotes() },
+      fetch: notingFetch('note 9')
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'x.com', userMessage: 'a' },
+      tab(1)
+    );
+    const texts = chrome.storage._store.coachObservations.map(o => o.text);
+    expect(texts).toHaveLength(10);
+    expect(texts.filter(t => t === 'note 9')).toHaveLength(1);
+  });
+
+  it('caps the notepad at ten, dropping the oldest', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, coachObservations: tenNotes() },
+      fetch: notingFetch('a fresh note')
+    });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'x.com', userMessage: 'a' },
+      tab(1)
+    );
+    const texts = chrome.storage._store.coachObservations.map(o => o.text);
+    expect(texts).toHaveLength(10);
+    expect(texts).not.toContain('note 0');
+    expect(texts.at(-1)).toBe('a fresh note');
+  });
+
+  it('is ignored outside gate and check-in conversations', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: notingFetch('sneaky') });
+    await ctx.handleMessage(
+      { action: 'chat', mode: 'context', userMessage: 'a' },
+      EXT_PAGE
+    );
+    expect(chrome.storage._store.coachObservations).toBeUndefined();
+  });
+});
+
+describe('save_onboarding limits', () => {
+  it('stores -1, not NaN, when the model omits a daily minutes cap', async () => {
+    const fetch = makeMockFetch({
+      content: [
+        { type: 'text', text: 'Saved.' },
+        {
+          type: 'tool_use', id: 't1', name: 'save_onboarding',
+          input: {
+            user_context: 'me',
+            blocked_domains: ['y.com'],
+            domain_limits: [{ domain: 'y.com', max_grants_per_day: 2 }]
+          }
+        }
+      ]
+    });
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
+    await ctx.handleMessage({ action: 'chat', mode: 'setup', userMessage: 'done' }, EXT_PAGE);
+    // `Number(undefined) ?? -1` was NaN, which read as an always-hit cap.
+    expect(chrome.storage._store.domainLimits['y.com']).toEqual({ maxGrants: 2, maxMinutes: -1 });
   });
 });

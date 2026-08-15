@@ -117,6 +117,16 @@ async function throwHttpError(res, providerLabel) {
   throw err;
 }
 
+// The system prompt travels either as one string or as the ordered block array
+// splitSystemForCache (prompts.js) produces, where `cache: true` marks the
+// stable prefix. Only Anthropic's API understands per-block cache hints; every
+// other provider gets the blocks joined back into the single string it always
+// took, so a cache-split prompt never changes what a model actually reads.
+function joinSystemBlocks(system) {
+  if (!Array.isArray(system)) return system == null ? '' : String(system);
+  return system.map(b => (b && b.text) || '').join('\n');
+}
+
 async function callLLM({ provider, apiKey, model, system, messages, tools, accessToken, backendUrl }) {
   if (!provider) throw new Error('No provider configured');
   // The hosted path authenticates with the entitlement token instead of a key.
@@ -159,6 +169,8 @@ async function callIntentionHosted({ accessToken, backendUrl, model, system, mes
   }
   const base = (backendUrl || DEFAULT_INTENTION_BACKEND_URL).replace(/\/+$/, '');
   const body = {
+    // Forwarded untouched — string or cache-split block array alike. The
+    // server accepts both shapes and owns mapping blocks to provider caching.
     system,
     messages: messages.map(m => ({ role: m.role, content: m.content }))
   };
@@ -213,9 +225,21 @@ async function callAnthropic({ apiKey, model, system, messages, tools }) {
   const body = {
     model,
     max_tokens: 1024,
-    system,
+    // The block-array form carries the cache split: a block flagged `cache`
+    // becomes a cache_control breakpoint, so the stable prompt prefix is
+    // billed as a cache read on every turn after the first instead of being
+    // re-processed because the volatile clock/usage suffix changed.
+    system: Array.isArray(system)
+      ? system.map(b => b && b.cache
+          ? { type: 'text', text: b.text, cache_control: { type: 'ephemeral' } }
+          : { type: 'text', text: (b && b.text) || '' })
+      : system,
     messages: messages.map(m => ({ role: m.role, content: m.content }))
   };
+  // No system at all (or an all-empty split) must mean "omit the field":
+  // Anthropic rejects empty text blocks and an empty block array alike.
+  if (Array.isArray(body.system) && body.system.length === 0) delete body.system;
+  if (body.system === '') delete body.system;
   if (tools && tools.length) {
     body.tools = tools.map(t => ({
       name: t.name,
@@ -246,7 +270,8 @@ async function callAnthropic({ apiKey, model, system, messages, tools }) {
 
 async function callOpenAICompatible({ baseUrl, apiKey, model, system, messages, tools }) {
   const openaiMessages = [];
-  if (system) openaiMessages.push({ role: 'system', content: system });
+  const systemText = joinSystemBlocks(system);
+  if (systemText) openaiMessages.push({ role: 'system', content: systemText });
   for (const m of messages) openaiMessages.push({ role: m.role, content: m.content });
 
   const body = { model, messages: openaiMessages };
@@ -282,7 +307,8 @@ async function callGemini({ apiKey, model, system, messages, tools }) {
     parts: [{ text: m.content }]
   }));
   const body = { contents };
-  if (system) body.systemInstruction = { parts: [{ text: system }] };
+  const systemText = joinSystemBlocks(system);
+  if (systemText) body.systemInstruction = { parts: [{ text: systemText }] };
   if (tools && tools.length) {
     body.tools = [{
       functionDeclarations: tools.map(t => ({

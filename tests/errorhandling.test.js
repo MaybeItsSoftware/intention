@@ -144,12 +144,12 @@ describe('background.js handleChat — malformed tool calls do not lose the turn
   });
 
   it('keeps the turn and history when a tool handler throws outright', async () => {
-    // save_onboarding with a domain_limits entry whose `.domain` access would
-    // throw if item were null — exercise the try/catch around each tool call.
+    // save_onboarding with blocked_domains as a non-array, so the handler's
+    // `.map()` call throws — exercise the try/catch around each tool call.
     const fetch = makeMockFetch({
       content: [
         { type: 'text', text: 'Got it, all set.' },
-        { type: 'tool_use', id: 't1', name: 'save_onboarding', input: { domain_limits: [null, { domain: 'y.com' }] } }
+        { type: 'tool_use', id: 't1', name: 'save_onboarding', input: { blocked_domains: { not: 'an array' }, domain_limits: [null, { domain: 'y.com' }] } }
       ]
     });
     const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
@@ -158,10 +158,30 @@ describe('background.js handleChat — malformed tool calls do not lose the turn
       {}
     );
     expect(res.error).toBeUndefined();
-    expect(res.assistantText).toContain('Got it, all set.');
+    // The failure note travels as systemNote for the UI to render outside the
+    // chat; the spoken reply and the persisted transcript both stay clean.
+    expect(res.assistantText).toBe('Got it, all set.');
+    expect(res.systemNote).toMatch(/something went wrong/i);
     const history = chrome.storage._store.chatHistories['setup'];
     expect(history).toBeDefined();
-    expect(history.at(-1).content).toContain('Got it, all set.');
+    expect(history.at(-1).content).toBe('Got it, all set.');
+  });
+});
+
+describe('background.js handleChat — coach-opened conversation failures', () => {
+  it('returns the standard error contract when the opener request fails', async () => {
+    const fetch = makeMockFetch({ status: 503, json: 'down' });
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
+    // No userMessage: background pushes the synthetic open marker itself.
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'x.com' },
+      { tab: { id: 1 } }
+    );
+    expect(res.error).toMatch(/having issues/i);
+    expect(res.networkError).toBe(false);
+    expect(res.errorCode).toBe('provider_error');
+    // Nothing persisted: a retry must not find a stacked marker.
+    expect(chrome.storage._store.chatHistories ?? {}).toEqual({});
   });
 });
 
