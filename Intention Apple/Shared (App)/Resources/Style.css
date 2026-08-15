@@ -14,15 +14,24 @@ html {
     height: 100%;
 }
 
+/* This window used to hold only the icon and one "turn on the extension" line,
+   which a fixed `height: 100%` centred column fits comfortably. It now also
+   carries the coaching-credit section, which pushes the column past a small
+   window — and a height-capped centred column spills past BOTH ends with
+   nothing to scroll, so the overflow is simply unreachable. `min-height` lets
+   the body grow instead, which turns the overflow back into a normal scroll
+   while still centring whenever the content does fit. */
 body {
     display: flex;
     align-items: center;
     justify-content: center;
     flex-direction: column;
 
+    box-sizing: border-box;
     gap: var(--spacing);
-    margin: 0 calc(var(--spacing) * 2);
-    height: 100%;
+    margin: 0;
+    padding: var(--spacing) calc(var(--spacing) * 2);
+    min-height: 100%;
 
     font: -apple-system-short-body;
     text-align: center;

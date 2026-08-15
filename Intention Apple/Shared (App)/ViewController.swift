@@ -88,6 +88,19 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             object: nil
         )
 #elseif os(macOS)
+        // Same story as iOS above: the storyboard's webview carries only a
+        // design-time frame (translatesAutoresizingMaskIntoConstraints = NO
+        // with no constraints), which went unnoticed while the window was a
+        // fixed 425x325. Now that it resizes to fit the coaching-credit
+        // section, the webview has to follow it or it stays its nib size and
+        // leaves the rest of the window blank.
+        self.webView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            self.webView.topAnchor.constraint(equalTo: view.topAnchor),
+            self.webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            self.webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            self.webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
         self.webView.configuration.userContentController.add(self, name: "controller")
         // Same bridge name the iOS options page uses, so Script.js can drive
         // the StoreKit purchase flow from the Mac app's own window — the Mac
