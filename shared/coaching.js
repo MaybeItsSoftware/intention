@@ -65,12 +65,20 @@ function postTabMessage(message) {
 // what it was — see `getIntendedUrl`.
 let intendedUrl = '';
 
-// Check for duplicate coaching tab for same domain
-sendTabMessage({ action: 'checkDuplicateCoaching', domain }, 10000)
+// Check for duplicate coaching tab for same domain. The verdict is stored so
+// renderCoachUI can wait for it before opening the conversation — an opener
+// fired into a tab that is about to close itself would burn a request for
+// nothing. Resolves true when this tab is the duplicate (window.close()
+// already called); a hung check falls through as false via the timeout.
+const dupCheckPromise = sendTabMessage({ action: 'checkDuplicateCoaching', domain }, 10000)
   .then((resp) => {
-    if (resp?.duplicate) window.close();
+    if (resp?.duplicate) {
+      window.close();
+      return true;
+    }
+    return false;
   })
-  .catch(() => {});
+  .catch(() => false);
 
 const intendedUrlReady = isApp
   ? Promise.resolve()
@@ -238,15 +246,31 @@ async function passThroughIfGranted() {
   return true;
 }
 
-function renderCoachUI() {
-  const seed = mode === 'checkin'
-    ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
-    : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
-  addMessage(messagesEl, 'assistant', seed);
-
+async function renderCoachUI() {
   sendBtn.addEventListener('click', send);
   inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
   inputEl.focus();
+
+  // Bail if this tab is the duplicate — window.close() is already on its way.
+  if (await dupCheckPromise) return;
+
+  // Re-render whatever was already said this pass (the background filters out
+  // its own synthetic marker turns), so a same-day reopen picks the
+  // conversation back up instead of starting cold.
+  let turns = [];
+  try {
+    const resp = await sendTabMessage({ action: 'getHistory', domain }, 10000);
+    turns = resp?.turns || [];
+  } catch (e) {
+    turns = [];
+  }
+  for (const turn of turns) {
+    addMessage(messagesEl, turn.role === 'user' ? 'user' : 'assistant', turn.content);
+  }
+
+  // The coach speaks first: always at check-in (the pass ending is the news),
+  // otherwise only when there is no conversation to pick back up.
+  if (mode === 'checkin' || turns.length === 0) attemptOpen();
 }
 
 // No-AI counterpart to renderCoachUI: a message plus a single action button,
@@ -313,6 +337,11 @@ try {
   console.warn(INT_LOG, 'getAccess message threw:', e);
 }
 
+// Today's stats for this domain, kept for showWalkAwayMoment below: the
+// walk-away line must render instantly, so it reads what was already fetched
+// at load rather than asking anything at close time.
+let domainStats = null;
+
 // Fetch stats and render stats row
 try {
   chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
@@ -321,6 +350,7 @@ try {
       return;
     }
     if (stats) {
+      domainStats = stats;
       const statsRow = document.getElementById('int-stats-row');
       if (statsRow) {
         statsRow.innerHTML = `
@@ -340,6 +370,10 @@ try {
             <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
             <div class="int-stat-label">All Time</div>
           </div>
+          <div class="int-stat">
+            <div class="int-stat-value">${stats.walkedAwayWeek || 0}</div>
+            <div class="int-stat-label">Walked away (wk)</div>
+          </div>
         `;
         statsRow.style.display = 'flex';
       }
@@ -353,8 +387,10 @@ let sending = false;
 // Bumped above providers.js's 30s per-request fetch timeout so the background
 // worker's own timeout/error classification wins the race and reaches the UI
 // as a friendly message, instead of the UI giving up first on a request that
-// was actually about to fail cleanly on its own.
-const CHAT_TIMEOUT_MS = 35000;
+// was actually about to fail cleanly on its own. A clamped grant now makes
+// TWO sequential LLM calls (the honesty turn), so the budget covers both —
+// giving up between them would leave a granted pass with nobody following it.
+const CHAT_TIMEOUT_MS = 75000;
 // Only the most recent attemptSend's result is allowed to touch the DOM.
 // Nothing in the current flow can put two attempts in flight at once, but
 // this keeps a stale response harmless if that ever changes.
@@ -436,6 +472,66 @@ async function attemptSend(text) {
   typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
     if (seq !== requestSeq) return;
     sending = false;
+    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
+    if (resp.grantedSession) {
+      followGrantedSession(resp.grantedSession);
+    }
+  });
+}
+
+// The hardcoded greetings the gate used to open with, kept as the offline
+// fallback: if the LLM opener can't be fetched, this line still stands the
+// gate up. No retry row — the composer stays live, so the user's first reply
+// retries naturally through attemptSend.
+const OPENER_FALLBACK = mode === 'checkin'
+  ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
+  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
+
+// attemptSend minus the user bubble: asks the background for the coach's
+// opening line. No userMessage — the background records its own marker turn.
+async function attemptOpen() {
+  const seq = ++requestSeq;
+  sending = true;
+  const thinking = addMessage(messagesEl, 'assistant', '…', true);
+
+  const fallBack = () => {
+    thinking.remove();
+    addMessage(messagesEl, 'assistant', OPENER_FALLBACK);
+    sending = false;
+  };
+
+  let resp;
+  try {
+    resp = await sendTabMessage({
+      action: 'chat',
+      mode,
+      domain,
+      isApp,
+      appLabel: isApp ? appLabel : undefined
+    });
+  } catch (e) {
+    if (seq !== requestSeq) return;
+    fallBack();
+    return;
+  }
+
+  if (seq !== requestSeq) return;
+
+  if (!resp || resp.error) {
+    if (resp && resp.locked) {
+      thinking.remove();
+      sending = false;
+      showPaywall();
+      return;
+    }
+    fallBack();
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeMessage(thinking, messagesEl, resp.assistantText || OPENER_FALLBACK, () => {
+    if (seq !== requestSeq) return;
+    sending = false;
+    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
     if (resp.grantedSession) {
       followGrantedSession(resp.grantedSession);
     }
@@ -443,8 +539,10 @@ async function attemptSend(text) {
 }
 
 // Shared by the coach chat flow and the no-AI simple-mode pass button: once a
-// session is granted, get the user through to what they asked for.
-function followGrantedSession(grantedSession, delayMs = 2200) {
+// session is granted, get the user through to what they asked for. The pause
+// is just long enough to register the grant line — the reveal above has
+// already finished, so anything longer is dead air.
+function followGrantedSession(grantedSession, delayMs = 600) {
   setTimeout(() => {
     if (isApp && window.intentionApps) {
       // Android: launch the granted app; the native bridge closes this overlay.
@@ -520,7 +618,13 @@ function addActionRow(container, actions) {
   return row;
 }
 
+// A double-click can get both clicks past the awaits below before the
+// walk-away overlay exists to swallow the second one — which would record
+// two walk-aways for a single exit.
+let closingGate = false;
 closeBtn.addEventListener('click', async () => {
+  if (closingGate) return;
+  closingGate = true;
   // End session and close the current tab (extensions) or hand off to the
   // native bridge, which opens a blank tab over the blocked one and dismisses
   // this overlay (Android — see closeBtn.textContent above). `domain` is what
@@ -528,15 +632,80 @@ closeBtn.addEventListener('click', async () => {
   // Only the local tab-id lookup is waited on — window.close() below would
   // otherwise tear the page down before either message was posted.
   await selfTabReady;
-  postTabMessage({ action: 'endSession', domain, reason: 'fulfilled' });
-  postTabMessage({ action: 'closeCurrentTab' });
-  if (isApp && !window.intentionApps) {
-    // iOS app WebView: window.close() is a no-op — go back to settings.
-    window.location.href = 'options.html';
+
+  const leave = () => {
+    postTabMessage({ action: 'closeCurrentTab' });
+    if (isApp && !window.intentionApps) {
+      // iOS app WebView: window.close() is a no-op — go back to settings.
+      window.location.href = 'options.html';
+      return;
+    }
+    window.close();
+  };
+
+  if (mode === 'checkin') {
+    postTabMessage({ action: 'endSession', domain, reason: 'fulfilled' });
+    leave();
     return;
   }
-  window.close();
+
+  // Gate mode (coach or simple UI — same button): closing without taking time
+  // is a walk-away, the exact habit this tool exists to build. Record it
+  // immediately — 'walked_away' doesn't close the tab on the background side,
+  // so the moment below owns the close timing.
+  postTabMessage({ action: 'endSession', domain, reason: 'walked_away' });
+  showWalkAwayMoment(leave);
 });
+
+// Spoken at the moment of walking away. Deliberately not an LLM call and not
+// awaited on anything: the whole point of the moment is that it costs nothing
+// and leaves fast.
+const WALK_AWAY_LINES = [
+  'Closed. That is the whole game.',
+  'You looked at the urge and left. Strong.',
+  'Nothing here you needed. Well spotted.',
+  'That urge just lost one.',
+  'Walking away is the rep. You just did one.'
+];
+
+// A ~1s full-screen affirmation before the page goes, skippable with a click
+// (same capture-phase idiom as typeMessage). onDone fires exactly once,
+// whether the timer or the skip gets there first.
+function showWalkAwayMoment(onDone) {
+  const overlay = document.createElement('div');
+  overlay.className = 'int-walkaway';
+  // +1 for the walk-away just recorded: domainStats was fetched at load,
+  // before this one happened.
+  const weekCount = ((domainStats?.walkedAwayWeek) || 0) + 1;
+  overlay.textContent = weekCount >= 2
+    ? `That's ${weekCount} times this week you've walked away. That streak is the real work.`
+    : WALK_AWAY_LINES[Math.floor(Math.random() * WALK_AWAY_LINES.length)];
+  document.body.appendChild(overlay);
+
+  let finished = false;
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    document.removeEventListener('click', skip, true);
+    onDone();
+  }
+  function skip() { finish(); }
+
+  const timer = setTimeout(finish, 950);
+  document.addEventListener('click', skip, true);
+}
+
+// Short user-facing note from the background (a clamped grant, a cap hit):
+// machinery speaking, not the coach, so it renders as a centered aside.
+function addSystemNote(container, text) {
+  const div = document.createElement('div');
+  div.className = 'int-msg int-system';
+  div.textContent = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
 
 function addMessage(container, role, text, isThinking) {
   const div = document.createElement('div');
@@ -551,7 +720,10 @@ function typeMessage(el, container, text, onDone) {
   el.textContent = '';
   let i = 0;
   let finished = false;
-  const step = Math.max(1, Math.ceil(text.length / 140));
+  // Reveal the whole message in ~290ms (24 steps × 12ms) regardless of
+  // length — the old 2.5s length-independent crawl was self-inflicted
+  // latency at the impulse moment.
+  const step = Math.max(1, Math.ceil(text.length / 24));
 
   function finish() {
     if (finished) return;
@@ -569,7 +741,7 @@ function typeMessage(el, container, text, onDone) {
     el.textContent = text.slice(0, i);
     if (container) container.scrollTop = container.scrollHeight;
     if (i >= text.length) finish();
-  }, 18);
+  }, 12);
 
   document.addEventListener('click', skip, true);
 }

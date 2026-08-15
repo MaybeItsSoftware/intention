@@ -26,10 +26,11 @@ function sendBg(msg) {
 
 // Chat calls (coach/settings-gate modals) can hang if the background worker
 // is busy or the LLM request stalls, so unlike sendBg above they get a
-// bounded timeout — above providers.js's 30s fetch timeout, so the
-// background's own error classification wins the race — and reject on
+// bounded timeout — above TWO of providers.js's 30s fetch timeouts, since a
+// clamped grant adds a second honesty-turn call, and the background's own
+// error classification should win the race — and reject on
 // chrome.runtime.lastError instead of silently resolving with undefined.
-function sendBgChat(msg, timeoutMs = 35000) {
+function sendBgChat(msg, timeoutMs = 75000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
     try {
@@ -1086,6 +1087,29 @@ function renderContextCard(userContext) {
   }
 }
 
+// The coach's cross-day notepad (see note_observation in background.js).
+// Readable and clearable here because a memory the user can't inspect would
+// be a dossier, not a notepad.
+async function renderCoachObservations() {
+  const list = document.getElementById('coach-observations-list');
+  const stored = await new Promise(resolve => chrome.storage.local.get('coachObservations', resolve));
+  const observations = stored.coachObservations || [];
+  list.innerHTML = '';
+  if (!observations.length) {
+    const li = document.createElement('li');
+    li.className = 'muted';
+    li.textContent = '(nothing yet)';
+    list.appendChild(li);
+    return;
+  }
+  for (const obs of observations) {
+    const li = document.createElement('li');
+    // Model-authored text: textContent only, never innerHTML.
+    li.textContent = (obs && obs.text) || '';
+    list.appendChild(li);
+  }
+}
+
 // Global blocking-mode card in Settings: Coach vs Simple, and (for Simple) the
 // default hard/pass behavior + pass length. Per-row controls (buildRowModeControl)
 // let individual sites/apps override this global default.
@@ -1135,6 +1159,13 @@ async function showSettingsView(state) {
   document.getElementById('settings-view').hidden = false;
 
   renderContextCard(state.userContext);
+  await renderCoachObservations();
+
+  document.getElementById('clear-observations-btn').addEventListener('click', async () => {
+    await new Promise(resolve => chrome.storage.local.set({ coachObservations: [] }, resolve));
+    await renderCoachObservations();
+    setStatus('observations-status', 'Cleared.', 'success');
+  });
 
   document.getElementById('save-context-btn').addEventListener('click', async () => {
     const contextEditInput = document.getElementById('context-edit-input');
@@ -1834,6 +1865,11 @@ let coachSending = false;
 // see the matching guard in coaching.js for why.
 let coachRequestSeq = 0;
 
+// The modal's old hardcoded greeting, kept as the offline fallback for the
+// LLM opener below. No retry row on failure — the input stays live, so the
+// user's first message retries naturally through attemptCoachSend.
+const COACH_OPENER_FALLBACK = "Hey there. Let's design your coaching context together. To help me support you better, what are you working on right now, and what tend to be your biggest distractions or triggers? I'll save our updated notes as we chat.";
+
 async function openCoachModal() {
   const modal = document.getElementById('coach-modal');
   modal.hidden = false;
@@ -1843,7 +1879,6 @@ async function openCoachModal() {
   coachSending = false;
   const messagesEl = document.getElementById('coach-messages');
   messagesEl.innerHTML = '';
-  addCoachMsg('assistant', "Hey there. Let's design your coaching context together. To help me support you better, what are you working on right now, and what tend to be your biggest distractions or triggers? I'll save our updated notes as we chat.");
 
   const input = document.getElementById('coach-input');
   const send = document.getElementById('coach-send-btn');
@@ -1859,6 +1894,48 @@ async function openCoachModal() {
   };
   send.onclick = onSend;
   input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
+
+  // These modals are one-shot by design: the transcript is normally deleted
+  // on close, but closing the options TAB skips that handler, and the opener
+  // below would then stack a fresh marker+greeting onto the orphaned
+  // conversation every time the modal reopens. Clear first so each open
+  // really starts clean.
+  sendBg({ action: 'clearChatHistory', historyKey: 'context' }).then(() => {
+    attemptCoachOpen(messagesEl);
+  });
+}
+
+// attemptCoachSend minus the user bubble: the coach speaks first. No
+// userMessage — the background records its own marker turn.
+async function attemptCoachOpen(messagesEl) {
+  const seq = ++coachRequestSeq;
+  coachSending = true;
+  const thinking = addCoachMsg('assistant', '…', true);
+  let resp;
+  try {
+    resp = await sendBgChat({ action: 'chat', mode: 'context' });
+  } catch (e) {
+    if (seq !== coachRequestSeq) return;
+    coachSending = false;
+    thinking.remove();
+    addCoachMsg('assistant', COACH_OPENER_FALLBACK);
+    return;
+  }
+  if (seq !== coachRequestSeq) return;
+  coachSending = false;
+  if (!resp || resp.error) {
+    thinking.remove();
+    if (resp && resp.locked) {
+      await closeCoachModal();
+      await openPaywallModal();
+      return;
+    }
+    addCoachMsg('assistant', COACH_OPENER_FALLBACK);
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeCoachMsg(thinking, resp.assistantText || COACH_OPENER_FALLBACK);
+  if (resp.systemNote) addCoachMsg('assistant', resp.systemNote, false, true);
 }
 
 async function attemptCoachSend(text, messagesEl) {
@@ -1898,6 +1975,7 @@ async function attemptCoachSend(text, messagesEl) {
   }
   thinking.classList.remove('int-thinking');
   typeCoachMsg(thinking, resp.assistantText || '(no reply)');
+  if (resp.systemNote) addCoachMsg('assistant', resp.systemNote, false, true);
   if (resp.contextUpdated) {
     addCoachMsg('assistant', `(context saved - ${resp.contextUpdated.diff_summary || 'updated'})`, false, true);
     const state = await getConfig();
@@ -1972,13 +2050,6 @@ async function openGateModal({ changeType, domain, currentValue, newValue, title
   messagesEl.innerHTML = '';
   gateSending = false;
 
-  const seed = changeType === 'remove'
-    ? `You want to remove ${domain} from your blocklist. You set this rule for a reason. Tell me what's changed.`
-    : changeType === 'increase_limit'
-      ? `You want more time on ${domain}. Why? What's driving this right now?`
-      : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
-  addGateMsg('assistant', seed);
-
   const input = document.getElementById('gate-input');
   const send = document.getElementById('gate-send-btn');
   input.value = '';
@@ -1994,6 +2065,67 @@ async function openGateModal({ changeType, domain, currentValue, newValue, title
   send.onclick = onSend;
   input.onkeydown = e => { if (e.key === 'Enter') onSend(); };
   document.getElementById('gate-close-btn').onclick = closeGateModal;
+
+  // Same reason as openCoachModal: closing the options tab skips
+  // closeGateModal's transcript delete, so clear before the opener rather
+  // than stacking onto an orphaned conversation.
+  sendBg({ action: 'clearChatHistory', historyKey: `settings_gate:${changeType}:${domain || 'all'}` }).then(() => {
+    attemptGateOpen(messagesEl);
+  });
+}
+
+// The modal's old hardcoded openers, kept as the offline fallback per change
+// type. No retry row on failure — the input stays live, so the user's first
+// message retries naturally through attemptGateSend.
+function gateOpenerFallback(changeType, domain) {
+  return changeType === 'remove'
+    ? `You want to remove ${domain} from your blocklist. You set this rule for a reason. Tell me what's changed.`
+    : changeType === 'increase_limit'
+      ? `You want more time on ${domain}. Why? What's driving this right now?`
+      : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
+}
+
+// attemptGateSend minus the user bubble: the coach speaks first. No
+// userMessage — the background records its own marker turn.
+async function attemptGateOpen(messagesEl) {
+  const seq = ++gateRequestSeq;
+  gateSending = true;
+  // gateChange can be nulled by closeGateModal while the request is in
+  // flight, so hold on to the fields the fallback needs.
+  const { changeType, domain, currentValue, newValue } = gateChange;
+  const thinking = addGateMsg('assistant', '…', true);
+  let resp;
+  try {
+    resp = await sendBgChat({
+      action: 'chat',
+      mode: 'settings_gate',
+      domain,
+      changeType,
+      currentValue,
+      newValue
+    });
+  } catch (e) {
+    if (seq !== gateRequestSeq) return;
+    gateSending = false;
+    thinking.remove();
+    addGateMsg('assistant', gateOpenerFallback(changeType, domain));
+    return;
+  }
+  if (seq !== gateRequestSeq) return;
+  gateSending = false;
+  if (!resp || resp.error) {
+    thinking.remove();
+    if (resp && resp.locked) {
+      await closeGateModal();
+      await openPaywallModal();
+      return;
+    }
+    addGateMsg('assistant', gateOpenerFallback(changeType, domain));
+    return;
+  }
+  thinking.classList.remove('int-thinking');
+  typeGateMsg(thinking, resp.assistantText || gateOpenerFallback(changeType, domain));
+  if (resp.systemNote) addGateMsg('assistant', resp.systemNote, false, true);
 }
 
 async function attemptGateSend(text, messagesEl) {
@@ -2041,6 +2173,7 @@ async function attemptGateSend(text, messagesEl) {
   }
   thinking.classList.remove('int-thinking');
   typeGateMsg(thinking, resp.assistantText || '(no reply)');
+  if (resp.systemNote) addGateMsg('assistant', resp.systemNote, false, true);
   if (resp.approved) {
     addGateMsg('assistant', '(approved - applying your change)', false, true);
     const cb = gateChange.onApproved;

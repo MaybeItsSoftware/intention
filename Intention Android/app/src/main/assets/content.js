@@ -191,6 +191,34 @@ const OVERLAY_CSS = `
 #intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
 #intention-root .int-stat-label { color: #545863; }
 
+/* System note: machinery speaking (a clamped grant, a cap hit), not the coach. */
+#intention-root .int-msg.int-system {
+  align-self: center;
+  text-align: center;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 8px;
+  color: #86efac;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+/* Walk-away moment: one full-screen line before the page goes. */
+#intention-root .int-walkaway {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 20px;
+  color: #e7e7ea;
+  background: #0f1115;
+  font-family: inherit;
+}
+
 @keyframes int-fade-in {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
@@ -694,11 +722,6 @@ function renderChatUI({ mode, domain, blockConfig }) {
     return;
   }
 
-  const seed =
-    mode === "gate"
-      ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
-      : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
-
   const subtitle =
     mode === "gate"
       ? `${domain} — let's check in before you go through`
@@ -733,8 +756,6 @@ function renderChatUI({ mode, domain, blockConfig }) {
   const sendBtn = document.getElementById("int-send");
   const closeBtn = document.getElementById("int-close");
 
-  addMessage(messagesEl, "assistant", seed);
-
   // Fetch stats and render stats row
   try {
     chrome.runtime.sendMessage(
@@ -749,6 +770,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
           return;
         }
         if (stats) {
+          domainStats = stats;
           const statsRow = document.getElementById("int-stats-row");
           if (statsRow) {
             statsRow.innerHTML = `
@@ -768,6 +790,10 @@ function renderChatUI({ mode, domain, blockConfig }) {
               <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
               <div class="int-stat-label">All Time</div>
             </div>
+            <div class="int-stat">
+              <div class="int-stat-value">${stats.walkedAwayWeek || 0}</div>
+              <div class="int-stat-label">Walked away (wk)</div>
+            </div>
           `;
             statsRow.style.display = "flex";
           }
@@ -783,8 +809,10 @@ function renderChatUI({ mode, domain, blockConfig }) {
   // so a stale response after a timeout+retry can't double-render.
   let requestSeq = 0;
   // Above providers.js's 30s per-request fetch timeout, so the background
-  // worker's own timeout/error classification wins the race.
-  const CHAT_TIMEOUT_MS = 35000;
+  // worker's own timeout/error classification wins the race — and above TWO
+  // of them, since a clamped grant makes a second honesty-turn call; giving
+  // up between the calls would orphan a pass that was actually granted.
+  const CHAT_TIMEOUT_MS = 75000;
 
   async function send() {
     const text = inputEl.value.trim();
@@ -864,8 +892,98 @@ function renderChatUI({ mode, domain, blockConfig }) {
       resp.assistantText || "(no reply)",
       () => {
         sending = false;
+        if (resp.systemNote) addSystemNote(resp.systemNote);
         if (resp.grantedSession) {
-          setTimeout(() => window.location.reload(), 2200);
+          // The reveal above has already finished — just long enough to
+          // register the grant line before the pass starts.
+          setTimeout(() => window.location.reload(), 600);
+        }
+      },
+    );
+  }
+
+  // Short user-facing note from the background (a clamped grant, a cap hit):
+  // machinery speaking, not the coach, so it renders as a centered aside.
+  function addSystemNote(text) {
+    const div = document.createElement("div");
+    div.className = "int-msg int-system";
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  // The hardcoded greetings the gate used to open with, kept as the offline
+  // fallback: if the LLM opener can't be fetched, this line still stands the
+  // gate up. No retry row — the composer stays live, so the user's first
+  // reply retries naturally through attemptSend.
+  const OPENER_FALLBACK =
+    mode === "gate"
+      ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
+      : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
+
+  // attemptSend minus the user bubble: asks the background for the coach's
+  // opening line. No userMessage — the background records its own marker turn.
+  async function attemptOpenOverlay() {
+    const seq = ++requestSeq;
+    sending = true;
+    const thinking = addMessage(messagesEl, "assistant", "…", true);
+
+    const fallBack = () => {
+      thinking.remove();
+      addMessage(messagesEl, "assistant", OPENER_FALLBACK);
+      sending = false;
+    };
+
+    let resp;
+    try {
+      // Same merge as attemptSend, so the opener sees the page the user was
+      // actually reaching for.
+      const pageContext = capturePageContext();
+      resp = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
+        chrome.runtime.sendMessage(
+          {
+            action: "chat",
+            mode,
+            domain,
+            pageContext,
+          },
+          (response) => {
+            clearTimeout(timer);
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(response);
+          },
+        );
+      });
+    } catch (e) {
+      if (seq !== requestSeq) return;
+      fallBack();
+      return;
+    }
+
+    if (seq !== requestSeq) return;
+
+    if (!resp || resp.error) {
+      if (resp && resp.locked) {
+        renderAccessNeededUI();
+        return;
+      }
+      fallBack();
+      return;
+    }
+    thinking.classList.remove("int-thinking");
+    typeMessage(
+      thinking,
+      messagesEl,
+      resp.assistantText || OPENER_FALLBACK,
+      () => {
+        sending = false;
+        if (resp.systemNote) addSystemNote(resp.systemNote);
+        if (resp.grantedSession) {
+          setTimeout(() => window.location.reload(), 600);
         }
       },
     );
@@ -917,10 +1035,46 @@ function renderChatUI({ mode, domain, blockConfig }) {
     if (e.key === "Enter") send();
   });
   closeBtn.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
-    window.close();
+    if (mode === "checkin") {
+      chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
+      window.close();
+      return;
+    }
+    // Closing the gate without taking time is a walk-away, the exact habit
+    // this tool exists to build. Record it first — 'walked_away' no longer
+    // auto-closes the tab on the background side — then show the moment and
+    // ask the background to close the tab, because a content script can't
+    // reliably window.close() a user-opened tab.
+    chrome.runtime.sendMessage({ action: "endSession", domain, reason: "walked_away" });
+    showWalkAwayMoment(() => {
+      chrome.runtime.sendMessage({ action: "closeCurrentTab" });
+      window.close();
+    });
   });
   inputEl.focus();
+
+  // Re-render whatever was already said this pass (the background filters out
+  // its own synthetic marker turns), so a same-day reopen picks the
+  // conversation back up instead of starting cold. Then the coach speaks
+  // first: always at check-in (the pass ending is the news), otherwise only
+  // when there is no conversation to pick back up.
+  try {
+    chrome.runtime.sendMessage({ action: "getHistory", domain }, (resp) => {
+      if (chrome.runtime.lastError) {
+        console.warn(INT_LOG, "getHistory lastError:", chrome.runtime.lastError.message);
+        attemptOpenOverlay();
+        return;
+      }
+      const turns = (resp && resp.turns) || [];
+      for (const turn of turns) {
+        addMessage(messagesEl, turn.role === "user" ? "user" : "assistant", turn.content);
+      }
+      if (mode === "checkin" || turns.length === 0) attemptOpenOverlay();
+    });
+  } catch (e) {
+    console.warn(INT_LOG, "getHistory message threw:", e);
+    attemptOpenOverlay();
+  }
 }
 
 // No-AI counterpart to renderChatUI's coach transcript: just a message plus a
@@ -997,8 +1151,16 @@ function renderSimpleGateUI({ mode, domain, blockConfig }) {
     }
     if (mode === "checkin") {
       chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
+      window.close();
+      return;
     }
-    window.close();
+    // Walking away counts without the coach too — same moment, same record,
+    // same background-side close (see the coach gate's close handler).
+    chrome.runtime.sendMessage({ action: "endSession", domain, reason: "walked_away" });
+    showWalkAwayMoment(() => {
+      chrome.runtime.sendMessage({ action: "closeCurrentTab" });
+      window.close();
+    });
   });
   actionsEl.appendChild(secondaryBtn);
 }
@@ -1013,13 +1175,65 @@ function addMessage(container, role, text, isThinking) {
   return div;
 }
 
+// Today's stats for the gated domain, kept for showWalkAwayMoment below: the
+// walk-away line must render instantly, so it reads what was already fetched
+// at load rather than asking anything at close time.
+let domainStats = null;
+
+// Spoken at the moment of walking away. Deliberately not an LLM call and not
+// awaited on anything: the whole point of the moment is that it costs nothing
+// and leaves fast.
+const WALK_AWAY_LINES = [
+  "Closed. That is the whole game.",
+  "You looked at the urge and left. Strong.",
+  "Nothing here you needed. Well spotted.",
+  "That urge just lost one.",
+  "Walking away is the rep. You just did one.",
+];
+
+// A ~1s full-screen affirmation before the tab goes, skippable with a click
+// (same capture-phase idiom as typeMessage). onDone fires exactly once,
+// whether the timer or the skip gets there first.
+function showWalkAwayMoment(onDone) {
+  const overlay = document.createElement("div");
+  overlay.className = "int-walkaway";
+  // +1 for the walk-away just recorded: domainStats was fetched at load,
+  // before this one happened.
+  const weekCount = ((domainStats?.walkedAwayWeek) || 0) + 1;
+  overlay.textContent = weekCount >= 2
+    ? `That's ${weekCount} times this week you've walked away. That streak is the real work.`
+    : WALK_AWAY_LINES[Math.floor(Math.random() * WALK_AWAY_LINES.length)];
+  // Inside the overlay root so the injected styles and Arvo reach it; the
+  // page body is a fallback that at worst shows an unstyled line.
+  const root = document.getElementById("intention-root");
+  (root || document.body).appendChild(overlay);
+
+  let finished = false;
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    document.removeEventListener("click", skip, true);
+    onDone();
+  }
+  function skip() {
+    finish();
+  }
+
+  const timer = setTimeout(finish, 950);
+  document.addEventListener("click", skip, true);
+}
+
 // Reveal `text` into `el` a few characters at a time. Clicking anywhere skips
 // to the full text. `onDone` fires exactly once when the reveal completes.
 function typeMessage(el, container, text, onDone) {
   el.textContent = "";
   let i = 0;
   let finished = false;
-  const step = Math.max(1, Math.ceil(text.length / 140));
+  // Reveal the whole message in ~290ms (24 steps × 12ms) regardless of
+  // length — the old 2.5s length-independent crawl was self-inflicted
+  // latency at the impulse moment.
+  const step = Math.max(1, Math.ceil(text.length / 24));
 
   function finish() {
     if (finished) return;
@@ -1039,7 +1253,7 @@ function typeMessage(el, container, text, onDone) {
     el.textContent = text.slice(0, i);
     if (container) container.scrollTop = container.scrollHeight;
     if (i >= text.length) finish();
-  }, 18);
+  }, 12);
 
   document.addEventListener("click", skip, true);
 }
@@ -1066,7 +1280,10 @@ function renderStatusBadge(session) {
   badge.appendChild(finishBtn);
 
   function update() {
-    // Count UP from when the session started — show elapsed time, not remaining.
+    // Count UP from when the session started — show elapsed time, not
+    // remaining — with the granted length alongside ("03:12 / 10:00"): the
+    // boundary is the useful number during a bounded pass. A session without
+    // one (shouldn't happen, but tolerate it) falls back to elapsed alone.
     const totalSec = Math.max(
       0,
       Math.round((Date.now() - session.startTime) / 1000),
@@ -1074,7 +1291,10 @@ function renderStatusBadge(session) {
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
     const timeStr = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    timeEl.textContent = `⏱ ${timeStr}${session.reason ? ' · "' + session.reason + '"' : ""}`;
+    const boundary = Number(session.intervalMinutes) > 0
+      ? ` / ${String(session.intervalMinutes).padStart(2, "0")}:00`
+      : "";
+    timeEl.textContent = `⏱ ${timeStr}${boundary}${session.reason ? ' · "' + session.reason + '"' : ""}`;
   }
   update();
   const intervalId = setInterval(update, 1000);

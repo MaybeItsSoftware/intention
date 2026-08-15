@@ -168,6 +168,34 @@
 #intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
 #intention-root .int-stat-label { color: #545863; }
 
+/* System note: machinery speaking (a clamped grant, a cap hit), not the coach. */
+#intention-root .int-msg.int-system {
+  align-self: center;
+  text-align: center;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.22);
+  border-radius: 8px;
+  color: #86efac;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+/* Walk-away moment: one full-screen line before the page goes. */
+#intention-root .int-walkaway {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 20px;
+  color: #e7e7ea;
+  background: #0f1115;
+  font-family: inherit;
+}
+
 @keyframes int-fade-in {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
