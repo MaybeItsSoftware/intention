@@ -4,7 +4,7 @@
 // purchase was verified. No user-supplied key is involved on this path, and it
 // is the default everywhere — see resolveAIRoute() in background.js.
 const HOSTED_PROVIDER = 'intention';
-const DEFAULT_INTENTION_BACKEND_URL = 'https://api.intention.maybeitssoftware.uk';
+const DEFAULT_INTENTION_BACKEND_URL = 'https://api.intention.maybeitssoftware.co.uk';
 
 // A coaching-credit entitlement never expires (the balance is the only
 // limit), so the server never sends `expiresAt` and the branch below always

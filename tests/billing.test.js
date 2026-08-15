@@ -112,7 +112,7 @@ describe('verifyPurchase', () => {
     const entitlement = await ctx.verifyPurchase({ platform: 'apple', receipt: 'jws' });
 
     const call = fetch.calls[0];
-    expect(call.url).toBe('https://api.intention.maybeitssoftware.uk/v1/entitlement/verify');
+    expect(call.url).toBe('https://api.intention.maybeitssoftware.co.uk/v1/entitlement/verify');
     expect(JSON.parse(call.init.body)).toEqual({ platform: 'apple', receipt: 'jws' });
     expect(entitlement.token).toBe('tok');
     expect(entitlement.source).toBe('apple');

@@ -278,7 +278,7 @@ describe('callIntentionHosted', () => {
     const { ctx } = loadProviders({ fetch });
     await ctx.callLLM({ ...HOSTED, system: 'sys', tools: [{ name: 't', description: 'd', schema: { type: 'object' } }] });
     const call = fetch.calls[0];
-    expect(call.url).toBe('https://api.intention.maybeitssoftware.uk/v1/chat');
+    expect(call.url).toBe('https://api.intention.maybeitssoftware.co.uk/v1/chat');
     expect(call.init.headers.authorization).toBe('Bearer tok');
     expect(call.init.headers['x-api-key']).toBeUndefined();
     const body = JSON.parse(call.init.body);
