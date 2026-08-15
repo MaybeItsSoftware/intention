@@ -650,6 +650,74 @@ describe('a live pass lifts the domain redirect rule', () => {
   });
 });
 
+// --------------------------------------------------------------------------
+// Safari accepts a redirect rule pointing at an extension page and then fails
+// the load — NSURLErrorFileDoesNotExist, "Safari Can't Find the File" — so
+// every blocked visit ended on an error page instead of the gate, and the
+// content script that would have gated it never ran.
+// --------------------------------------------------------------------------
+describe('a runtime whose DNR cannot reach the gate', () => {
+  const seedBlocked = { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] };
+
+  it('is left to the content script rather than given a redirect rule', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seedBlocked, native: true });
+    const dnr = statefulDnr(chrome);
+
+    await ctx.syncBlockingRules();
+
+    expect(dnr.redirectedDomains()).toEqual([]);
+  });
+
+  it('has the rules an earlier version installed taken back off it', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seedBlocked, native: true });
+    const dnr = statefulDnr(chrome);
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: [{
+        id: 1000,
+        priority: 1,
+        action: { type: 'redirect', redirect: { extensionPath: '/coaching.html?domain=instagram.com' } },
+        condition: { urlFilter: '||instagram.com^', resourceTypes: ['main_frame'] }
+      }]
+    });
+
+    await ctx.syncBlockingRules();
+
+    expect(dnr.redirectedDomains()).toEqual([]);
+  });
+
+  it('still gates the page it let through', async () => {
+    const { ctx } = loadBackground({ seed: seedBlocked, native: true });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    expect(match.isBlocked).toBe(true);
+    expect(match.session).toBe(null);
+  });
+});
+
+describe('a rule set that points somewhere wrong', () => {
+  it('is rewritten, not read as already correct', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] }
+    });
+    statefulDnr(chrome);
+    // Same domain, wrong target: a check that compared only what a rule
+    // catches called this correct and left the user with no way back.
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: [{
+        id: 1000,
+        priority: 1,
+        action: { type: 'redirect', redirect: { extensionPath: '/gone.html?domain=instagram.com' } },
+        condition: { urlFilter: '||instagram.com^', resourceTypes: ['main_frame'] }
+      }]
+    });
+
+    await ctx.syncBlockingRules();
+
+    const targets = (await chrome.declarativeNetRequest.getDynamicRules())
+      .map(r => r.action.redirect.extensionPath);
+    expect(targets).toEqual(['/coaching.html?domain=instagram.com']);
+  });
+});
+
 describe('sessions granted without a tab id', () => {
   it('are visible to the content script that lands on the site', async () => {
     const { ctx } = loadBackground({

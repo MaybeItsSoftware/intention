@@ -214,6 +214,16 @@ async function focusOrCreateTab(urlPattern, createFn) {
 // pass ends (see the callers of syncBlockingRules), and, should the background
 // have been suspended by then, on the next visit to the domain.
 async function domainsNeedingRedirect() {
+  // Safari takes the rule, honours it, and then can't complete the load:
+  // redirecting to `safari-web-extension://…/coaching.html` fails the
+  // provisional navigation with NSURLErrorFileDoesNotExist (-1100), so every
+  // blocked visit ends on "Safari Can't Find the File" instead of the gate.
+  // The page is there and loads fine when a tab navigates to it — only WebKit's
+  // DNR engine can't reach it — and `redirect.url` is rejected outright for a
+  // non-HTTP target, so there is no other way to name the page from a rule.
+  // Safari gates from the content script's overlay instead, as it did while
+  // these rules were still malformed enough for WebKit to throw them out.
+  if (hasNativeMessaging()) return [];
   const { blockedDomains = [], activeSessions = {} } = await getStorage(['blockedDomains', 'activeSessions']);
   const passed = new Set(
     Object.values(activeSessions).filter(s => activeSession(s)).map(s => s.domain)
@@ -238,12 +248,6 @@ async function applyBlockingRules() {
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
 
-    // Called on every visit to a blocked domain, so don't rewrite a rule set
-    // that already says what it should.
-    const current = currentRules.map(r => r.condition?.urlFilter || '').sort().join('\n');
-    const wanted = blockedDomains.map(domain => `||${domain}^`).sort().join('\n');
-    if (current === wanted) return;
-
     const addRules = blockedDomains.map((domain, index) => {
       const ruleId = 1000 + index;
       return {
@@ -261,6 +265,18 @@ async function applyBlockingRules() {
         }
       };
     });
+
+    // Called on every visit to a blocked domain, so don't rewrite a rule set
+    // that already says what it should. Compare where each rule *sends* the
+    // user as well as what it catches: a check that only read `urlFilter` called
+    // a rule set with a stale or broken redirect target correct, and left it in
+    // place for as long as the blocked list didn't change — which is how a
+    // whole platform's gate can break with no way back.
+    const ruleSummary = rules => rules
+      .map(r => `${r.condition?.urlFilter || ''} -> ${r.action?.redirect?.extensionPath || r.action?.redirect?.url || ''}`)
+      .sort()
+      .join('\n');
+    if (ruleSummary(currentRules) === ruleSummary(addRules)) return;
 
     try {
       await chrome.declarativeNetRequest.updateDynamicRules({

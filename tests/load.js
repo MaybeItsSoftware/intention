@@ -222,7 +222,7 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
 // the way the browser would. Call ctx.handleMessage(msg, sender) to drive the
 // message API — `sender` is {tab:{id}} in the extensions and {} on the native
 // ports, which is exactly what the session keying turns on.
-export function loadBackground({ seed = {}, fetch, sessionArea = false } = {}) {
+export function loadBackground({ seed = {}, fetch, sessionArea = false, native = false } = {}) {
   const chrome = makeMockChrome(seed);
   const mockFetch = fetch || makeMockFetch({ content: [{ type: 'text', text: 'ok' }] });
 
@@ -288,9 +288,18 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false } = {}) {
     .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
     .join('\n;\n');
 
+  // `runtime.sendNativeMessage` exists only where a native host is listening —
+  // the Safari Web Extension and the iOS/Android WebViews — and that is how the
+  // shared background code tells it is running there. Answering nothing keeps
+  // the config pull inert, so `native: true` changes only the runtime's shape.
+  const extraGlobals = native
+    ? { browser: { runtime: { sendNativeMessage: async () => ({}) } } }
+    : {};
+
   const ctx = loadSource(join(VARIANTS.chrome, '__background_bundle__.js'), {
     chrome,
     fetch: mockFetch,
+    extraGlobals,
     source: sources
   });
   return { ctx, chrome, fetch: mockFetch, listeners };
