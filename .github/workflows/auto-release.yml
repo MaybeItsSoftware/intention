@@ -1,9 +1,16 @@
 name: Automated Release
 
+# Every push to main cuts a release, which is right when main only moves for
+# work that is ready to ship — and wrong when a batch of it lands at once and
+# the release should wait. workflow_dispatch is the way to hold it: disable
+# this workflow, push, then enable it and run it here when you actually want
+# the version out. Without a manual trigger the only way back is another push
+# to main, which means an empty commit for no reason but the trigger.
 on:
   push:
     branches:
       - main
+  workflow_dispatch: {}
 
 permissions:
   contents: write
