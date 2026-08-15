@@ -66,7 +66,21 @@ actor IntentionStore {
 
     func products() async -> [[String: Any]] {
         if cachedProducts.isEmpty {
-            cachedProducts = (try? await Product.products(for: IntentionProduct.all)) ?? []
+            // An empty catalogue and a failed lookup reach the user as the same
+            // "unavailable right now" line, which is the right thing to say to
+            // them but leaves nothing to debug with — a build running outside
+            // Xcode's StoreKit configuration, an App Store Connect product not
+            // yet Ready to Submit, and a dropped connection are indistinguishable
+            // from the outside. Log which one it was.
+            do {
+                cachedProducts = try await Product.products(for: IntentionProduct.all)
+                if cachedProducts.isEmpty {
+                    NSLog("[Intention] StoreKit returned no products for %@ — check App Store Connect availability, or run from Xcode to use Intention.storekit", IntentionProduct.all.joined(separator: ", "))
+                }
+            } catch {
+                cachedProducts = []
+                NSLog("[Intention] StoreKit product lookup failed: %@", String(describing: error))
+            }
         }
         // Cheapest first — the smallest top-up leads, per the "show the
         // lowest amount first" decision.
