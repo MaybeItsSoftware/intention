@@ -136,8 +136,16 @@ page, and — since the blocked page never loads on that path — whether the
 background can still tell the coach *which* page it was.
 
 The only thing faked is the LLM: the extension's `backendUrl` is pointed at a
-local stub, which answers in the hosted route's shape and captures the exact
-system prompt for assertions. No provider is called and no credit is spent.
+local stub, which answers in the hosted route's shape (replies scriptable per
+request, including tool calls) and captures the exact requests — the
+cache-split `system` block array included — for assertions. No provider is
+called and no credit is spent. One browser session walks the whole arc: the
+gate opening the conversation itself (the marker opener request), a walk-away
+(the moment, the closed tab, the recorded stat, and the prompt naming it on
+the next visit), a same-day reopen replaying history with no second opener, a
+`note_observation` landing in the coach's memory and resurfacing in the next
+prompt, and a `grant_access` redirecting back to the site — with latency
+guards on reply render and redirect.
 
 `--print-prompt` dumps that captured prompt. It is the only way to see what the
 coach is actually sent, and worth reading after any change to `prompts.js` —
