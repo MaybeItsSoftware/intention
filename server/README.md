@@ -40,7 +40,10 @@ npm start               # or: npm run dev
    cost of that call (computed from token usage × per-model pricing, converted
    to GBP, with a small margin buffer) from the balance. Request/response
    shapes match the client's own provider adapters, so the app's gate logic is
-   identical on both routes.
+   identical on both routes. `system` is either a bare string or an array of
+   up to 4 `{ text, cache? }` blocks — `cache: true` marks an Anthropic
+   prompt-cache breakpoint, and cached input is billed at the provider's own
+   cheaper read / premium write rates rather than the flat input rate.
 
 ## Routes
 

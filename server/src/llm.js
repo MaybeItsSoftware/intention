@@ -13,6 +13,28 @@ export class UpstreamError extends Error {
   }
 }
 
+// Provider calls are bounded by a hard timeout: a hung upstream connection
+// used to hold the /v1/chat credit reservation forever (holds never expire,
+// and the per-subject in-flight cap is 2), so two wedged calls could
+// soft-brick a subject until a restart. An abort surfaces as an
+// UpstreamError, whose hold chatEndpoint's finally block already releases.
+const UPSTREAM_TIMEOUT_MS = 60_000;
+
+async function fetchWithTimeout(url, options, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new UpstreamError('Upstream LLM call timed out', 504);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function callCoachLLM({ system, messages, tools }, options = {}) {
   const provider = options.provider || config.llm.provider;
   switch (provider) {
@@ -29,9 +51,23 @@ async function callAnthropic({ system, messages, tools }, options) {
   const body = {
     model: options.model || config.llm.model,
     max_tokens: options.maxTokens || config.llm.maxTokens,
-    system,
     messages: messages.map(m => ({ role: m.role, content: m.content }))
   };
+  // `system` arrives from app.js as a normalized block array ([{ text,
+  // cache? }]); blocks flagged cache:true become Anthropic prompt-cache
+  // breakpoints. A bare string (defensive back-compat) passes through
+  // unchanged — Anthropic accepts both forms.
+  if (Array.isArray(system)) {
+    if (system.length) {
+      body.system = system.map(b => ({
+        type: 'text',
+        text: b.text,
+        ...(b.cache ? { cache_control: { type: 'ephemeral' } } : {})
+      }));
+    }
+  } else if (system) {
+    body.system = system;
+  }
   if (tools && tools.length) {
     body.tools = tools.map(t => ({
       name: t.name,
@@ -40,7 +76,7 @@ async function callAnthropic({ system, messages, tools }, options) {
     }));
   }
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -64,14 +100,23 @@ async function callAnthropic({ system, messages, tools }, options) {
     toolCalls,
     usage: {
       inputTokens: data.usage?.input_tokens || 0,
-      outputTokens: data.usage?.output_tokens || 0
+      outputTokens: data.usage?.output_tokens || 0,
+      // Both counts are EXCLUDED from input_tokens and billed at their own
+      // rates — see priceMicros in app.js.
+      cacheReadTokens: data.usage?.cache_read_input_tokens || 0,
+      cacheWriteTokens: data.usage?.cache_creation_input_tokens || 0
     }
   };
 }
 
 async function callOpenAI({ system, messages, tools }, options) {
   const openaiMessages = [];
-  if (system) openaiMessages.push({ role: 'system', content: system });
+  // OpenAI has no client-visible cache blocks, so the block array joins into
+  // the one system message. Its automatic prompt caching discounts cached
+  // input upstream (on our bill); charging the user the full input rate for
+  // it stays conservative-honest, so usage parsing is unchanged.
+  const systemText = Array.isArray(system) ? system.map(b => b.text).join('\n') : (system || '');
+  if (systemText) openaiMessages.push({ role: 'system', content: systemText });
   for (const m of messages) openaiMessages.push({ role: m.role, content: m.content });
 
   const body = { model: options.model || config.llm.model, messages: openaiMessages };
@@ -82,7 +127,7 @@ async function callOpenAI({ system, messages, tools }, options) {
     }));
   }
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

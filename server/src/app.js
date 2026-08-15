@@ -24,6 +24,10 @@ const MAX_CONTENT_CHARS = 8000;
 // default instructions) is ~12.5k chars, so 32k leaves room for elaborate
 // custom instructions while still bounding the field.
 const MAX_SYSTEM_CHARS = 32_000;
+// The block-array form of `system` exists purely for prompt-cache
+// breakpoints, and Anthropic honours at most 4 cache_control markers per
+// request — more blocks than that could never buy anything.
+const MAX_SYSTEM_BLOCKS = 4;
 // Per-field caps multiply: 60 messages x 8k chars is 480k chars ≈ 120k input
 // tokens on a single call, purchasable with one micro of credit. The
 // aggregate cap is the real cost bound; it comfortably fits the client's
@@ -420,13 +424,30 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
     }
   }
 
-  // Validate rather than coerce: a non-string `system` is a malformed request,
-  // not an empty prompt.
-  if (body.system !== undefined && typeof body.system !== 'string') {
-    return json(400, { error: 'system must be a string', code: 'bad_request' });
+  // `system` is either a bare string (older clients) or an array of up to
+  // MAX_SYSTEM_BLOCKS text blocks — the array form lets the client mark its
+  // stable prompt prefix cacheable ({ text, cache: true }) while the volatile
+  // suffix stays uncached. Both normalize to a block array here so llm.js
+  // only ever sees one shape. Validate rather than coerce: anything else is a
+  // malformed request, not an empty prompt.
+  let system = [];
+  if (typeof body.system === 'string') {
+    if (body.system) system = [{ text: body.system }];
+  } else if (Array.isArray(body.system)) {
+    if (body.system.length > MAX_SYSTEM_BLOCKS) {
+      return json(400, { error: 'too many system blocks', code: 'bad_request' });
+    }
+    for (const block of body.system) {
+      if (!block || typeof block !== 'object' || Array.isArray(block) || typeof block.text !== 'string') {
+        return json(400, { error: 'system must be a string or an array of text blocks', code: 'bad_request' });
+      }
+    }
+    system = body.system.map(b => (b.cache ? { text: b.text, cache: true } : { text: b.text }));
+  } else if (body.system !== undefined) {
+    return json(400, { error: 'system must be a string or an array of text blocks', code: 'bad_request' });
   }
-  const system = body.system || '';
-  if (system.length > MAX_SYSTEM_CHARS) {
+  const systemChars = system.reduce((sum, b) => sum + b.text.length, 0);
+  if (systemChars > MAX_SYSTEM_CHARS) {
     return json(400, { error: 'system prompt too long', code: 'bad_request' });
   }
 
@@ -455,7 +476,7 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
 
   // The aggregate bound is what actually caps upstream cost — see the
   // constants above for why per-field caps alone are not enough.
-  const totalChars = system.length
+  const totalChars = systemChars
     + messages.reduce((sum, m) => sum + m.content.length, 0)
     + JSON.stringify(tools).length;
   if (totalChars > MAX_TOTAL_INPUT_CHARS) {
@@ -473,7 +494,7 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
       code: 'too_many_inflight'
     });
   }
-  const estimateMicros = estimateCostMicros({ system, messages, tools });
+  const estimateMicros = estimateCostMicros({ systemChars, messages, tools });
   const availableMicros = getBalanceMicros(claims.sub, backing) - holds.heldMicros(claims.sub);
   if (availableMicros <= 0) {
     return json(402, {
@@ -502,18 +523,21 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
   // prepaid-metering behaviour, and it corrects itself on the next top-up. What
   // the hold adds is a bound: the overdraft is at most one estimate no matter
   // how many requests arrive at once, where before it was unbounded.
-  const usage = result.usage || { inputTokens: 0, outputTokens: 0 };
-  const costMicros = priceMicros(usage.inputTokens, usage.outputTokens);
+  const usage = result.usage || {};
+  const costMicros = priceMicros(usage);
   const newBalance = adjustBalance(claims.sub, -costMicros, backing);
   // estimate-vs-actual is how the reservation's overdraft bound gets verified
   // against production traffic; a persistent estimate < actual would mean the
-  // hold no longer covers the worst case.
+  // hold no longer covers the worst case. The cache token fields are what
+  // makes real cache hit rates observable from the logs.
   logEvent('llm_spend', {
     subject: claims.sub,
     estimateMicros,
     costMicros,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
+    inputTokens: usage.inputTokens || 0,
+    outputTokens: usage.outputTokens || 0,
+    cacheReadTokens: usage.cacheReadTokens || 0,
+    cacheWriteTokens: usage.cacheWriteTokens || 0,
     balanceMicros: newBalance
   });
 
@@ -526,9 +550,18 @@ async function chatEndpoint(headers, body, deps, backing, limiter) {
   });
 }
 
-function priceMicros(inputTokens = 0, outputTokens = 0) {
+// The cache token counts are ADDITIVE to inputTokens: Anthropic's
+// input_tokens excludes cache_read_input_tokens and cache_creation_input_tokens,
+// so the billable input is the sum of all three, each at its own rate. Models
+// whose pricing entry has no cache rates fall back to the plain input rate.
+function priceMicros({ inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0 } = {}) {
   const pricing = config.llm.pricing[config.llm.model] || config.llm.pricing.default;
-  const costUsd = (inputTokens * pricing.inputPerMillionUsd + outputTokens * pricing.outputPerMillionUsd) / 1_000_000;
+  const costUsd = (
+    inputTokens * pricing.inputPerMillionUsd
+    + cacheReadTokens * (pricing.cacheReadPerMillionUsd ?? pricing.inputPerMillionUsd)
+    + cacheWriteTokens * (pricing.cacheWritePerMillionUsd ?? pricing.inputPerMillionUsd)
+    + outputTokens * pricing.outputPerMillionUsd
+  ) / 1_000_000;
   return Math.ceil(costUsd * config.llm.usdToGbpRate * config.llm.marginMultiplier * 1_000_000);
 }
 
@@ -536,12 +569,15 @@ function priceMicros(inputTokens = 0, outputTokens = 0) {
 // is bounded server-side by config.llm.maxTokens (the client cannot raise it),
 // and input by the request caps above, so this is a real ceiling rather than a
 // guess. ~4 chars per token is the usual rough ratio; erring high is safe here
-// because the hold is released as soon as the call returns.
-function estimateCostMicros({ system, messages, tools }) {
-  const chars = system.length
+// because the hold is released as soon as the call returns. All estimated
+// input is priced at the cache-WRITE rate (1.25x the plain input rate): the
+// most expensive real outcome is the whole prompt being written to cache, so
+// this keeps the estimate a true ceiling over every cache mix.
+function estimateCostMicros({ systemChars, messages, tools }) {
+  const chars = systemChars
     + messages.reduce((sum, m) => sum + (m.content?.length || 0), 0)
     + JSON.stringify(tools || []).length;
-  return priceMicros(Math.ceil(chars / 4), config.llm.maxTokens);
+  return priceMicros({ cacheWriteTokens: Math.ceil(chars / 4), outputTokens: config.llm.maxTokens });
 }
 
 // Tool schemas reach the provider verbatim as input_schema, so bound their

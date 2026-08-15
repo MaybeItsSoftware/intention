@@ -1021,6 +1021,130 @@ describe('LLM input cost caps', () => {
   });
 });
 
+// The client splits its system prompt into a stable (cacheable) prefix and a
+// volatile suffix, sent as an array of { text, cache? } blocks; the server
+// accepts that alongside the older bare string, and bills cache reads/writes
+// at their own per-model rates rather than the flat input rate.
+//
+// The 60s AbortController timeout on provider fetches lives inside llm.js,
+// below the injectable callCoachLLM seam, so it is not exercised here —
+// doing so would need a real hung HTTP upstream.
+describe('block-array system prompts and cache-honest billing', () => {
+  let token, store, sub;
+  beforeEach(() => {
+    store = new MemoryStore();
+    sub = subjectFor('apple', 'acct-cache-1');
+    adjustBalance(sub, 1_000_000, store);
+    token = signToken({ sub, platform: 'apple', productId: appleResult.productId }, SECRET, 60_000);
+  });
+  const auth = () => ({ authorization: `Bearer ${token}` });
+  const msgs = () => [{ role: 'user', content: 'hi' }];
+  const pricing = () => config.llm.pricing[config.llm.model] || config.llm.pricing.default;
+  // Mirrors priceMicros exactly, so a test failure means the server's math
+  // moved, not the fixture's.
+  const expectedMicros = (u) => Math.ceil(
+    ((u.inputTokens * pricing().inputPerMillionUsd
+      + u.cacheReadTokens * pricing().cacheReadPerMillionUsd
+      + u.cacheWriteTokens * pricing().cacheWritePerMillionUsd
+      + u.outputTokens * pricing().outputPerMillionUsd) / 1_000_000)
+    * config.llm.usdToGbpRate * config.llm.marginMultiplier * 1_000_000
+  );
+
+  it('forwards an array system to the LLM with cache flags preserved', async () => {
+    let seenSystem;
+    const d = deps({
+      store,
+      callCoachLLM: async ({ system }) => {
+        seenSystem = system;
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    });
+    const res = await post('/v1/chat', {
+      system: [{ text: 'stable prefix', cache: true }, { text: 'volatile suffix' }],
+      messages: msgs()
+    }, auth(), d);
+    expect(res.status).toBe(200);
+    expect(seenSystem).toEqual([{ text: 'stable prefix', cache: true }, { text: 'volatile suffix' }]);
+  });
+
+  it('normalizes a string system to a single uncached block', async () => {
+    let seenSystem;
+    const d = deps({
+      store,
+      callCoachLLM: async ({ system }) => {
+        seenSystem = system;
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+    });
+    const res = await post('/v1/chat', { system: 'be kind', messages: msgs() }, auth(), d);
+    expect(res.status).toBe(200);
+    expect(seenSystem).toEqual([{ text: 'be kind' }]);
+  });
+
+  it('rejects malformed block arrays before calling the LLM', async () => {
+    const d = deps({ store, callCoachLLM: async () => { throw new Error('should not be called'); } });
+    // more than MAX_SYSTEM_BLOCKS (4)
+    expect((await post('/v1/chat', {
+      messages: msgs(), system: Array.from({ length: 5 }, () => ({ text: 'x' }))
+    }, auth(), d)).status).toBe(400);
+    // a block whose text is not a string
+    expect((await post('/v1/chat', {
+      messages: msgs(), system: [{ text: 42 }]
+    }, auth(), d)).status).toBe(400);
+    // a block that is not an object at all
+    expect((await post('/v1/chat', {
+      messages: msgs(), system: ['just a string']
+    }, auth(), d)).status).toBe(400);
+    // summed length over MAX_SYSTEM_CHARS even though every block is legal alone
+    expect((await post('/v1/chat', {
+      messages: msgs(), system: Array.from({ length: 4 }, () => ({ text: 'y'.repeat(9000) }))
+    }, auth(), d)).status).toBe(400);
+  });
+
+  it('bills cache reads at the discounted read rate, additively with input', async () => {
+    // Anthropic's input_tokens excludes cache tokens, so all four components
+    // must be summed — a read-heavy call is far cheaper than the same tokens
+    // as plain input (0.3 vs 3 USD/M on the default model).
+    expect(pricing().cacheReadPerMillionUsd).toBe(0.3);
+    const usage = { inputTokens: 100, outputTokens: 50, cacheReadTokens: 2000, cacheWriteTokens: 0 };
+    const res = await post('/v1/chat', { messages: msgs() }, auth(),
+      deps({ store, callCoachLLM: async () => ({ text: 'ok', toolCalls: [], usage }) }));
+    expect(res.status).toBe(200);
+    expect(1_000_000 - res.body.balanceMicros).toBe(expectedMicros(usage));
+  });
+
+  it('bills cache writes at the 1.25x write premium', async () => {
+    expect(pricing().cacheWritePerMillionUsd).toBe(pricing().inputPerMillionUsd * 1.25);
+    const usage = { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 2000 };
+    const res = await post('/v1/chat', { messages: msgs() }, auth(),
+      deps({ store, callCoachLLM: async () => ({ text: 'ok', toolCalls: [], usage }) }));
+    expect(res.status).toBe(200);
+    expect(1_000_000 - res.body.balanceMicros).toBe(expectedMicros(usage));
+  });
+
+  it('the hold estimate stays a ceiling on the actual cost', async () => {
+    const system = [{ text: 's'.repeat(4000), cache: true }, { text: 'now: 12:00' }];
+    const messages = msgs();
+    // Mirror estimateCostMicros: every input char at the cache-write rate
+    // plus a full maxTokens completion ('[]' is the serialized empty tools).
+    const chars = 4000 + 'now: 12:00'.length + 'hi'.length + '[]'.length;
+    const estimateMicros = expectedMicros({
+      inputTokens: 0, cacheReadTokens: 0,
+      cacheWriteTokens: Math.ceil(chars / 4), outputTokens: config.llm.maxTokens
+    });
+    // The worst realistic actual outcome: the whole prompt written to cache
+    // and the completion running to the server-side cap.
+    const usage = {
+      inputTokens: 0, cacheReadTokens: 0,
+      cacheWriteTokens: Math.ceil(chars / 4), outputTokens: config.llm.maxTokens
+    };
+    const res = await post('/v1/chat', { system, messages }, auth(),
+      deps({ store, callCoachLLM: async () => ({ text: 'ok', toolCalls: [], usage }) }));
+    expect(res.status).toBe(200);
+    expect(estimateMicros).toBeGreaterThanOrEqual(1_000_000 - res.body.balanceMicros);
+  });
+});
+
 // Refresh used to rebuild the token payload with no exp carried over, so
 // every refresh stamped a fresh full TTL: tokens were infinitely renewable
 // and unrevocable.

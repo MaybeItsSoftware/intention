@@ -53,10 +53,13 @@ export const config = {
     // USD per million tokens — approximate published provider pricing,
     // reviewed by hand occasionally rather than fetched live. Used to turn a
     // /v1/chat call's actual token usage into a coaching-credit deduction.
+    // Cache rates mirror Anthropic's prompt-caching pricing: reads at 10% of
+    // the input rate, writes at 125% — billing them at the flat input rate
+    // would overcharge users for exactly the calls caching makes cheap.
     pricing: {
-      'claude-sonnet-5': { inputPerMillionUsd: 3, outputPerMillionUsd: 15 },
-      'claude-haiku-4.5': { inputPerMillionUsd: 1, outputPerMillionUsd: 5 },
-      default: { inputPerMillionUsd: 3, outputPerMillionUsd: 15 }
+      'claude-sonnet-5': { inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 },
+      'claude-haiku-4.5': { inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 1.25 },
+      default: { inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 }
     },
     // Static and hand-reviewed, not a live feed — not worth the complexity
     // for a small margin buffer on a public-benefit product.
