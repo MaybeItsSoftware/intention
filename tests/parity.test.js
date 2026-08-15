@@ -43,7 +43,24 @@ describe('prompts.js parity across variants', () => {
     coachInstructions: 'Usage: {{usage}}\nQ: {{questions}}\nReasons: {{reasons_today}}\nUnknown: {{nope}}',
     grantsToday: 2, grantsCap: 3, minutesCap: 30,
     minutesTodaySite: 18, minutesTodayAll: 50, minutesWeekAll: 300,
-    reasonsToday: ['check DMs', 'reply']
+    reasonsToday: ['check DMs', 'reply'],
+    // Fixed timestamps so the rendered clocks are identical across variants;
+    // exercises the outcome lines, "back Nm later", the escalation and trust
+    // computations, the walk-away line and the observations block.
+    sessionsToday: [
+      { reason: 'check DMs', grantedMinutes: 10, usedMinutes: 4, outcome: 'closed_early', grantedAt: 1755244800000, endedAt: 1755245100000 },
+      { reason: 'reply', grantedMinutes: 5, usedMinutes: 5, outcome: 'ran_out', grantedAt: 1755245400000 }
+    ],
+    recentDays: [
+      { date: '2026-08-11', minutes: 45, grants: 3, reasons: ['just checking'], outcomes: { ran_out: 2, closed_early: 1 }, walkedAway: 1 },
+      { date: '2026-08-10', minutes: 20, grants: 3, reasons: ['just checking'] },
+      { date: '2026-08-09', minutes: 15, grants: 4, reasons: ['just checking'] }
+    ],
+    walkedAwayToday: 1,
+    walkedAwayWeek: 4,
+    observations: [
+      { text: 'They tend to reach for Twitter mid-afternoon.', domain: 'twitter.com', at: 1754838000000 }
+    ]
   };
 
   const settingsArgs = {
@@ -139,7 +156,7 @@ describe('tracking.js parity across variants', () => {
     // assert the stamps merely exist.
     const normalise = (stats) => ({
       ...stats,
-      sessionsToday: stats.sessionsToday.map(s => ({ ...s, grantedAt: typeof s.grantedAt }))
+      sessionsToday: stats.sessionsToday.map(s => ({ ...s, grantedAt: typeof s.grantedAt, endedAt: typeof s.endedAt }))
     });
     expect(normalise(results[1])).toEqual(normalise(results[0]));
     expect(normalise(results[2])).toEqual(normalise(results[0]));

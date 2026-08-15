@@ -204,6 +204,20 @@ async function recordSessionMinutes(domain, elapsedMinutes, outcome) {
   });
 }
 
+// Counts gates the user closed without taking any time — the win the coach
+// celebrates and the streak the prompt protects. Before this, someone gated
+// twelve times who granted zero looked identical to someone who never visited.
+// Count-only by design: per-event timestamps would say more, but the number
+// itself is the coaching material, and a bare counter rides the existing
+// 365-day retention for free.
+async function recordWalkAway(domain) {
+  if (!domain) return;
+  await withDailyStats((stats, today) => {
+    if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
+    stats[today][domain].walkedAway = (stats[today][domain].walkedAway || 0) + 1;
+  });
+}
+
 async function getStatsForDomain(domain) {
   const { dailyStats = {}, allTimeStats = {} } = await getStorage(['dailyStats', 'allTimeStats']);
   const todayKey = dateKey();
@@ -213,6 +227,7 @@ async function getStatsForDomain(domain) {
 
   let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
+  let walkedAwayToday = 0, walkedAwayWeek = 0;
   let reasonsToday = [];
   let sessionsToday = [];
   // Per-day rollup for this site, today excluded — a pattern is only visible
@@ -225,6 +240,7 @@ async function getStatsForDomain(domain) {
         if (k === todayKey) {
           minutesToday = site.minutes || 0;
           grantsToday = site.grants || 0;
+          walkedAwayToday = site.walkedAway || 0;
           reasonsToday = (site.sessions || [])
             .map(s => (s && s.reason ? String(s.reason).trim() : ''))
             .filter(Boolean);
@@ -235,7 +251,11 @@ async function getStatsForDomain(domain) {
               grantedMinutes: s.grantedMinutes || 0,
               grantedAt: s.grantedAt || null,
               usedMinutes: typeof s.usedMinutes === 'number' ? s.usedMinutes : null,
-              outcome: s.outcome || null
+              outcome: s.outcome || null,
+              // Without this the "back Nm later" annotation in prompts.js had
+              // nothing to compute a gap from — stampSessionOutcome writes
+              // endedAt, but the mapping here silently dropped it.
+              endedAt: s.endedAt || null
             }));
         } else if (weekKeys.includes(k)) {
           recentDays.push({
@@ -244,10 +264,21 @@ async function getStatsForDomain(domain) {
             grants: site.grants || 0,
             reasons: (site.sessions || [])
               .map(s => (s && s.reason ? String(s.reason).trim() : ''))
-              .filter(Boolean)
+              .filter(Boolean),
+            // How each day's passes actually ended, as a tally — "ran the
+            // clock out twice yesterday" is a pattern minutes alone can't
+            // show, and the trust computation reads it directly.
+            outcomes: (site.sessions || []).reduce((tally, s) => {
+              if (s && s.outcome) tally[s.outcome] = (tally[s.outcome] || 0) + 1;
+              return tally;
+            }, {}),
+            walkedAway: site.walkedAway || 0
           });
         }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
+        // Includes today deliberately: "3 walk-aways this week" should count
+        // the one from an hour ago, or the streak the coach names is stale.
+        if (weekKeys.includes(k)) walkedAwayWeek += site.walkedAway || 0;
         if (monthKeys.includes(k)) minutesMonth += site.minutes || 0;
         if (yearKeys.includes(k)) minutesYear += site.minutes || 0;
       }
@@ -280,7 +311,9 @@ async function getStatsForDomain(domain) {
     minutesWeekAll: Math.round(minutesWeekAll),
     reasonsToday,
     sessionsToday,
-    recentDays
+    recentDays,
+    walkedAwayToday,
+    walkedAwayWeek
   };
 }
 

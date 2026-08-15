@@ -544,3 +544,354 @@ describe('usage lines say what they mean', () => {
     expect(out).not.toContain('first visit here today');
   });
 });
+
+// The old instructions were fourteen flat co-equal bullets; a strong model
+// coached fine with them, but weak BYOK models drifted into therapy-speak the
+// moment they had to weigh them all at once. The rewrite is a decision
+// procedure — classify, one move, stop — and these assertions pin its spine.
+describe('DEFAULT_COACH_INSTRUCTIONS is a decision procedure', () => {
+  it('keeps the classify → one-move → stop structure', () => {
+    const t = P.DEFAULT_COACH_INSTRUCTIONS;
+    expect(t).toContain('Step 1 — classify');
+    expect(t).toContain('Step 2 — make ONE move');
+    expect(t).toContain('Step 3');
+    expect(t).toContain('Plain text only');
+    expect(t).toContain('grant IMMEDIATELY');
+    expect(t).toContain('Never reuse an opener');
+  });
+
+  it('fences the examples, in order, with the invented-history disclaimer', () => {
+    const t = P.DEFAULT_COACH_INSTRUCTIONS;
+    const open = t.indexOf('EXAMPLES —');
+    const close = t.indexOf('END EXAMPLES.');
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    expect(t).toContain("not this user's history");
+  });
+
+  it('practises the no-markdown rule it preaches', () => {
+    const t = P.DEFAULT_COACH_INSTRUCTIONS;
+    expect(t).not.toContain('**');
+    expect(t).not.toMatch(/^#/m);
+  });
+});
+
+// The synthetic turns Intention writes into transcripts wearing the user's
+// role. CHAT_OPEN_MARKER is byte-load-bearing: it already exists inside
+// stored transcripts, so changing it would make old machinery turns render as
+// something the user typed.
+describe('synthetic user turns', () => {
+  it('CHAT_OPEN_MARKER stays byte-identical to what is already stored', () => {
+    expect(P.CHAT_OPEN_MARKER).toBe('(user just opened the conversation)');
+  });
+
+  it('recognises both open markers and correction turns', () => {
+    expect(P.isSyntheticUserTurn(P.CHAT_OPEN_MARKER)).toBe(true);
+    expect(P.isSyntheticUserTurn(P.CHECKIN_OPEN_MARKER)).toBe(true);
+    expect(P.isSyntheticUserTurn('(Intention: the grant was clamped to 5 minutes.)')).toBe(true);
+  });
+
+  it('leaves real user turns — even parenthesised ones — alone', () => {
+    expect(P.isSyntheticUserTurn('just checking')).toBe(false);
+    expect(P.isSyntheticUserTurn('(I typed this in parentheses)')).toBe(false);
+    expect(P.isSyntheticUserTurn(null)).toBe(false);
+    expect(P.isSyntheticUserTurn(42)).toBe(false);
+    expect(P.isSyntheticUserTurn([{ type: 'text', text: P.CHAT_OPEN_MARKER }])).toBe(false);
+  });
+});
+
+// The trust arithmetic happens in code because "count the outcomes and decide"
+// is exactly the tallying weak models get wrong — and the result changes how
+// many minutes someone gets.
+describe('computeTrustSummary', () => {
+  const s = (outcome) => ({ outcome });
+
+  it('stays null under three completed passes', () => {
+    expect(P.computeTrustSummary([], [])).toBeNull();
+    expect(P.computeTrustSummary(null, null)).toBeNull();
+    expect(P.computeTrustSummary([s('closed_early'), s('ran_out')], [])).toBeNull();
+  });
+
+  it('sessions without an outcome are not completed passes', () => {
+    expect(P.computeTrustSummary([{}, {}, {}, s('closed_early')], [])).toBeNull();
+  });
+
+  it('earned: reliably on time → give the minutes they ask for', () => {
+    const trust = P.computeTrustSummary([s('closed_early'), s('finished'), s('tab_closed')], []);
+    expect(trust.level).toBe('earned');
+    expect(trust.completed).toBe(3);
+    expect(trust.reliable).toBe(3);
+    expect(trust.line).toContain('Their track record, tallied:');
+    expect(trust.line).toContain('give the minutes they ask for');
+  });
+
+  it('strained: mostly ran out or extended → grant fewer minutes', () => {
+    const trust = P.computeTrustSummary([s('ran_out'), s('extended'), s('ran_out')], []);
+    expect(trust.level).toBe('strained');
+    expect(trust.unreliable).toBe(3);
+    expect(trust.line).toContain('Their track record, tallied:');
+    expect(trust.line).toContain('grant fewer minutes than they ask for');
+  });
+
+  it('mixed: in between → fit minutes to the task', () => {
+    const trust = P.computeTrustSummary(
+      [s('closed_early'), s('ran_out')],
+      [{ outcomes: { finished: 1, extended: 1 } }]
+    );
+    expect(trust.level).toBe('mixed');
+    expect(trust.completed).toBe(4);
+    expect(trust.line).toContain('Fit minutes to the task');
+  });
+
+  it('tolerates earlier days recorded before the outcomes tally existed', () => {
+    const trust = P.computeTrustSummary(
+      [s('closed_early')],
+      [{ date: '2026-08-10', minutes: 5, grants: 1 }, { outcomes: { closed_early: 2 } }]
+    );
+    expect(trust.level).toBe('earned');
+    expect(trust.completed).toBe(3);
+  });
+});
+
+// Escalation used to reset at midnight; three capped-out days in a row and the
+// coach still greeted day four as a fresh start.
+describe('computeEscalationLine', () => {
+  it('stays silent with nothing to report', () => {
+    expect(P.computeEscalationLine([], 3)).toBe('');
+    expect(P.computeEscalationLine(null, 3)).toBe('');
+    expect(P.computeEscalationLine([{ grants: 3, reasons: ['just checking'] }], 3)).toBe('');
+    expect(P.computeEscalationLine([
+      { grants: 3, reasons: [] }, { grants: 3, reasons: [] }
+    ], 3)).toBe('');
+  });
+
+  it('does not treat a zero cap as always hit', () => {
+    expect(P.computeEscalationLine([{ grants: 0 }, { grants: 0 }, { grants: 0 }], 0)).toBe('');
+  });
+
+  it('fires when the cap was hit on three of the last seven days', () => {
+    const out = P.computeEscalationLine([{ grants: 3 }, { grants: 4 }, { grants: 3 }], 3);
+    expect(out).toContain('Cross-day pattern (computed for you):');
+    expect(out).toContain('3 of the last 7 days');
+    expect(out).toContain('Treat today as a continuation of that streak, not a fresh start');
+    expect(out.length).toBeLessThanOrEqual(320);
+  });
+
+  it('fires on the same reason across three days, quoting it', () => {
+    const out = P.computeEscalationLine([
+      { grants: 1, reasons: ['Just checking!'] },
+      { grants: 1, reasons: ['just   checking', 'something else'] },
+      { grants: 1, reasons: ['JUST CHECKING'] }
+    ], 3);
+    expect(out).toContain('"just checking"');
+    expect(out).toContain('3 separate days');
+  });
+
+  it('ignores reasons too short to mean anything', () => {
+    expect(P.computeEscalationLine([
+      { grants: 1, reasons: ['idk'] },
+      { grants: 1, reasons: ['idk'] },
+      { grants: 1, reasons: ['idk'] }
+    ], 3)).toBe('');
+  });
+
+  it('reaches the gate prompt when a pattern fires', () => {
+    const out = P.buildGateSystemPrompt({
+      domain: 'twitter.com', coachInstructions: '{{usage}}',
+      grantsToday: 1, grantsCap: 3, minutesCap: 0,
+      minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0,
+      reasonsToday: [],
+      recentDays: [
+        { date: '2026-08-11', minutes: 45, grants: 3, reasons: [] },
+        { date: '2026-08-10', minutes: 40, grants: 3, reasons: [] },
+        { date: '2026-08-09', minutes: 30, grants: 4, reasons: [] }
+      ]
+    });
+    expect(out).toContain('Cross-day pattern');
+  });
+});
+
+// The split is what lets the Anthropic prompt cache actually hit: everything
+// stable for the day goes in the cached block, the clock and usage numbers in
+// the volatile one, and the marker itself never reaches a model.
+describe('prompt cache split', () => {
+  const fullFixture = {
+    domain: 'twitter.com',
+    contextProjects: 'Write the report',
+    contextReasons: 'I get scattered',
+    // no coachInstructions → DEFAULT_COACH_INSTRUCTIONS composes through
+    grantsToday: 1, grantsCap: 3, minutesCap: 30,
+    minutesTodaySite: 12, minutesTodayAll: 40, minutesWeekAll: 200,
+    reasonsToday: ['check DMs'],
+    pageContext: { url: 'https://twitter.com/foo', title: 'Some Tweet', contentType: 'Tweet' },
+    walkedAwayToday: 1, walkedAwayWeek: 3,
+    observations: [{ text: 'They reach for Twitter mid-afternoon.', domain: 'twitter.com', at: Date.parse('2026-08-10T15:00:00') }]
+  };
+
+  it('markerless input becomes a single cached block', () => {
+    expect(P.splitSystemForCache('plain system prompt')).toEqual([
+      { text: 'plain system prompt', cache: true }
+    ]);
+  });
+
+  it('splits at the marker, which never reaches the output', () => {
+    const blocks = P.splitSystemForCache(`stable${P.CACHE_BREAK_MARKER}volatile`);
+    expect(blocks).toEqual([{ text: 'stable', cache: true }, { text: 'volatile' }]);
+  });
+
+  it('joins everything after the first marker into the volatile block', () => {
+    const blocks = P.splitSystemForCache(`a${P.CACHE_BREAK_MARKER}b${P.CACHE_BREAK_MARKER}c`);
+    expect(blocks).toEqual([{ text: 'a', cache: true }, { text: 'b\nc' }]);
+    expect(blocks.map(b => b.text).join('')).not.toContain('cache-break');
+  });
+
+  it('drops empty blocks, as from a template that starts with {{usage}}', () => {
+    // A leading marker means the cacheable head is empty; forwarding a
+    // { text: '' } block would make Anthropic reject the whole request.
+    expect(P.splitSystemForCache(`${P.CACHE_BREAK_MARKER}volatile only`))
+      .toEqual([{ text: 'volatile only' }]);
+    expect(P.splitSystemForCache(`stable only${P.CACHE_BREAK_MARKER}`))
+      .toEqual([{ text: 'stable only', cache: true }]);
+  });
+
+  it('a built gate prompt contains exactly one marker', () => {
+    const out = P.buildGateSystemPrompt(fullFixture);
+    expect(out.split(P.CACHE_BREAK_MARKER)).toHaveLength(2);
+  });
+
+  it('puts the volatile facts after the cut and the stable persona before it', () => {
+    const out = P.buildGateSystemPrompt(fullFixture);
+    const markerAt = out.indexOf(P.CACHE_BREAK_MARKER);
+    expect(markerAt).toBeGreaterThan(-1);
+    for (const volatile of ['Right now it is', "Today's usage", '<untrusted_page_data>']) {
+      expect(out.indexOf(volatile), volatile).toBeGreaterThan(markerAt);
+    }
+    for (const stable of ['You are Intention', 'What they told you about themselves', 'END EXAMPLES.']) {
+      const idx = out.indexOf(stable);
+      expect(idx, stable).toBeGreaterThan(-1);
+      expect(idx, stable).toBeLessThan(markerAt);
+    }
+  });
+});
+
+// Minute precision in the now-line made every message's volatile block unique;
+// a coach gains nothing from knowing it is 11:41 rather than 11:30.
+describe('coarse clock', () => {
+  it('floors to the previous quarter hour and zeroes the seconds', () => {
+    const d = P.coarseClock(new Date(2026, 7, 15, 13, 47, 33, 900));
+    expect(d.getHours()).toBe(13);
+    expect(d.getMinutes()).toBe(45);
+    expect(d.getSeconds()).toBe(0);
+    expect(d.getMilliseconds()).toBe(0);
+    expect(P.coarseClock(new Date(2026, 7, 15, 13, 14, 59)).getMinutes()).toBe(0);
+  });
+
+  it('renderNowLine only ever shows quarter-hour minutes', () => {
+    for (const m of [0, 7, 22, 38, 59]) {
+      const line = P.renderNowLine(new Date(2026, 7, 15, 9, m));
+      expect(line).toMatch(/:(00|15|30|45)\b/);
+      expect(line).toContain('(to the nearest quarter hour)');
+    }
+  });
+});
+
+describe('renderWalkAwayLine', () => {
+  it('never recites a zero', () => {
+    expect(P.renderWalkAwayLine(0, 0)).toBe('');
+    expect(P.renderWalkAwayLine(undefined, undefined)).toBe('');
+  });
+
+  it('names the streak as the win it is', () => {
+    const out = P.renderWalkAwayLine(1, 4);
+    expect(out).toContain('walked away without taking any time: 1 today, 4 in the last 7 days');
+    expect(out).toContain('streak worth protecting');
+  });
+
+  it('reaches the gate prompt', () => {
+    const out = P.buildGateSystemPrompt({
+      domain: 'twitter.com', coachInstructions: '{{usage}}',
+      grantsToday: 0, grantsCap: 3, minutesCap: 0,
+      minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0,
+      reasonsToday: [], walkedAwayToday: 2, walkedAwayWeek: 5
+    });
+    expect(out).toContain('2 today, 5 in the last 7 days');
+  });
+});
+
+describe('note_observation tool and its rendering', () => {
+  it('NOTE_OBSERVATION_TOOL requires a single observation sentence', () => {
+    expect(P.NOTE_OBSERVATION_TOOL.name).toBe('note_observation');
+    expect(P.NOTE_OBSERVATION_TOOL.schema.required).toEqual(['observation']);
+    expect(P.NOTE_OBSERVATION_TOOL.schema.properties.observation.type).toBe('string');
+  });
+
+  it('renders nothing when there are no notes', () => {
+    expect(P.renderObservationsBlock([])).toBe('');
+    expect(P.renderObservationsBlock(undefined)).toBe('');
+    expect(P.renderObservationsBlock([{ text: '   ' }])).toBe('');
+  });
+
+  it('lists each note with its day and site, and warns against reciting', () => {
+    const out = P.renderObservationsBlock([
+      { text: 'They reach for Twitter mid-afternoon.', domain: 'twitter.com', at: Date.parse('2026-08-10T15:00:00') }
+    ]);
+    expect(out).toContain("Things you've noticed before");
+    expect(out).toContain('the user can read these in settings');
+    expect(out).toContain('(twitter.com): They reach for Twitter mid-afternoon.');
+    expect(out).toContain('never recite the list');
+    expect(out).toMatch(/Aug/); // formatDayLabel of the `at` timestamp
+  });
+});
+
+// "Closed early, came straight back" is a different behaviour from closed
+// early — the pass ended but the pull didn't.
+describe('renderSessionsToday spots quick returns', () => {
+  const t0 = Date.parse('2026-08-15T14:00:00');
+
+  it('annotates a session opened shortly after the previous one ended', () => {
+    const out = P.renderSessionsToday([
+      { reason: 'check DMs', grantedMinutes: 10, usedMinutes: 4, outcome: 'closed_early', grantedAt: t0, endedAt: t0 + 4 * 60000 },
+      { reason: 'one more thing', grantedMinutes: 5, grantedAt: t0 + 14 * 60000 }
+    ]);
+    expect(out).toContain('back 10m later');
+  });
+
+  it('stays quiet across a real gap', () => {
+    const out = P.renderSessionsToday([
+      { reason: 'a', grantedMinutes: 10, outcome: 'closed_early', grantedAt: t0, endedAt: t0 + 5 * 60000 },
+      { reason: 'b', grantedMinutes: 5, grantedAt: t0 + 3 * 3600000 }
+    ]);
+    expect(out).not.toContain('back ');
+  });
+
+  it('tolerates sessions recorded before endedAt existed', () => {
+    const out = P.renderSessionsToday([
+      { reason: 'a', grantedMinutes: 10, outcome: 'closed_early', grantedAt: t0 },
+      { reason: 'b', grantedMinutes: 5, grantedAt: t0 + 60000 }
+    ]);
+    expect(out).not.toContain('back ');
+  });
+});
+
+// The guidance paragraph sets the policy; the computed trust line pins the
+// numbers under it.
+describe('renderTrackRecordGuidance with a trust summary', () => {
+  it('still says nothing when there is no record at all', () => {
+    expect(P.renderTrackRecordGuidance('', '', null)).toBe('');
+    expect(P.renderTrackRecordGuidance('', '', { line: 'irrelevant' })).toBe('');
+  });
+
+  it('appends the trust line when one was computed', () => {
+    const trust = P.computeTrustSummary([{ outcome: 'ran_out' }, { outcome: 'ran_out' }, { outcome: 'extended' }], []);
+    const out = P.renderTrackRecordGuidance('sessions', '', trust);
+    expect(out).toContain('track record');
+    expect(out).toContain(trust.line);
+  });
+
+  it('keeps the explicit minutes policy in prose', () => {
+    const out = P.renderTrackRecordGuidance('sessions', 'history', null);
+    expect(out).toContain('track record');
+    expect(out).toContain('grant less than they ask');
+    expect(out).toContain('name the repetition');
+  });
+});

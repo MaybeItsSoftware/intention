@@ -146,6 +146,80 @@ describe('recentDays', () => {
     const { ctx } = loadTracking({ seed });
     expect((await ctx.getStatsForDomain('reddit.com')).recentDays).toEqual([]);
   });
+
+  it('tallies how each earlier day\'s passes ended', async () => {
+    const probe = loadSource('tracking.js');
+    const seed = {
+      dailyStats: {
+        [dayKey(probe, 1)]: {
+          'reddit.com': {
+            minutes: 30, grants: 3,
+            sessions: [
+              { reason: 'a', outcome: 'ran_out' },
+              { reason: 'b', outcome: 'ran_out' },
+              { reason: 'c', outcome: 'closed_early' },
+              { reason: 'd' } // never stamped — not a completed pass
+            ]
+          }
+        }
+      }
+    };
+    const { ctx } = loadTracking({ seed });
+    const { recentDays } = await ctx.getStatsForDomain('reddit.com');
+    expect(recentDays[0].outcomes).toEqual({ ran_out: 2, closed_early: 1 });
+    expect(recentDays[0].walkedAway).toBe(0);
+  });
+});
+
+// Walking away from the gate is the habit the whole tool exists to build, and
+// until now it left no record at all: gated 12 times / granted 0 looked the
+// same as never having visited.
+describe('recordWalkAway', () => {
+  it('creates the domain entry and counts, touching nothing else', async () => {
+    const { ctx } = fresh();
+    await ctx.recordWalkAway('twitter.com');
+    await ctx.recordWalkAway('twitter.com');
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.walkedAwayToday).toBe(2);
+    expect(stats.minutesToday).toBe(0);
+    expect(stats.grantsToday).toBe(0);
+    expect(stats.sessionsToday).toEqual([]);
+  });
+
+  it('increments alongside an existing record without disturbing it', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'check DMs');
+    await ctx.recordSessionMinutes('twitter.com', 4, 'closed_early');
+    await ctx.recordWalkAway('twitter.com');
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.walkedAwayToday).toBe(1);
+    expect(stats.grantsToday).toBe(1);
+    expect(stats.minutesToday).toBe(4);
+    expect(stats.reasonsToday).toEqual(['check DMs']);
+    expect(stats.sessionsToday[0].outcome).toBe('closed_early');
+  });
+
+  it('ignores a missing domain', async () => {
+    const { ctx, chrome } = fresh();
+    await ctx.recordWalkAway('');
+    expect(chrome.storage._store.dailyStats).toBeUndefined();
+  });
+
+  it('sums the week including today and excludes days beyond it', async () => {
+    const probe = loadSource('tracking.js');
+    const dayKey = (back) => probe.daysAgoKeys(back + 1)[back];
+    const seed = {
+      dailyStats: {
+        [dayKey(0)]: { 'reddit.com': { minutes: 0, grants: 0, sessions: [], walkedAway: 1 } },
+        [dayKey(3)]: { 'reddit.com': { minutes: 5, grants: 1, sessions: [], walkedAway: 2 } },
+        [dayKey(20)]: { 'reddit.com': { minutes: 5, grants: 1, sessions: [], walkedAway: 9 } }
+      }
+    };
+    const { ctx } = loadTracking({ seed });
+    const stats = await ctx.getStatsForDomain('reddit.com');
+    expect(stats.walkedAwayToday).toBe(1);
+    expect(stats.walkedAwayWeek).toBe(3); // today's 1 + three-days-ago's 2
+  });
 });
 
 describe('recordSessionMinutes', () => {
