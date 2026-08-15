@@ -263,7 +263,7 @@ let matchedDomain = null;
 let matchedBlockConfig = null;
 let handled = false;
 // The best look at this page we have managed to get. It has to be captured
-// while the document still exists: the gate calls ensureBodyAndStop(), which
+// while the document still exists: the gate calls ensureBodyAndHush(), which
 // empties the body, so anything extracted afterwards has lost every
 // body-derived field (video title, tweet text, issue title, channel name).
 // Re-extracting at send time — which is what the chat used to do — therefore
@@ -311,7 +311,7 @@ function showGate(why) {
   try {
     // Last chance: after this the body is gone.
     capturePageContext();
-    ensureBodyAndStop();
+    ensureBodyAndHush();
     injectOverlayStyle();
     renderChatUI({
       mode: "gate",
@@ -413,7 +413,7 @@ function applyCheckResult(response) {
     if (handled) return;
     handled = true;
     try {
-      ensureBodyAndStop();
+      ensureBodyAndHush();
       injectOverlayStyle();
       renderSetupNeededUI();
     } catch (e) {
@@ -449,7 +449,7 @@ function applyCheckResult(response) {
     if (handled) return;
     handled = true;
     try {
-      ensureBodyAndStop();
+      ensureBodyAndHush();
       injectOverlayStyle();
       renderAccessNeededUI();
     } catch (e) {
@@ -502,7 +502,7 @@ async function checkFromStorage(host) {
   if (!stored.setupComplete) {
     handled = true;
     try {
-      ensureBodyAndStop();
+      ensureBodyAndHush();
       injectOverlayStyle();
       renderSetupNeededUI();
     } catch (e) {
@@ -579,8 +579,11 @@ window.addEventListener("pageshow", (event) => {
   if (event.persisted && !handled) runCheck();
 });
 
-function ensureBodyAndStop() {
-  window.stop();
+function ensureBodyAndHush() {
+  // Silence first: after the wipe below, anything already playing is no longer
+  // findable in the document — and a check-in goes up over a page that is
+  // usually mid-video.
+  hushPage();
   document.documentElement.style.overflow = "hidden";
   if (!document.body) {
     const body = document.createElement("body");
@@ -589,6 +592,35 @@ function ensureBodyAndStop() {
     document.body.innerHTML = "";
   }
   document.body.style.overflow = "hidden";
+}
+
+// The gate goes up while the page underneath it is usually still loading, and
+// the obvious move — window.stop() — is the one thing that must not happen
+// here. Safari runs a cross-site navigation in a fresh web process and keeps
+// the page you were already on up on screen until that load commits to the
+// browser. Stopping it first cancels the swap outright: the tab sits on the
+// *previous* page with the progress bar stuck, the address bar naming a site
+// that never arrives, and the gate rendered into a document nobody is ever
+// shown. That is the "typing a blocked domain just hangs on loading" failure,
+// and it is worse than no gate at all — the navigation can't finish either,
+// so there is nothing to gate and nothing to go back to.
+//
+// Waiting for a frame or two doesn't help: those frames run in the process
+// that hasn't been swapped in yet. So let the page finish arriving behind the
+// overlay, which covers it completely, and take away the one part of it that
+// can still get through — sound. Media is paused and muted the moment it
+// tries to play, including whatever the rest of the load brings in.
+function hushPage() {
+  const hush = (media) => {
+    try {
+      media.pause();
+      media.muted = true;
+    } catch (e) {
+      /* not every element that fires play answers to both */
+    }
+  };
+  document.addEventListener("play", (event) => hush(event.target), true);
+  document.querySelectorAll("video, audio").forEach(hush);
 }
 
 function runWhenBodyExists(callback) {
@@ -1097,7 +1129,7 @@ function setupInterruptionListener() {
         // could drop the panel entirely — leaving no block at all.
         //
         // Order matters. The badge's own observer re-attaches it whenever it
-        // leaves the body, so it must be stopped before ensureBodyAndStop()
+        // leaves the body, so it must be stopped before ensureBodyAndHush()
         // wipes the body, or it reappears on top of the overlay still counting
         // a session that has ended.
         if (badgeTeardown) badgeTeardown();
@@ -1107,7 +1139,7 @@ function setupInterruptionListener() {
           // check-in — capture it before the overlay empties the document,
           // otherwise the coach can't tell they drifted off what they asked for.
           capturePageContext();
-          ensureBodyAndStop();
+          ensureBodyAndHush();
           injectOverlayStyle();
           renderChatUI({
             mode: "checkin",

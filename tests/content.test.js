@@ -44,10 +44,11 @@ function makeElement(tag = 'div') {
   return node;
 }
 
-function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta = {} } = {}) {
+function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta = {}, media = [] } = {}) {
   const url = new URL(href);
   const created = [];
   const byId = {};
+  const listeners = [];
   const documentElement = makeElement('html');
   const body = makeElement('body');
   const document = {
@@ -68,7 +69,7 @@ function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta
         node._attrs.content = meta[metaMatch[1]];
         return node;
       }
-      // ensureBodyAndStop() sets body.innerHTML = "", which is exactly when
+      // ensureBodyAndHush() sets body.innerHTML = "", which is exactly when
       // every body-derived field stops being readable.
       if (body.innerHTML === '') return null;
       return makeElement();
@@ -88,8 +89,12 @@ function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta
       if (!byId[id]) byId[id] = makeElement();
       return byId[id];
     },
+    // Only the overlay's own query: whatever the page is playing right now.
+    querySelectorAll(selector) {
+      return selector === 'video, audio' ? media : [];
+    },
     _attach(id) { byId[id] = makeElement(); },
-    addEventListener() {},
+    addEventListener(type, fn) { listeners.push({ type, fn }); },
     removeEventListener() {}
   };
   const window = {
@@ -106,7 +111,22 @@ function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta
     addEventListener() {},
     removeEventListener() {}
   };
-  return { document, window, created };
+  // Dispatches to the listeners the overlay registered on the document, which
+  // is how a page that starts playing something behind the gate is simulated.
+  const fire = (type, target) => {
+    listeners.filter(l => l.type === type).forEach(l => l.fn({ target }));
+  };
+  return { document, window, created, fire, media };
+}
+
+// A media element with just enough of one to be silenced.
+function makeMedia({ paused = false, muted = false } = {}) {
+  return {
+    tagName: 'video',
+    paused,
+    muted,
+    pause() { this.paused = true; }
+  };
 }
 
 // Load content.js the way the browser does: as a plain script over a DOM.
@@ -158,8 +178,9 @@ function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageConte
   return { ...dom, chrome, observers, context };
 }
 
-// Whether the page was stopped and replaced — i.e. the user was gated.
-const gated = (dom) => dom.window.stopped;
+// Whether the page was replaced by the overlay — i.e. the user was gated.
+const gated = (dom) =>
+  dom.document.body.children.some(c => c.id === 'intention-root');
 
 const LIVE_SESSION = {
   domain: 'instagram.com',
@@ -256,8 +277,54 @@ describe('when the background never answers', () => {
   });
 });
 
+// Safari runs a cross-site navigation in a fresh process and keeps the old
+// page on screen until that load commits to the browser. window.stop() before
+// then cancels the swap outright: the tab hangs on the page you came from with
+// the progress bar stuck, the address bar naming a site that never arrives,
+// and the gate built inside a document nobody is ever shown. Typing a blocked
+// domain into the address bar hit this every time. Waiting for a frame or two
+// doesn't help — those frames run in the process that hasn't been swapped in.
+describe('the gate does not cancel the navigation it is gating', () => {
+  const withGate = (dom) => loadContent({
+    dom,
+    sendMessage: (message, cb) => cb({
+      setupComplete: true,
+      isBlocked: true,
+      matchedDomain: 'instagram.com',
+      accessRoute: 'hosted',
+      session: null
+    })
+  });
+
+  it('never stops the load', async () => {
+    const dom = withGate();
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+    expect(dom.window.stopped).toBe(false);
+  });
+
+  // Letting the page arrive behind the gate is only tolerable if it can't be
+  // heard: the overlay covers the picture, nothing covers the sound.
+  it('silences what the page was already playing', async () => {
+    const playing = makeMedia();
+    const dom = withGate({ href: 'https://www.instagram.com/explore/', media: [playing] });
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+    expect(playing.paused).toBe(true);
+    expect(playing.muted).toBe(true);
+  });
+
+  it('silences what the rest of the load starts playing', async () => {
+    const dom = withGate();
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+
+    const late = makeMedia();
+    dom.fire('play', late);
+    expect(late.paused).toBe(true);
+    expect(late.muted).toBe(true);
+  });
+});
+
 // When a pass runs out the background sends showCheckin. That used to render
-// the panel and nothing else -- no window.stop(), no body wipe, no re-attach
+// the panel and nothing else -- no body wipe, nothing silenced, no re-attach
 // observer -- so the site stayed fully live behind it: video playing, page
 // scrolling, and an SPA re-render able to drop the panel entirely.
 describe('the check-in overlay blocks the page', () => {
