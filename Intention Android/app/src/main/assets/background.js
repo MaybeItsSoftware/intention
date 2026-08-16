@@ -1470,8 +1470,8 @@ async function applySettingChange({ domain, changeType, newValue }) {
 // Shared by the LLM's grant_access tool call and the no-AI simpleGrant path:
 // records the grant, banks whatever session previously held this key, opens
 // the new session, and arms the check-in alarm / DNR rule.
-async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason }) {
-  await recordGrant(domain, minutes, reason);
+async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, quickCheck }) {
+  await recordGrant(domain, minutes, reason, { quickCheck });
 
   // Granting replaces whatever session held this key (a check-in extending
   // time, or a native port reusing the target's slot), so bank the old
@@ -1483,7 +1483,9 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason 
     await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes), 'extended');
   }
 
-  const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
+  // Present (false) on non-quick sessions too: coach-path and simple-path
+  // session objects must keep identical key sets.
+  const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now(), quickCheck: !!quickCheck };
   await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
   chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
   // Apps have no network rules to allow — the Android accessibility

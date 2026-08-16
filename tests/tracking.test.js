@@ -55,6 +55,43 @@ describe('recordGrant -> getStatsForDomain', () => {
     expect(stats.grantsToday).toBe(2);
     expect(stats.reasonsToday).toEqual(['real reason']);
   });
+
+  // The quick check is a separate lane: it must never consume one of the
+  // day's grants, or the "free glance" would drain the negotiation budget.
+  it('a quick check counts in its own lane, not against grants', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 3, 'check delivery', { quickCheck: true });
+
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.grantsToday).toBe(0);
+    expect(stats.quickChecksToday).toBe(1);
+    expect(stats.reasonsToday).toEqual(['check delivery']);
+    const [session] = stats.sessionsToday;
+    expect(session.quickCheck).toBe(true);
+  });
+
+  it('mixed day counts each lane separately and normal sessions are unflagged', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'reply to friend');
+    await ctx.recordGrant('twitter.com', 3, 'check DMs', { quickCheck: true });
+
+    const stats = await ctx.getStatsForDomain('twitter.com');
+    expect(stats.grantsToday).toBe(1);
+    expect(stats.quickChecksToday).toBe(1);
+    expect(stats.sessionsToday.map(s => s.quickCheck)).toEqual([false, true]);
+  });
+
+  it('recentDays carries the quickChecks tally', async () => {
+    const { ctx } = fresh();
+    const yesterday = ctx.daysAgoKeys(2)[1];
+    const { ctx: seeded } = fresh({
+      dailyStats: {
+        [yesterday]: { 'twitter.com': { minutes: 3, grants: 0, quickChecks: 2, sessions: [] } }
+      }
+    });
+    const stats = await seeded.getStatsForDomain('twitter.com');
+    expect(stats.recentDays[0].quickChecks).toBe(2);
+  });
 });
 
 // Minutes alone cannot tell "asked for 10, left after 4" from "asked for 10

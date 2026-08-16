@@ -144,11 +144,17 @@ async function withDailyStats(mutator) {
   });
 }
 
-async function recordGrant(domain, minutes, reason) {
+async function recordGrant(domain, minutes, reason, options) {
+  // A quick check is a separate lane: it must never count against the day's
+  // grants cap, so it gets its own counter (lazily added, like walkedAway).
+  const quickCheck = !!(options && options.quickCheck);
   await withDailyStats((stats, today) => {
     if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
-    stats[today][domain].grants += 1;
-    stats[today][domain].sessions.push({ grantedMinutes: minutes, reason, grantedAt: Date.now() });
+    if (quickCheck) stats[today][domain].quickChecks = (stats[today][domain].quickChecks || 0) + 1;
+    else stats[today][domain].grants += 1;
+    const session = { grantedMinutes: minutes, reason, grantedAt: Date.now() };
+    if (quickCheck) session.quickCheck = true;
+    stats[today][domain].sessions.push(session);
   });
 }
 
@@ -225,7 +231,7 @@ async function getStatsForDomain(domain) {
   const monthKeys = daysAgoKeys(30);
   const yearKeys = daysAgoKeys(365);
 
-  let minutesToday = 0, grantsToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
+  let minutesToday = 0, grantsToday = 0, quickChecksToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
   let walkedAwayToday = 0, walkedAwayWeek = 0;
   let reasonsToday = [];
@@ -240,6 +246,7 @@ async function getStatsForDomain(domain) {
         if (k === todayKey) {
           minutesToday = site.minutes || 0;
           grantsToday = site.grants || 0;
+          quickChecksToday = site.quickChecks || 0;
           walkedAwayToday = site.walkedAway || 0;
           reasonsToday = (site.sessions || [])
             .map(s => (s && s.reason ? String(s.reason).trim() : ''))
@@ -252,6 +259,7 @@ async function getStatsForDomain(domain) {
               grantedAt: s.grantedAt || null,
               usedMinutes: typeof s.usedMinutes === 'number' ? s.usedMinutes : null,
               outcome: s.outcome || null,
+              quickCheck: !!s.quickCheck,
               // Without this the "back Nm later" annotation in prompts.js had
               // nothing to compute a gap from — stampSessionOutcome writes
               // endedAt, but the mapping here silently dropped it.
@@ -272,7 +280,8 @@ async function getStatsForDomain(domain) {
               if (s && s.outcome) tally[s.outcome] = (tally[s.outcome] || 0) + 1;
               return tally;
             }, {}),
-            walkedAway: site.walkedAway || 0
+            walkedAway: site.walkedAway || 0,
+            quickChecks: site.quickChecks || 0
           });
         }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
@@ -307,6 +316,7 @@ async function getStatsForDomain(domain) {
     minutesYear: Math.round(minutesYear),
     minutesAllTime: Math.round(minutesAllTime),
     grantsToday,
+    quickChecksToday,
     minutesTodayAll: Math.round(minutesTodayAll),
     minutesWeekAll: Math.round(minutesWeekAll),
     reasonsToday,

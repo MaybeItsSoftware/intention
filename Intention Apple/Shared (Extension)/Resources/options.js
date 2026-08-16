@@ -88,7 +88,8 @@ function populateProviderDropdowns() {
 
 const COMMON_SITES = [
   'x.com', 'twitter.com', 'youtube.com', 'reddit.com', 'instagram.com',
-  'tiktok.com', 'facebook.com', 'twitch.tv', 'netflix.com', 'linkedin.com'
+  'tiktok.com', 'facebook.com', 'twitch.tv', 'netflix.com', 'linkedin.com',
+  'substack.com'
 ];
 
 // Display name + brand icon (Simple Icons, 24x24 path data) for the preset chips.
@@ -103,6 +104,7 @@ const SITE_META = {
   'twitch.tv': { name: 'Twitch', color: '#9146ff', icon: 'M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z' },
   'netflix.com': { name: 'Netflix', color: '#e50914', icon: 'm5.398 0 8.348 23.602c2.346.059 4.856.398 4.856.398L10.113 0H5.398zm8.489 0v9.172l4.715 13.33V0h-4.715zM5.398 1.5V24c1.873-.225 2.81-.312 4.715-.398V14.83L5.398 1.5z' },
   'linkedin.com': { name: 'LinkedIn', color: '#0a66c2', icon: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z' },
+  'substack.com': { name: 'Substack', color: '#ff6719', icon: 'M22.539 8.242H1.46V5.406h21.08v2.836zM1.46 10.812V24L12 18.11 22.54 24V10.812H1.46zM22.54 0H1.46v2.836h21.08V0z' },
 };
 
 // App blocking is only available where the native bridge injects

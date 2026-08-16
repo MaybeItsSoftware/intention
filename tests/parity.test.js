@@ -148,6 +148,7 @@ describe('tracking.js parity across variants', () => {
       const { ctx } = loadTracking({ variant: v });
       await ctx.recordGrant('x.com', 10, 'focus task');
       await ctx.recordSessionMinutes('x.com', 12, 'closed_early');
+      await ctx.recordGrant('x.com', 3, 'grab an address', { quickCheck: true });
       results.push(await ctx.getStatsForDomain('x.com'));
     }
     // Each variant records its own grant a moment after the last, so the
@@ -163,6 +164,9 @@ describe('tracking.js parity across variants', () => {
     expect(results[0].sessionsToday[0]).toMatchObject({
       reason: 'focus task', grantedMinutes: 10, usedMinutes: 12, outcome: 'closed_early'
     });
+    expect(results[0].grantsToday).toBe(1);
+    expect(results[0].quickChecksToday).toBe(1);
+    expect(results[0].sessionsToday[1]).toMatchObject({ reason: 'grab an address', quickCheck: true });
   });
 });
 
