@@ -60,7 +60,11 @@ describe('prompts.js parity across variants', () => {
     walkedAwayWeek: 4,
     observations: [
       { text: 'They tend to reach for Twitter mid-afternoon.', domain: 'twitter.com', at: 1754838000000 }
-    ]
+    ],
+    // A non-default lane with one use spent, so the rendered quick-check line
+    // (counts and budget) is exercised by the parity check too.
+    quickCheck: { minutes: 5, usesPerDay: 2 },
+    quickChecksToday: 1
   };
 
   const settingsArgs = {
