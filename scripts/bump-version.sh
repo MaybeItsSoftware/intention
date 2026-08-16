@@ -57,6 +57,15 @@ echo "  ✓ package.json"
 
 if [[ -f "$PBXPROJ" ]]; then
   sed -i.bak -E "s/MARKETING_VERSION = [0-9.]+;/MARKETING_VERSION = $VERSION;/" "$PBXPROJ"
+  # No explicit build number: auto-increment, exactly as versionCode does for
+  # Android below. App Store Connect refuses any upload whose CFBundleVersion
+  # it has seen before, so a release pipeline that leaves this number alone
+  # (semantic-release passes only the version) works until the first upload,
+  # then rejects every one after it.
+  if [[ -z "$BUILD" ]]; then
+    CURRENT=$(sed -nE 's/.*CURRENT_PROJECT_VERSION = ([0-9]+);.*/\1/p' "$PBXPROJ" | head -1)
+    [[ -n "$CURRENT" ]] && BUILD=$((CURRENT + 1))
+  fi
   if [[ -n "$BUILD" ]]; then
     sed -i.bak -E "s/CURRENT_PROJECT_VERSION = [0-9]+;/CURRENT_PROJECT_VERSION = $BUILD;/" "$PBXPROJ"
   fi
