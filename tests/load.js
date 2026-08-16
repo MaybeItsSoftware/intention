@@ -211,11 +211,11 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
   return { ctx, chrome };
 }
 
-// Convenience: load the whole background worker — providers.js, prompts.js,
-// tracking.js and background.js — into ONE vm context, the way the service
-// worker (importScripts) and the native background WebViews (four <script>
-// tags) both load them. Concatenating is safe because no top-level name is
-// declared in more than one of the four.
+// Convenience: load the whole background worker — sites.js, providers.js,
+// prompts.js, tracking.js and background.js — into ONE vm context, the way the
+// service worker (importScripts) and the native background WebViews (five
+// <script> tags) both load them. Concatenating is safe because no top-level
+// name is declared in more than one of the five.
 //
 // Returns { ctx, chrome, fetch, listeners } where `listeners` exposes the
 // handlers background.js registers, so tests can fire an alarm or a tab close
@@ -284,7 +284,7 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
     _sessionRules: sessionRules
   };
 
-  const sources = ['providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']
+  const sources = ['sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']
     .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
     .join('\n;\n');
 

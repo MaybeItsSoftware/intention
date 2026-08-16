@@ -37,6 +37,16 @@ function grantingFetch(minutes = 10, reason = 'check DMs') {
   });
 }
 
+// Same, but the model attests this grant as the daily quick check.
+function quickCheckFetch(minutes = 3, reason = 'grab an address') {
+  return makeMockFetch({
+    content: [
+      { type: 'text', text: 'Okay.' },
+      { type: 'tool_use', id: 't1', name: 'grant_access', input: { minutes, reason, quick_check: true } }
+    ]
+  });
+}
+
 // The system prompt of the most recent request. handleChat now sends the
 // cache-split block array (splitSystemForCache), so normalise string-or-blocks
 // back to one string before asserting on its contents.
@@ -832,9 +842,29 @@ describe('an AI-granted pass is recorded like any other', () => {
     // The fact lives in systemNote for the UI to render outside the chat; the
     // rejection also fires the honesty turn, so the reply is two texts joined
     // and the fourth conversation cost two calls (3 grants + 2 = 5 total).
-    expect(fourth.systemNote).toMatch(/daily grant cap reached/i);
+    // The lane is on by default and unspent, so the refusal names the one
+    // remaining exception rather than declaring the day fully closed.
+    expect(fourth.systemNote).toBe('Daily grant cap reached — only the 3-minute quick check is still available today.');
     expect(fetch.calls.length).toBe(5);
     expect(fourth.assistantText).toBe('Okay.\n\nOkay.');
+  });
+
+  it('declares the day fully closed once the quick check is spent too', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        dailyStats: {
+          [today()]: { 'instagram.com': { minutes: 15, grants: 3, quickChecks: 1, sessions: [] } }
+        }
+      },
+      fetch: grantingFetch(5, 'one more look')
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      NATIVE
+    );
+    expect(resp.grantedSession ?? null).toBe(null);
+    expect(resp.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
   });
 
   it('honours a per-domain cap lower than the default', async () => {
@@ -853,7 +883,7 @@ describe('an AI-granted pass is recorded like any other', () => {
       NATIVE
     );
     expect(second.grantedSession ?? null).toBe(null);
-    expect(second.systemNote).toMatch(/daily grant cap reached/i);
+    expect(second.systemNote).toBe('Daily grant cap reached — only the 3-minute quick check is still available today.');
     // Rejection + honesty turn: one call for the first grant, two for this.
     expect(fetch.calls.length).toBe(3);
     expect(second.assistantText).toBe('Okay.\n\nOkay.');
@@ -888,6 +918,142 @@ describe('an AI-granted pass is recorded like any other', () => {
     expect(Object.keys(coachSession).sort()).toEqual(Object.keys(simpleSession).sort());
     expect((await viaCoach.ctx.getStatsForDomain('instagram.com')).grantsToday)
       .toBe((await viaSimple.ctx.getStatsForDomain('instagram.com')).grantsToday);
+  });
+});
+
+// The quick check: a small daily lane the coach may grant immediately, on by
+// default, mechanically fenced here so the model cannot be sweet-talked past
+// its budget. Separate from the grants cap by design; never separate from the
+// absolute minutes cap.
+describe('the quick-check lane', () => {
+  const dayStats = (site) => ({ [today()]: { 'instagram.com': site } });
+
+  it('spends the lane, not a grant, and flags the session', async () => {
+    const { ctx, chrome, fetch } = loadBackground({ seed: CONFIGURED, fetch: quickCheckFetch(3) });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'need the address from a DM' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    expect(resp.systemNote ?? '').toBe('');
+    expect(fetch.calls.length).toBe(1);
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.grantsToday).toBe(0);
+    expect(stats.quickChecksToday).toBe(1);
+    expect(chrome.storage._store.activeSessions['target:instagram.com'].quickCheck).toBe(true);
+  });
+
+  it('stays available after the grants cap is hit', async () => {
+    const { ctx } = loadBackground({
+      seed: { ...CONFIGURED, dailyStats: dayStats({ minutes: 15, grants: 3, sessions: [] }) },
+      fetch: quickCheckFetch(3)
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    expect((await ctx.getStatsForDomain('instagram.com')).quickChecksToday).toBe(1);
+  });
+
+  it('clamps an inflated ask to the lane budget and says so honestly', async () => {
+    const { ctx, fetch } = loadBackground({ seed: CONFIGURED, fetch: quickCheckFetch(10) });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    expect(resp.systemNote).toBe('Quick checks top out at 3 minutes — your pass is 3 minutes.');
+    // Clamp fires the honesty turn: two calls, correction names the budget.
+    expect(fetch.calls.length).toBe(2);
+    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
+    expect(lastMsg.content).toContain('quick-check budget');
+  });
+
+  it('never exceeds the remaining daily minutes', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
+        dailyStats: dayStats({ minutes: 3, grants: 1, sessions: [] })
+      },
+      fetch: quickCheckFetch(3)
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(2);
+    expect(resp.systemNote).toBe('Only 2 minutes were available under your daily cap — your quick check is 2 minutes.');
+  });
+
+  it('is rejected outright when the absolute minutes cap is spent', async () => {
+    const { ctx, chrome, fetch } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
+        dailyStats: dayStats({ minutes: 5, grants: 1, sessions: [] })
+      },
+      fetch: quickCheckFetch(3)
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    expect(resp.grantedSession ?? null).toBe(null);
+    expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
+    expect(resp.systemNote).toBe('Absolute max of 5 minutes reached — no more time can be granted today.');
+    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
+    expect(lastMsg.content).toContain('Not even a quick check');
+  });
+
+  it('downgrades to a normal grant once the lane is spent', async () => {
+    const { ctx, fetch } = loadBackground({
+      seed: { ...CONFIGURED, dailyStats: dayStats({ minutes: 3, grants: 0, quickChecks: 1, sessions: [] }) },
+      fetch: quickCheckFetch(3)
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    // The grant still lands — the user gave a real reason — but as one of the
+    // normal daily grants, and the honesty turn says so.
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.grantsToday).toBe(1);
+    expect(stats.quickChecksToday).toBe(1);
+    expect(fetch.calls.length).toBe(2);
+    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
+    expect(lastMsg.content).toContain("today's quick check is already used");
+  });
+
+  it('downgrades when the lane is disabled for this site', async () => {
+    const { ctx, fetch } = loadBackground({
+      seed: { ...CONFIGURED, domainLimits: { 'instagram.com': { quickCheck: { minutes: 0, usesPerDay: 0 } } } },
+      fetch: quickCheckFetch(3)
+    });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    expect((await ctx.getStatsForDomain('instagram.com')).grantsToday).toBe(1);
+    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
+    expect(lastMsg.content).toContain('quick checks are turned off for this site');
+  });
+
+  it('never extends: a quick_check flag at check-in becomes a normal grant', async () => {
+    const { ctx, fetch } = loadBackground({ seed: CONFIGURED, fetch: quickCheckFetch(3) });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'checkin', domain: 'instagram.com', userMessage: 'two more minutes' },
+      NATIVE
+    );
+    expect(resp.grantedSession.intervalMinutes).toBe(3);
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.grantsToday).toBe(1);
+    expect(stats.quickChecksToday).toBe(0);
+    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
+    expect(lastMsg.content).toContain('cannot be used to extend');
   });
 });
 

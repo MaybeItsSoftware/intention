@@ -132,6 +132,51 @@ async function syncConfigFromNative() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Candidate-site tally — what the suggestion grid ranks on.
+//
+// The grid used to be a fixed list in a fixed order, so someone who only ever
+// loses an evening to Hacker News still had nine sites they never open sitting
+// above it. This counts how often a *candidate* gets visited so the grid can
+// lead with the ones that are actually a problem for this person.
+//
+// It is deliberately not a browsing log. A host is only counted when it
+// matches an entry in COMMON_SITES, which bounds the store to that list —
+// there is no key here that the suggestion catalogue did not already name, and
+// nothing about a host that isn't on it is written down. Nor is it transmitted:
+// `siteVisits` is not in CONFIG_KEYS, so pushConfigToNative skips it.
+const VISIT_TALLY_GAP_MS = 30 * 60 * 1000;
+
+// Subdomains fold into their candidate, so old.reddit.com and www.reddit.com
+// are one entry — the same host match blocking itself uses.
+function candidateForHost(host) {
+  if (!host) return null;
+  return COMMON_SITES.find(d => host === d || host.endsWith('.' + d)) || null;
+}
+
+async function recordCandidateVisit(host) {
+  const candidate = candidateForHost(host);
+  if (!candidate) return;
+  const now = Date.now();
+  // Read before mutating: this runs on every page load of a candidate site,
+  // and the throttle means most of those have nothing to write.
+  const visits = await getCandidateVisits();
+  const seen = visits[candidate];
+  if (seen && now - seen.last < VISIT_TALLY_GAP_MS) return;
+  await mutateStorage('siteVisits', (stored) => {
+    const entry = stored[candidate] || { count: 0, last: 0 };
+    // One count per candidate per half hour: the ranking wants to know how
+    // often they come back, not how many pages deep a single sitting went.
+    if (now - entry.last < VISIT_TALLY_GAP_MS) return;
+    stored[candidate] = { count: entry.count + 1, last: now };
+  });
+}
+
+async function getCandidateVisits() {
+  const { siteVisits = {} } = await getStorage(['siteVisits']);
+  return siteVisits;
+}
+
 async function withDailyStats(mutator) {
   await mutateStorage('dailyStats', (dailyStats) => {
     const today = dateKey();

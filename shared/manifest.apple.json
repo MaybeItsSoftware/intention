@@ -6,6 +6,7 @@
   ],
   "background": {
     "scripts": [
+      "sites.js",
       "providers.js",
       "prompts.js",
       "tracking.js",
