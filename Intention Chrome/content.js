@@ -437,6 +437,14 @@ async function runCheck() {
 }
 
 function applyCheckResult(response) {
+  // "Not blocked" has to win over "setup unfinished", or an unfinished wizard
+  // would blank every page on the web: this runs at document_start on
+  // <all_urls>, and before setup there is no blocklist for anything to match.
+  // The storage fallback below has always had it this way round.
+  if (!response.isBlocked) {
+    return;
+  }
+
   if (!response.setupComplete) {
     if (handled) return;
     handled = true;
@@ -447,10 +455,6 @@ function applyCheckResult(response) {
     } catch (e) {
       console.error(INT_LOG, "failed to render setup needed UI:", e);
     }
-    return;
-  }
-
-  if (!response.isBlocked) {
     return;
   }
 
@@ -668,10 +672,13 @@ function runWhenBodyExists(callback) {
   }
 }
 
+// Only reachable on a site that is already on the blocklist (see
+// applyCheckResult) — so the blocking half of setup clearly ran, and what is
+// missing is the rest of the wizard.
 function renderSetupNeededUI() {
   renderInterstitial(
-    "Finish setup to enable your AI coach.",
-    "Open settings",
+    "This site is blocked, but setup was never finished — so there's no coach here to talk to yet.",
+    "Finish setup",
   );
 }
 
@@ -680,12 +687,13 @@ function renderSetupNeededUI() {
 // to the settings page, which does. The site stays blocked either way.
 function renderAccessNeededUI() {
   renderInterstitial(
-    "You need coaching credit to talk to your coach.",
-    "Open settings",
+    "Your coach needs either coaching credit or your own API key. Set one up and this page will let you talk your way through.",
+    "Set up access",
+    "settings",
   );
 }
 
-function renderInterstitial(subtitle, buttonLabel) {
+function renderInterstitial(subtitle, buttonLabel, section) {
   const existing = document.getElementById("intention-root");
   if (existing) existing.remove();
   const root = document.createElement("div");
@@ -708,7 +716,9 @@ function renderInterstitial(subtitle, buttonLabel) {
   // An SPA re-rendering <body> must not be able to drop the block.
   keepAttached(root);
   button.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ action: "openOptions" });
+    chrome.runtime.sendMessage(
+      section ? { action: "openOptions", section } : { action: "openOptions" },
+    );
   });
 }
 

@@ -254,6 +254,13 @@ async function main() {
     record('grant_access is offered as a tool, not free text',
       (opener.body.tools || []).some(t => t.name === 'grant_access'));
 
+    record('the prompt offers the default quick-check lane',
+      system.includes('Quick check'),
+      system.split('\n').find(l => l.includes('Quick check')) || '(absent)');
+
+    record('the grant tool carries the quick_check flag',
+      (opener.body.tools || []).some(t => t.name === 'grant_access' && JSON.stringify(t).includes('quick_check')));
+
     record('the opener reply is fully rendered within 1s of the stub answering',
       openerRenderedAt != null && (openerRenderedAt - opener.respondedAt) < 1000,
       openerRenderedAt == null ? 'never finished rendering' : `${openerRenderedAt - opener.respondedAt}ms`);

@@ -544,24 +544,38 @@ blockquote {
   flex-shrink: 0;
 }
 
+/* Suggestions are pills on a wrapping line rather than a two-column grid of
+   full-width cards: the catalogue is long enough now that a card each pushed
+   the list someone came here to edit off the screen. */
 .recommend-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin: 4px 0 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+/* A label breaks the flex line, so each run of chips starts on its own row. */
+.recommend-label {
+  width: 100%;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.recommend-label:first-child {
+  margin-top: 0;
 }
 
 .recommend-card {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 12px;
+  gap: 8px;
+  padding: 7px 10px 7px 12px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
   text-align: left;
-  width: 100%;
 }
 
 .recommend-card:hover {
@@ -569,26 +583,39 @@ blockquote {
 }
 
 .recommend-card-name {
-  flex: 1;
-  font-size: 14px;
+  font-size: 13px;
   color: #f1f5f9;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .recommend-card-add {
   flex-shrink: 0;
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(59, 130, 246, 0.22);
   color: #f1f5f9;
-  font-size: 16px;
+  font-size: 13px;
   line-height: 1;
+}
+
+.recommend-more {
+  display: block;
+  margin: 0 0 14px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.recommend-more:hover {
+  color: #e5e7eb;
 }
 
 .mode-choice-grid {
@@ -969,9 +996,7 @@ input[type="number"].inline-limit-input:focus {
 
   .pill { padding: 6px 12px; }
 
-  .recommend-grid { grid-template-columns: 1fr; }
-  .recommend-card { padding: 10px 12px; gap: 10px; }
-  .recommend-card-name { font-size: 13px; }
+  .recommend-card { padding: 8px 10px 8px 12px; }
 
   .mode-choice-grid { grid-template-columns: 1fr; }
 

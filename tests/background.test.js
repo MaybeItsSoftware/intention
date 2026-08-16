@@ -596,6 +596,64 @@ describe('checkPageMatch reports access', () => {
   });
 });
 
+// The suggestion grid ranks on this tally, and the tally is the one thing in
+// the extension that writes down a site nobody asked it to watch — so its
+// bounds are the point of these tests, not just its arithmetic.
+describe('candidate visit tally', () => {
+  const seed = { blockedDomains: ['instagram.com'], setupComplete: true };
+
+  it('counts an unblocked candidate site', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.checkPageMatch('news.ycombinator.com', 1);
+    await ctx.getCandidateVisits();
+    expect(chrome.storage._store.siteVisits['news.ycombinator.com'].count).toBe(1);
+  });
+
+  it('folds a subdomain into its candidate', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.recordCandidateVisit('old.reddit.com');
+    expect(chrome.storage._store.siteVisits['reddit.com'].count).toBe(1);
+  });
+
+  it('records nothing for a host outside the catalogue', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.checkPageMatch('example.com', 1);
+    await ctx.checkPageMatch('notreddit.com', 1);
+    // Nothing written at all — not an empty object, no key.
+    expect(chrome.storage._store.siteVisits).toBeUndefined();
+  });
+
+  it('records nothing for a site that is already blocked', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.checkPageMatch('www.instagram.com', 1);
+    // Nothing written at all — not an empty object, no key.
+    expect(chrome.storage._store.siteVisits).toBeUndefined();
+  });
+
+  it('counts a sitting once, however many pages deep it goes', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.recordCandidateVisit('reddit.com');
+    await ctx.recordCandidateVisit('reddit.com');
+    await ctx.recordCandidateVisit('reddit.com');
+    expect(chrome.storage._store.siteVisits['reddit.com'].count).toBe(1);
+  });
+
+  it('counts again once the gap has passed', async () => {
+    const { ctx, chrome } = loadBackground({ seed });
+    await ctx.recordCandidateVisit('reddit.com');
+    chrome.storage._store.siteVisits['reddit.com'].last = Date.now() - (31 * 60 * 1000);
+    await ctx.recordCandidateVisit('reddit.com');
+    expect(chrome.storage._store.siteVisits['reddit.com'].count).toBe(2);
+  });
+
+  it('hands the tally to the options page', async () => {
+    const { ctx } = loadBackground({ seed });
+    await ctx.recordCandidateVisit('www.youtube.com');
+    const visits = await ctx.handleMessage({ action: 'getSiteVisits' }, {});
+    expect(visits['youtube.com'].count).toBe(1);
+  });
+});
+
 describe('setup no longer collects credentials', () => {
   it('completes with no provider or key', async () => {
     const { ctx, chrome } = loadBackground();

@@ -15,7 +15,7 @@ The coach runs on **coaching credit**, a one-time top-up bought through the App 
 
 ## How it works
 
-1. You add sites to a blocklist (e.g. `instagram.com`, `twitter.com`).
+1. You add sites to a blocklist (e.g. `instagram.com`, `x.com`).
 2. When you open one, the page is paused and a chat opens. Your coach — the LLM you chose — asks what's up.
 3. If you have a real, specific, time-bounded reason, it grants you some minutes. If the reason is hollow ("just checking"), it doesn't — it offers alternatives instead, drawn from what it knows about you.
 4. When the time is up, it checks back in. Further grants get exponentially harder; after the daily cap the coach can't grant more, but it'll still talk to you, help you notice the pattern, and cheer you on for closing the tab.

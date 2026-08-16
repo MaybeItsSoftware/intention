@@ -1451,6 +1451,20 @@ function effectiveModeFor(entry, globalMode) {
   return (entry && entry.mode) || globalMode || 'coach';
 }
 
+// The lane a site actually has right now, defaults included. Mirrors
+// normalizeQuickCheck() in prompts.js (the options page doesn't load that
+// file) — keep the two in sync. Needed so tighten-vs-loosen compares against
+// the effective value: a missing field IS the default lane, not "off".
+function effectiveQuickCheckFor(entry) {
+  const src = (entry && typeof entry.quickCheck === 'object' && entry.quickCheck) || {};
+  let minutes = Math.round(Number(src.minutes));
+  let usesPerDay = Math.round(Number(src.usesPerDay));
+  if (isNaN(minutes)) minutes = 3;
+  if (isNaN(usesPerDay)) usesPerDay = 1;
+  if (minutes <= 0 || usesPerDay <= 0) return { minutes: 0, usesPerDay: 0, enabled: false };
+  return { minutes: Math.min(minutes, 60), usesPerDay, enabled: true };
+}
+
 // Loosening a rule (removing a block, raising a limit, disabling everything)
 // normally requires convincing the AI coach via openGateModal. In simple mode
 // there's no AI, so the change just applies immediately instead.
@@ -1548,10 +1562,12 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
     limitSpan.appendChild(document.createTextNode(' min/day'));
     infoContainer.appendChild(limitSpan);
 
-    infoContainer.appendChild(buildRowModeControl(d, limitInfo, globalMode, async () => {
+    const rerenderDomains = async () => {
       const state = await getConfig();
       renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
-    }));
+    };
+    infoContainer.appendChild(buildQuickCheckControl(d, limitInfo, globalMode, rerenderDomains));
+    infoContainer.appendChild(buildRowModeControl(d, limitInfo, globalMode, rerenderDomains));
 
     li.appendChild(infoContainer);
 
@@ -1627,6 +1643,108 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   return row;
 }
 
+// The per-row "Quick check: [n] min × [m]/day" control, shared by the domain
+// and app lists. Same rules as every other setting here: tightening or
+// disabling applies instantly and free; enabling or raising anything goes
+// through the coach gate. Coach-only feature — hidden on simple-mode rows.
+function buildQuickCheckControl(key, limitInfo, globalMode, onSaved, persistKey = 'domainLimits', displayName = key) {
+  const badge = document.createElement('span');
+  badge.className = 'domain-limit-badge quick-check-badge';
+  if (effectiveModeFor(limitInfo, globalMode) === 'simple') {
+    badge.hidden = true;
+    return badge;
+  }
+
+  const current = effectiveQuickCheckFor(limitInfo);
+
+  const toggle = document.createElement('input');
+  toggle.type = 'checkbox';
+  toggle.checked = current.enabled;
+  toggle.title = 'Allow one lenient daily quick check on this site';
+
+  const minsInput = document.createElement('input');
+  minsInput.type = 'number';
+  minsInput.min = '1';
+  minsInput.max = '60';
+  minsInput.className = 'inline-limit-input';
+  minsInput.value = current.enabled ? current.minutes : 3;
+
+  const usesInput = document.createElement('input');
+  usesInput.type = 'number';
+  usesInput.min = '1';
+  usesInput.max = '5';
+  usesInput.className = 'inline-limit-input';
+  usesInput.value = current.enabled ? current.usesPerDay : 1;
+
+  const reflect = () => {
+    minsInput.disabled = !toggle.checked;
+    usesInput.disabled = !toggle.checked;
+  };
+  reflect();
+
+  const revert = () => {
+    toggle.checked = current.enabled;
+    minsInput.value = current.enabled ? current.minutes : 3;
+    usesInput.value = current.enabled ? current.usesPerDay : 1;
+    reflect();
+  };
+
+  const save = async (qc) => {
+    const state = await getConfig();
+    const currentLimits = state[persistKey] || {};
+    if (!currentLimits[key]) currentLimits[key] = { maxGrants: 3 };
+    currentLimits[key].quickCheck = qc;
+    await sendBg({ action: 'saveSettings', config: { [persistKey]: currentLimits } });
+    await onSaved();
+  };
+
+  const requestChange = async () => {
+    const m = parseInt(minsInput.value, 10);
+    const u = parseInt(usesInput.value, 10);
+    if (toggle.checked && (isNaN(m) || m <= 0 || isNaN(u) || u <= 0)) {
+      revert();
+      return;
+    }
+    const next = toggle.checked
+      ? { minutes: Math.min(m, 60), usesPerDay: Math.min(u, 5) }
+      : { minutes: 0, usesPerDay: 0 };
+    // The effective value is the comparison point: with the lane on by
+    // default, a missing field is the default lane, not "off" — so enabling
+    // from off, or raising either number, is a loosening.
+    const loosens = next.minutes > 0 &&
+      (!current.enabled || next.minutes > current.minutes || next.usesPerDay > current.usesPerDay);
+    if (!loosens) {
+      await save(next);
+      return;
+    }
+    revert(); // until/unless approved
+    const curStr = current.enabled ? `${current.minutes} min × ${current.usesPerDay}/day` : 'off';
+    const newStr = `${next.minutes} min × ${next.usesPerDay}/day`;
+    applyOrGate({
+      isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
+      changeType: persistKey === 'appLimits' ? 'increase_app_quick_check' : 'increase_quick_check',
+      domain: key,
+      currentValue: current.enabled ? { minutes: current.minutes, usesPerDay: current.usesPerDay } : { minutes: 0, usesPerDay: 0 },
+      newValue: next,
+      title: `Loosen the quick check on ${displayName}?`,
+      subtitle: `Going from ${curStr} to ${newStr} of no-questions time every day. Convince your coach.`,
+      onApproved: onSaved
+    });
+  };
+
+  toggle.addEventListener('change', () => { reflect(); requestChange(); });
+  minsInput.addEventListener('change', requestChange);
+  usesInput.addEventListener('change', requestChange);
+
+  badge.appendChild(toggle);
+  badge.appendChild(document.createTextNode(' Quick check: '));
+  badge.appendChild(minsInput);
+  badge.appendChild(document.createTextNode(' min × '));
+  badge.appendChild(usesInput);
+  badge.appendChild(document.createTextNode('/day'));
+  return badge;
+}
+
 // ---- Blocked apps (settings view, Android only) ----
 // Mirrors the domain list above: adding/tightening is free, any loosening
 // (removing an app, raising its limit) goes through the coach gate.
@@ -1667,6 +1785,7 @@ function removeApp(pkg, label, isSimple) {
 
 function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
   settingsBlockedApps = apps;
+  renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   for (const pkg of apps) {
@@ -1733,10 +1852,12 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
     limitSpan.appendChild(document.createTextNode(' min/day'));
     infoContainer.appendChild(limitSpan);
 
-    infoContainer.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, async () => {
+    const rerenderApps = async () => {
       const state = await getConfig();
       renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
-    }, 'appLimits'));
+    };
+    infoContainer.appendChild(buildQuickCheckControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits', labels[pkg] || pkg));
+    infoContainer.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits'));
 
     li.appendChild(infoContainer);
 
@@ -2107,7 +2228,9 @@ function gateOpenerFallback(changeType, domain) {
     ? `You want to remove ${domain} from your blocklist. You set this rule for a reason. Tell me what's changed.`
     : changeType === 'increase_limit'
       ? `You want more time on ${domain}. Why? What's driving this right now?`
-      : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
+      : changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check'
+        ? `You want a bigger daily quick check here. That's extra no-questions time every single day — what's driving it?`
+        : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
 }
 
 // attemptGateSend minus the user bubble: the coach speaks first. No

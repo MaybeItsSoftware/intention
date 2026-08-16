@@ -208,6 +208,24 @@ describe('when the background answers', () => {
     await new Promise(r => setTimeout(r, 20));
     expect(gated(dom)).toBe(false);
   });
+
+  // This script runs at document_start on <all_urls>, and before setup there
+  // is no blocklist for anything to match — so an unfinished wizard used to
+  // mean every page on the web got replaced by the "finish setup" card.
+  it('leaves an unblocked page alone even when setup is unfinished', async () => {
+    const dom = loadContent({
+      sendMessage: (message, cb) => cb({ setupComplete: false, isBlocked: false })
+    });
+    await new Promise(r => setTimeout(r, 20));
+    expect(gated(dom)).toBe(false);
+  });
+
+  it('still shows the setup card on a blocked site when setup is unfinished', async () => {
+    const dom = loadContent({
+      sendMessage: (message, cb) => cb({ setupComplete: false, isBlocked: true, matchedDomain: 'instagram.com' })
+    });
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+  });
 });
 
 describe('when the background never answers', () => {

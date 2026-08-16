@@ -57,6 +57,7 @@
 		66B8D07E2FE985EF00BC0D7F /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
 		66B8D07F2FE985EF00BC0D7F /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0712FE985EF00BC0D7F /* icon128.png */; };
 		66B8D0802FE985EF00BC0D7F /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		5175E5AA0000000000005101 /* sites.js in Resources */ = {isa = PBXBuildFile; fileRef = 5175E5AA0000000000005001 /* sites.js */; };
 		66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
 		66B8D0822FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
 		66B8D0832FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
@@ -72,6 +73,7 @@
 		66B8D08C2FE985EF00BC0D7F /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
 		66B8D08D2FE985EF00BC0D7F /* icon128.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0712FE985EF00BC0D7F /* icon128.png */; };
 		66B8D08E2FE985EF00BC0D7F /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		5175E5AA0000000000005102 /* sites.js in Resources */ = {isa = PBXBuildFile; fileRef = 5175E5AA0000000000005001 /* sites.js */; };
 		66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
 		66B8D0902FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
 		66B8D0912FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
@@ -85,6 +87,7 @@
 		76E2C3F3EF9D235A2AC0F8E1 /* ios-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 8B14A43335CF347D3C27E481 /* ios-bridge.js */; };
 		79E816C9538AF8290B28BE79 /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
 		863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		5175E5AA0000000000005103 /* sites.js in Resources */ = {isa = PBXBuildFile; fileRef = 5175E5AA0000000000005001 /* sites.js */; };
 		97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */; };
 		AA10C0DE000000000000FE01 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
 		AA10C0DE000000000000FE02 /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
@@ -227,6 +230,7 @@
 		66B8D0702FE985EF00BC0D7F /* options.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = options.js; path = "../../Intention Chrome/options.js"; sourceTree = "<group>"; };
 		66B8D0712FE985EF00BC0D7F /* icon128.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon128.png; path = "../../Intention Chrome/icon128.png"; sourceTree = "<group>"; };
 		66B8D0722FE985EF00BC0D7F /* tracking.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = tracking.js; path = "../../Intention Chrome/tracking.js"; sourceTree = "<group>"; };
+		5175E5AA0000000000005001 /* sites.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = sites.js; path = "../../Intention Chrome/sites.js"; sourceTree = "<group>"; };
 		66B8D0732FE985EF00BC0D7F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
 		66B8D0742FE985EF00BC0D7F /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = "../../Intention Chrome/options.html"; sourceTree = "<group>"; };
 		66B8D0752FE985EF00BC0D7F /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = "../../Intention Chrome/content.js"; sourceTree = "<group>"; };
@@ -445,6 +449,7 @@
 				66B8D0702FE985EF00BC0D7F /* options.js */,
 				66B8D0712FE985EF00BC0D7F /* icon128.png */,
 				66B8D0722FE985EF00BC0D7F /* tracking.js */,
+				5175E5AA0000000000005001 /* sites.js */,
 				66B8D0732FE985EF00BC0D7F /* manifest.json */,
 				66B8D0742FE985EF00BC0D7F /* options.html */,
 				66B8D0752FE985EF00BC0D7F /* content.js */,
@@ -735,6 +740,7 @@
 				1EDF5969600008746A5F0B50 /* prompts.js in Resources */,
 				1EDF5969600008746A5F0B51 /* page_context.js in Resources */,
 				863EED8703AFBACC93C7B3D2 /* tracking.js in Resources */,
+				5175E5AA0000000000005103 /* sites.js in Resources */,
 				79E816C9538AF8290B28BE79 /* background.js in Resources */,
 				AA10C0DE000000000000FE01 /* fonts in Resources */,
 			);
@@ -760,6 +766,7 @@
 				66B8D08A2FE985EF00BC0D7F /* background.js in Resources */,
 				66B8D0912FE985EF00BC0D7F /* content.js in Resources */,
 				66B8D08E2FE985EF00BC0D7F /* tracking.js in Resources */,
+				5175E5AA0000000000005102 /* sites.js in Resources */,
 				66B8D08C2FE985EF00BC0D7F /* options.js in Resources */,
 				66B8D0892FE985EF00BC0D7F /* content.css in Resources */,
 				66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */,
@@ -786,6 +793,7 @@
 				66B8D07C2FE985EF00BC0D7F /* background.js in Resources */,
 				66B8D0832FE985EF00BC0D7F /* content.js in Resources */,
 				66B8D0802FE985EF00BC0D7F /* tracking.js in Resources */,
+				5175E5AA0000000000005101 /* sites.js in Resources */,
 				66B8D07E2FE985EF00BC0D7F /* options.js in Resources */,
 				66B8D07B2FE985EF00BC0D7F /* content.css in Resources */,
 				66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */,
