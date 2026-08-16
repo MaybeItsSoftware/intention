@@ -110,6 +110,9 @@ let setupSimpleBehavior = 'pass';
 let setupSimplePassMinutes = 10;
 
 let installedAppsCache = null;
+// How many apps/categories the iOS Screen Time picker currently holds. Apple
+// only ever tells us the count, never which ones — see refreshSetupIOSApps.
+let setupIOSSelectionCount = 0;
 
 function getInstalledApps() {
   if (installedAppsCache) return Promise.resolve(installedAppsCache);
@@ -129,16 +132,20 @@ function showSetupView() {
   // with a bare question. Anything that needs a trip outside the app (Safari's
   // extension toggle on iOS) comes next, on purpose: leaving for Settings can
   // cost the user whatever they've typed, which is nothing this early.
-  // Apps get their own step ahead of websites wherever a native bridge exists,
-  // and the paywall only exists in coach mode, since it's the only mode that
-  // needs paid AI.
+  // Apps get their own step ahead of websites wherever a native bridge exists.
+  //
+  // What they're blocking comes before how blocking works: "Coach or Simple?"
+  // is unanswerable until you know what's behind the gate, and it reads as a
+  // preference once you do.
+  //
+  // The access step is always in the order, even in simple mode where it has
+  // nothing to sell. It used to be added and removed as the mode was toggled,
+  // which changed the denominator of "Step 4 of 8" under the user's finger.
   const computeStepOrder = () => {
     const order = ['setup-step-welcome'];
     if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
-    order.push('setup-step-mode');
     if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
-    order.push('setup-step-sites', 'setup-step-projects', 'setup-step-reasons');
-    if (setupBlockingMode !== 'simple') order.push('setup-step-access');
+    order.push('setup-step-sites', 'setup-step-why', 'setup-step-mode', 'setup-step-access', 'setup-step-done');
     return order;
   };
   setupStepOrder = computeStepOrder();
@@ -167,30 +174,49 @@ function showSetupView() {
 
   const renderModeStep = () => {
     modeCoachBtn.classList.toggle('selected', setupBlockingMode === 'coach');
+    modeCoachBtn.setAttribute('aria-pressed', String(setupBlockingMode === 'coach'));
     modeSimpleBtn.classList.toggle('selected', setupBlockingMode === 'simple');
+    modeSimpleBtn.setAttribute('aria-pressed', String(setupBlockingMode === 'simple'));
     simpleOptions.hidden = setupBlockingMode !== 'simple';
     simpleHardBtn.classList.toggle('selected', setupSimpleBehavior === 'hard');
+    simpleHardBtn.setAttribute('aria-pressed', String(setupSimpleBehavior === 'hard'));
     simplePassBtn.classList.toggle('selected', setupSimpleBehavior === 'pass');
+    simplePassBtn.setAttribute('aria-pressed', String(setupSimpleBehavior === 'pass'));
     simpleMinutesGroup.hidden = setupSimpleBehavior !== 'pass';
+    // The card used to advertise a literal "Take N minutes" button.
+    document.getElementById('setup-simple-pass-desc').textContent =
+      `A "Take ${setupSimplePassMinutes} minutes" button lets you through without asking anyone.`;
   };
 
-  // Switching modes adds or drops the paywall step at the end of the wizard,
-  // so the "Step N of M" counter has to be redrawn or it keeps promising a
-  // step count that no longer exists. The mode step's own index never moves,
-  // so re-showing the current step is safe.
+  // The step order no longer changes with the mode, but the access step's
+  // contents do (there is nothing to buy in simple mode), and so does the
+  // finish summary.
   const onModeChanged = () => {
     renderModeStep();
-    setupStepOrder = computeStepOrder();
-    showStep(setupStep);
+    renderAccessStep();
+    saveSetupDraft();
   };
+  // Each of these has to bank the draft itself: the wizard is otherwise only
+  // written on step navigation, so a mode chosen and then reloaded (or
+  // interrupted by a trip out to iOS Settings) would come back as the default.
+  const onModeEdited = () => { renderModeStep(); saveSetupDraft(); };
   modeCoachBtn.onclick = () => { setupBlockingMode = 'coach'; onModeChanged(); };
   modeSimpleBtn.onclick = () => { setupBlockingMode = 'simple'; onModeChanged(); };
-  simpleHardBtn.onclick = () => { setupSimpleBehavior = 'hard'; renderModeStep(); };
-  simplePassBtn.onclick = () => { setupSimpleBehavior = 'pass'; renderModeStep(); };
+  simpleHardBtn.onclick = () => { setupSimpleBehavior = 'hard'; onModeEdited(); };
+  simplePassBtn.onclick = () => { setupSimpleBehavior = 'pass'; onModeEdited(); };
   simpleMinutesInput.oninput = () => {
     setupSimplePassMinutes = Number(simpleMinutesInput.value) > 0 ? Number(simpleMinutesInput.value) : 10;
+    onModeEdited();
   };
 
+  // Same for the two free-text answers, which someone can spend a while on.
+  for (const id of ['setup-projects-input', 'setup-reasons-input']) {
+    document.getElementById(id).addEventListener('change', saveSetupDraft);
+  }
+
+  // Hoisted for the same reason as showSetupStep below: restoring a draft has
+  // to repaint the mode cards, and it runs outside this closure.
+  renderSetupModeStep = renderModeStep;
   renderModeStep();
 
   // ---- Step: websites ----
@@ -210,6 +236,21 @@ function showSetupView() {
   const nextBtn = document.getElementById('setup-next-btn');
   const saveBtn = document.getElementById('setup-save-btn');
 
+  // In simple mode there is no AI to turn on, so the access step says so
+  // rather than showing a paywall for something the user just opted out of.
+  const renderAccessStep = () => {
+    const isSimple = setupBlockingMode === 'simple';
+    const paywall = document.getElementById('setup-paywall');
+    document.getElementById('setup-access-title').textContent =
+      isSimple ? 'Nothing to turn on' : 'Turn on your coach';
+    document.getElementById('setup-access-subtitle').textContent = isSimple
+      ? "Simple mode runs entirely on your device — there's no AI behind it and nothing to buy. Go back a step if you'd rather have a coach."
+      // Kept short: the paywall's own lede, directly below, explains the choice.
+      : 'Optional — you can do this later. Your sites and apps start blocking either way.';
+    paywall.hidden = isSimple;
+    if (isSimple) paywall.innerHTML = '';
+  };
+
   const showStep = (n) => {
     setupStep = n;
     const total = setupStepOrder.length;
@@ -226,31 +267,176 @@ function showSetupView() {
     // actually reaches it — and rebuilt each time, to pick up a purchase made
     // and then backed out of.
     if (stepId === 'setup-step-access') {
-      refreshAccessUI('setup-paywall', { compact: false });
+      renderAccessStep();
+      if (setupBlockingMode !== 'simple') refreshAccessUI('setup-paywall', { compact: false });
     }
+    if (stepId === 'setup-step-done') renderDoneStep();
     // Both of these describe state the user can change from outside this
     // wizard (a Safari toggle, a system permission prompt), so they get
     // re-read on arrival rather than trusted from whenever the step was built.
     if (stepId === 'setup-step-safari') refreshSafariStatus();
     if (stepId === 'setup-step-apps' && HAS_IOS_APP_BLOCKING) refreshSetupIOSApps();
+    refreshSetupNav();
+    saveSetupDraft();
   };
+  // Hoisted onto the module scope so the site/app list renderers can re-run the
+  // empty-list check after an add or a remove, without reaching into this
+  // closure.
+  showSetupStep = showStep;
 
   backBtn.onclick = () => { if (setupStep > 1) showStep(setupStep - 1); };
   nextBtn.onclick = () => { if (setupStep < setupStepOrder.length) showStep(setupStep + 1); };
 
-  // Enter advances the single-textarea steps (Shift+Enter for a newline).
-  for (const id of ['setup-projects-input', 'setup-reasons-input']) {
-    document.getElementById(id).onkeydown = e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        nextBtn.click();
-      }
-    };
-  }
+  // Enter no longer advances the wizard from the two free-text answers: they
+  // invite several sentences, and a paragraph break is the more likely intent.
 
-  showStep(1);
+  restoreSetupDraft().then(step => showStep(step));
 
   saveBtn.onclick = () => finishSetup();
+}
+
+// Set by showSetupView so list renderers and the draft restore can drive the
+// wizard from outside its closure.
+let showSetupStep = () => {};
+let renderSetupModeStep = () => {};
+
+// Finishing with an empty blocklist produces an install that does nothing at
+// all, silently — so it's the one thing the wizard refuses to do.
+function setupHasSomethingBlocked() {
+  return setupBlockedDomains.length + setupBlockedApps.length + setupIOSSelectionCount > 0;
+}
+
+function refreshSetupNav() {
+  const saveBtn = document.getElementById('setup-save-btn');
+  const hint = document.getElementById('setup-sites-empty-hint');
+  const ok = setupHasSomethingBlocked();
+  if (saveBtn) saveBtn.disabled = !ok;
+  if (hint) hint.hidden = ok;
+}
+
+// ---- Wizard draft ---------------------------------------------------------
+//
+// The wizard is the whole UI until it finishes, and it can't be dismissed, so
+// losing everything to a refresh (or to a trip out to iOS Settings) used to
+// strand people. The draft is the same shape as the wizard's own state and is
+// dropped the moment setup is saved for real.
+
+const SETUP_DRAFT_KEY = 'setupDraft';
+
+// showSetupView renders the (still empty) lists before it can await the stored
+// draft, and those renders save a draft of their own — which would overwrite
+// the very thing being restored. Nothing is written until the read is done.
+let setupDraftReady = false;
+
+function saveSetupDraft() {
+  if (!setupDraftReady) return;
+  const projects = document.getElementById('setup-projects-input');
+  const reasons = document.getElementById('setup-reasons-input');
+  const draft = {
+    step: setupStep,
+    blockedDomains: setupBlockedDomains,
+    domainLimits: setupDomainLimits,
+    blockedApps: setupBlockedApps,
+    appLimits: setupAppLimits,
+    appLabels: setupAppLabels,
+    blockingMode: setupBlockingMode,
+    simpleBehavior: setupSimpleBehavior,
+    simplePassMinutes: setupSimplePassMinutes,
+    projects: projects ? projects.value : '',
+    reasons: reasons ? reasons.value : ''
+  };
+  try { chrome.storage.local.set({ [SETUP_DRAFT_KEY]: draft }); } catch (e) {}
+}
+
+function clearSetupDraft() {
+  try { chrome.storage.local.remove(SETUP_DRAFT_KEY); } catch (e) {}
+}
+
+// Returns the step to open on — 1 when there is no usable draft.
+async function restoreSetupDraft() {
+  let draft;
+  try {
+    const stored = await new Promise(resolve => chrome.storage.local.get(SETUP_DRAFT_KEY, resolve));
+    draft = stored && stored[SETUP_DRAFT_KEY];
+  } catch (e) {
+    setupDraftReady = true;
+    return 1;
+  }
+  if (!draft || typeof draft !== 'object') {
+    setupDraftReady = true;
+    return 1;
+  }
+
+  setupBlockedDomains = Array.isArray(draft.blockedDomains) ? draft.blockedDomains : [];
+  setupDomainLimits = draft.domainLimits || {};
+  setupBlockedApps = Array.isArray(draft.blockedApps) ? draft.blockedApps : [];
+  setupAppLimits = draft.appLimits || {};
+  setupAppLabels = draft.appLabels || {};
+  if (draft.blockingMode === 'simple' || draft.blockingMode === 'coach') setupBlockingMode = draft.blockingMode;
+  if (draft.simpleBehavior === 'hard' || draft.simpleBehavior === 'pass') setupSimpleBehavior = draft.simpleBehavior;
+  if (Number(draft.simplePassMinutes) > 0) setupSimplePassMinutes = Number(draft.simplePassMinutes);
+
+  const projects = document.getElementById('setup-projects-input');
+  const reasons = document.getElementById('setup-reasons-input');
+  if (projects) projects.value = draft.projects || '';
+  if (reasons) reasons.value = draft.reasons || '';
+
+  setupDraftReady = true;
+  renderSetupDomains();
+  if (HAS_APP_BLOCKING) renderSetupApps();
+  renderSetupModeStep();
+
+  // A saved step that no longer exists (a build change, a bridge that stopped
+  // reporting) must not leave the wizard on a blank screen.
+  const step = Number(draft.step);
+  if (!Number.isInteger(step) || step < 1 || step > setupStepOrder.length) return 1;
+  return step;
+}
+
+// ---- Step: you're set -----------------------------------------------------
+
+function renderDoneStep() {
+  const siteCount = setupBlockedDomains.length;
+  const appCount = setupBlockedApps.length;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  const parts = [];
+  if (siteCount) parts.push(plural(siteCount, 'website'));
+  if (appCount) parts.push(plural(appCount, 'app'));
+  const what = parts.length ? parts.join(' and ') : 'nothing yet';
+
+  document.getElementById('setup-done-summary').textContent =
+    `Intention will step in on ${what}. Here's what happens from now on:`;
+
+  const items = [];
+  if (setupBlockingMode === 'simple') {
+    items.push(setupSimpleBehavior === 'hard'
+      ? ['A blocked page stops you', 'No way through from the page itself — you\'d have to change your settings.']
+      : ['A blocked page offers you a pass', `A "Take ${setupSimplePassMinutes} minutes" button, on your own say-so.`]);
+  } else {
+    items.push(['A blocked page opens a conversation',
+      'Your coach asks what you came for. A real, specific reason gets you time; a hollow one gets you alternatives.']);
+    items.push(['Getting through gets harder as the day goes on',
+      'Three passes a day at most, and each one takes more convincing than the last.']);
+  }
+  items.push(['Loosening a rule goes through your coach too',
+    'Tightening is instant. Removing a block or raising a limit means making the case for it.']);
+
+  const list = document.getElementById('setup-done-list');
+  list.innerHTML = '';
+  for (const [title, detail] of items) {
+    const li = document.createElement('li');
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    const span = document.createElement('span');
+    span.textContent = detail;
+    li.append(strong, span);
+    list.appendChild(li);
+  }
+
+  document.getElementById('setup-done-note').textContent = setupBlockingMode === 'simple'
+    ? 'You can switch to a coach any time from Settings.'
+    : 'If you skipped turning your coach on, your sites stay blocked — you just can\'t talk your way past them until you set that up in Settings → AI access.';
 }
 
 // The welcome step's checklist doubles as an agenda. It matters most on iOS,
@@ -267,10 +453,15 @@ function renderWelcomeStep() {
     items.push(['Allow Screen Time',
       'Apple’s permission for blocking apps. Intention uses it only to shield the apps you pick.']);
   }
-  items.push(['Choose your sites and apps',
+  // Chrome and Firefox have no apps step — promising one here sets up a
+  // screen that never arrives.
+  const blocksApps = HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING;
+  items.push([blocksApps ? 'Choose your sites and apps' : 'Choose your sites',
     'The ones you want a moment of friction in front of.']);
   items.push(['Say what you’re trying to focus on',
     'Two short answers, so a block can point at your own reasons instead of just saying no.']);
+  items.push(['Pick how a block should work',
+    'A coach you have to talk past, or a plain block with no AI involved.']);
 
   const list = document.getElementById('setup-welcome-checklist');
   list.innerHTML = '';
@@ -382,16 +573,17 @@ ${reasonsAns || '(not configured)'}`;
 
   setStatus('setup-status', 'Saving setup...', 'info');
 
-  // No provider/key is collected here any more: the coach reaches the hosted
-  // route through whatever access the paywall step set up, and a custom key
-  // is a Settings -> Advanced option for developers. Sending empty strings
-  // leaves saveSetup's existing defaults in charge.
+  // saveSetup writes every field it is given, so a key the user entered on the
+  // access step has to be carried through here — passing the empty strings this
+  // used to send would wipe it the moment they pressed Finish.
+  const existing = await getConfig();
+
   await sendBg({
     action: 'saveSetup',
     config: {
-      provider: '',
-      apiKey: '',
-      model: '',
+      provider: existing?.provider || '',
+      apiKey: existing?.apiKey || '',
+      model: existing?.model || '',
       userContext,
       contextProjects: projectsAns,
       contextReasons: reasonsAns,
@@ -406,6 +598,7 @@ ${reasonsAns || '(not configured)'}`;
     }
   });
 
+  clearSetupDraft();
   await renderCurrentView();
 }
 
@@ -477,6 +670,9 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
   await renderPaywall(container, {
     entitlement,
     compact,
+    // A custom key is access too, but it leaves no entitlement behind — without
+    // this the paywall keeps asking for one after the key is already working.
+    route: access?.route || null,
     onPurchase: async (productId) => {
       const result = await purchaseProduct(productId);
       if (!result || result.status === 'cancelled') return;
@@ -512,8 +708,19 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       return requestAccessCode(entitlement, backendUrl);
     },
     // Only offered where no store sells credit (Chrome/Firefox); elsewhere
-    // the key field exists solely in Settings -> Advanced.
-    onUseOwnKey: BYOK_IS_PRIMARY ? () => openAdvancedKeySection() : null
+    // the key field exists solely in Settings -> Advanced, because store
+    // builds may not name an LLM vendor in their purchase UI at all.
+    //
+    // Where it is offered, the key can be entered in place rather than by
+    // being sent off to a disclosure inside a disclosure — but only in the
+    // full-size paywall. The compact one renders inside a blocked page, which
+    // is the worst possible moment to ask someone to go and fetch a key.
+    onUseOwnKey: BYOK_IS_PRIMARY ? () => openAdvancedKeySection() : null,
+    onSaveKey: BYOK_IS_PRIMARY && !compact ? async ({ provider, apiKey, model }) => {
+      await sendBg({ action: 'saveSettings', config: { provider, apiKey, model } });
+      await rerender();
+      await onAccessChanged();
+    } : null
   });
 
   // A verified purchase that arrived while the app was closed settles here.
@@ -798,6 +1005,8 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
 
 function renderSetupDomains() {
   renderSiteRecommendations('setup-sites-recommend-grid', 'setup-sites-recommend-more', setupBlockedDomains);
+  refreshSetupNav();
+  saveSetupDraft();
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
@@ -815,12 +1024,13 @@ function renderSetupDomains() {
     
     const limitSpan = document.createElement('span');
     limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Absolute Max: '));
+    limitSpan.appendChild(document.createTextNode('Daily limit: '));
 
     const inlineInput = document.createElement('input');
     inlineInput.type = 'number';
     inlineInput.min = '1';
     inlineInput.className = 'inline-limit-input';
+    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${d}`);
     inlineInput.value = limitInfo.maxMinutes;
     inlineInput.addEventListener('change', (e) => {
       const val = parseInt(e.target.value, 10);
@@ -861,6 +1071,8 @@ function addSetupApp(app) {
 
 function renderSetupApps() {
   renderAppRecommendations('setup-apps-recommend-grid', 'setup-apps-recommend-more', setupBlockedApps);
+  refreshSetupNav();
+  saveSetupDraft();
   const list = document.getElementById('setup-apps-list');
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
@@ -878,12 +1090,13 @@ function renderSetupApps() {
 
     const limitSpan = document.createElement('span');
     limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Absolute Max: '));
+    limitSpan.appendChild(document.createTextNode('Daily limit: '));
 
     const inlineInput = document.createElement('input');
     inlineInput.type = 'number';
     inlineInput.min = '1';
     inlineInput.className = 'inline-limit-input';
+    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${setupAppLabels[pkg] || pkg}`);
     inlineInput.value = limitInfo.maxMinutes;
     inlineInput.addEventListener('change', (e) => {
       const val = parseInt(e.target.value, 10);
@@ -952,10 +1165,15 @@ async function refreshSetupIOSApps() {
   }
   authorizeBtn.hidden = true;
   const n = st.selectionCount || 0;
+  // Apple's picker is opaque — a count is all the web layer ever learns — so
+  // this is also the only way the finish guard can tell whether an iOS user
+  // has actually chosen anything.
+  setupIOSSelectionCount = n;
+  refreshSetupNav();
   statusEl.className = n === 0 ? 'setup-check' : 'setup-check ok';
   statusEl.textContent = n === 0
     ? 'Screen Time access granted. No apps chosen yet, so tap "Choose apps to block" above.'
-    : `${n} app${n === 1 ? '' : 's or categories'} blocked.`;
+    : `${n} app${n === 1 ? '' : 's or categories'} chosen.`;
 }
 
 // Unauthorized states need different guidance: before the first prompt it's a
@@ -988,8 +1206,12 @@ function setSettingsTab(tab) {
 }
 
 function applySettingsTab() {
-  document.getElementById('tab-apps-btn').classList.toggle('selected', activeSettingsTab === 'apps');
-  document.getElementById('tab-websites-btn').classList.toggle('selected', activeSettingsTab === 'websites');
+  for (const [id, tab] of [['tab-apps-btn', 'apps'], ['tab-websites-btn', 'websites']]) {
+    const btn = document.getElementById(id);
+    btn.classList.toggle('selected', activeSettingsTab === tab);
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(activeSettingsTab === tab));
+  }
   document.getElementById('apps-card').classList.toggle('tab-hidden', activeSettingsTab !== 'apps');
   document.getElementById('websites-card').classList.toggle('tab-hidden', activeSettingsTab !== 'websites');
 }
@@ -1009,7 +1231,22 @@ function initSectionTabs() {
     btn.addEventListener('click', () => setSettingsSection(btn.dataset.sectionTab));
   });
   applySettingsSection();
+  applyIOSUnlockLanding();
   applyDeepLinkSection();
+}
+
+// On iOS a blocked app's shield can't open this app — Apple only lets it close
+// the app the user was in — so the whole intervention ends with them arriving
+// here having been told to find "Unlock". Opening on the tab they were sent to
+// beats restoring whichever one they last used. A deep link still wins, and so
+// does any later tap.
+function applyIOSUnlockLanding() {
+  if (!HAS_IOS_APP_BLOCKING) return;
+  iosScreenTimeStatus().then(st => {
+    if (!st || !st.authorized || !(st.selectionCount > 0)) return;
+    if (new URLSearchParams(window.location.search).get('section')) return;
+    setSettingsSection('unlock');
+  });
 }
 
 // A `?section=` query param (e.g. from the chat's "invalid API key" error
@@ -1031,8 +1268,13 @@ function setSettingsSection(section) {
 }
 
 function applySettingsSection() {
+  // .selected is the only thing that used to mark the current tab, which a
+  // screen reader can't see — these are tabs, so they should say so.
   document.querySelectorAll('#section-tabs [data-section-tab]').forEach(btn => {
-    btn.classList.toggle('selected', btn.dataset.sectionTab === activeSettingsSection);
+    const on = btn.dataset.sectionTab === activeSettingsSection;
+    btn.classList.toggle('selected', on);
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', String(on));
   });
   document.querySelectorAll('#settings-view [data-section]').forEach(el => {
     el.classList.toggle('section-hidden', el.dataset.section !== activeSettingsSection);
@@ -1060,13 +1302,21 @@ function wireAddModals() {
 
   document.getElementById('open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
   document.getElementById('setup-open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
-  document.getElementById('close-add-site-btn').addEventListener('click', () => closeAddModal('add-site-modal'));
-  document.getElementById('add-btn').addEventListener('click', async () => { await addDomain(); closeAddModal('add-site-modal'); });
+  document.getElementById('close-add-site-btn').addEventListener('click', () => {
+    setAddSiteError('');
+    closeAddModal('add-site-modal');
+  });
+  // The modal only closes on a successful add now — closing it on a rejected
+  // one would take the error message away with it.
+  const submitDomain = async () => {
+    if (await addDomain()) closeAddModal('add-site-modal');
+  };
+  document.getElementById('add-btn').addEventListener('click', submitDomain);
   document.getElementById('domain-input').addEventListener('keydown', async e => {
-    if (e.key === 'Enter') { await addDomain(); closeAddModal('add-site-modal'); }
+    if (e.key === 'Enter') await submitDomain();
   });
   document.getElementById('domain-limit-input').addEventListener('keydown', async e => {
-    if (e.key === 'Enter') { await addDomain(); closeAddModal('add-site-modal'); }
+    if (e.key === 'Enter') await submitDomain();
   });
 
   if (HAS_APP_BLOCKING) {
@@ -1151,12 +1401,19 @@ function wireBlockingModeCard(state) {
   let behavior = state.simpleBehavior || 'pass';
   minutesInput.value = state.simplePassMinutes || 10;
 
+  // These read as a radio group but are plain buttons carrying a .selected
+  // class, so the chosen one has to be announced explicitly.
+  const setChoice = (btn, on) => {
+    btn.classList.toggle('selected', on);
+    btn.setAttribute('aria-pressed', String(on));
+  };
+
   function render() {
-    coachBtn.classList.toggle('selected', mode === 'coach');
-    simpleBtn.classList.toggle('selected', mode === 'simple');
+    setChoice(coachBtn, mode === 'coach');
+    setChoice(simpleBtn, mode === 'simple');
     simpleOptions.hidden = mode !== 'simple';
-    hardBtn.classList.toggle('selected', behavior === 'hard');
-    passBtn.classList.toggle('selected', behavior === 'pass');
+    setChoice(hardBtn, behavior === 'hard');
+    setChoice(passBtn, behavior === 'pass');
     minutesGroup.hidden = behavior !== 'pass';
   }
   render();
@@ -1178,6 +1435,20 @@ function wireBlockingModeCard(state) {
   };
 }
 
+// showSettingsView re-runs whenever the view is re-rendered (finishing the
+// wizard lands here, and so does the paywall's jump to the key field), but the
+// controls below are static markup that only needs binding once. Binding on
+// every pass stacked handlers — two "turn off all blocking" listeners means two
+// coach gates for one click. wireAddModals/wireBlockingModeCard already guard
+// themselves; this does the same for the rest.
+const boundOnce = new Set();
+function bindOnce(id, event, handler) {
+  const key = `${id}:${event}`;
+  if (boundOnce.has(key)) return;
+  boundOnce.add(key);
+  document.getElementById(id)?.addEventListener(event, handler);
+}
+
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
@@ -1185,13 +1456,13 @@ async function showSettingsView(state) {
   renderContextCard(state.userContext);
   await renderCoachObservations();
 
-  document.getElementById('clear-observations-btn').addEventListener('click', async () => {
+  bindOnce('clear-observations-btn', 'click', async () => {
     await new Promise(resolve => chrome.storage.local.set({ coachObservations: [] }, resolve));
     await renderCoachObservations();
     setStatus('observations-status', 'Cleared.', 'success');
   });
 
-  document.getElementById('save-context-btn').addEventListener('click', async () => {
+  bindOnce('save-context-btn', 'click', async () => {
     const contextEditInput = document.getElementById('context-edit-input');
     const value = contextEditInput.value.trim();
     if (!value) return;
@@ -1207,7 +1478,7 @@ async function showSettingsView(state) {
   projectsInput.value = state.contextProjects || '';
   reasonsInput.value = state.contextReasons || '';
 
-  document.getElementById('save-prompt-btn').addEventListener('click', async () => {
+  const savePromptFields = async (announce) => {
     await sendBg({
       action: 'saveSettings',
       config: {
@@ -1216,10 +1487,20 @@ async function showSettingsView(state) {
         contextReasons: reasonsInput.value.trim()
       }
     });
-    setStatus('prompt-status', 'Saved.', 'success');
-  });
+    if (announce) setStatus('prompt-status', 'Saved.', 'success');
+  };
 
-  document.getElementById('reset-prompt-btn').addEventListener('click', async () => {
+  bindOnce('save-prompt-btn', 'click', () => savePromptFields(true));
+
+  // These three sit inside a collapsed <details> in the Coach section, and
+  // every other control on the page saves itself — so typing here, switching
+  // tab and coming back used to lose the lot with nothing said. Saving on the
+  // way out costs nothing and the button still works for anyone who wants it.
+  for (const field of [instructionsInput, projectsInput, reasonsInput]) {
+    bindOnce(field.id, 'blur', () => savePromptFields(false));
+  }
+
+  bindOnce('reset-prompt-btn', 'click', async () => {
     instructionsInput.value = state.defaultCoachInstructions || '';
     await sendBg({ action: 'saveSettings', config: { coachInstructions: '' } });
     const fresh = await getConfig();
@@ -1229,7 +1510,19 @@ async function showSettingsView(state) {
 
   await refreshAccessUI('access-paywall');
 
-  // ---- Advanced: custom API key (developer override) ----
+  // ---- Advanced: custom API key ----
+  //
+  // Where a store sells credit this really is a developer override and is
+  // described as one. On Chrome and Firefox it is one of the two ordinary ways
+  // to turn the coach on — offered as such in AI access above — so calling it
+  // "developer mode" down here would only make people think they'd taken a
+  // wrong turn. Same fields either way; this is where you change or clear one.
+  document.getElementById('custom-key-summary-note').textContent =
+    BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
+  document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
+    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here switches the coach back to coaching credit.'
+    : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
+
   const provSel = document.getElementById('provider-select-2');
   const modelInput = document.getElementById('model-input-2');
   const keyInput = document.getElementById('api-key-input-2');
@@ -1262,7 +1555,7 @@ async function showSettingsView(state) {
   syncPlaceholder();
   loadEnv().then(syncEnvSettings);
 
-  document.getElementById('save-provider-btn').addEventListener('click', async () => {
+  bindOnce('save-provider-btn', 'click', async () => {
     const provider = provSel.value;
     const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
     const apiKey = keyInput.value.trim();
@@ -1272,7 +1565,7 @@ async function showSettingsView(state) {
   });
 
   // Clearing the override drops straight back to the hosted/credit route.
-  document.getElementById('clear-provider-btn').addEventListener('click', async () => {
+  bindOnce('clear-provider-btn', 'click', async () => {
     keyInput.value = '';
     await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
     setStatus('provider-status', 'Custom key cleared.', 'success');
@@ -1298,28 +1591,31 @@ async function showSettingsView(state) {
   renderStats(summary);
   await refreshUsageLog(state);
 
-  document.getElementById('open-coach-btn').addEventListener('click', async () => {
+  bindOnce('open-coach-btn', 'click', async () => {
     if (await requireAccess()) openCoachModal();
   });
-  document.getElementById('close-coach-btn').addEventListener('click', closeCoachModal);
-  document.getElementById('paywall-close-btn').addEventListener('click', () => {
+  bindOnce('close-coach-btn', 'click', closeCoachModal);
+  bindOnce('paywall-close-btn', 'click', () => {
     document.getElementById('paywall-modal').hidden = true;
   });
 
   // Disabling all blocking is the biggest loosening of all — gate it.
-  document.getElementById('disable-all-btn').addEventListener('click', async () => {
+  bindOnce('disable-all-btn', 'click', async () => {
     const cfg = await getConfig();
     const iosStatus = HAS_IOS_APP_BLOCKING ? await iosScreenTimeStatus() : null;
     const iosHasApps = !!(iosStatus && iosStatus.selectionCount > 0);
     if (!(cfg.blockedDomains || []).length && !(cfg.blockedApps || []).length && !iosHasApps) {
-      setStatus('prompt-status', 'Nothing is blocked right now.', '');
+      // Used to write into #prompt-status, which lives inside the collapsed
+      // "Coach instructions" disclosure in a different section — so on mobile
+      // this said nothing at all.
+      setStatus('disable-all-status', 'Nothing is blocked right now.', '');
       return;
     }
     applyOrGate({
       isSimple: (cfg.blockingMode || 'coach') === 'simple',
       changeType: 'disable_all',
       domain: null,
-      title: 'Disable all blocking?',
+      title: 'Turn off all blocking?',
       subtitle: 'This turns off blocking for every site and app on your list. Convince your coach this is what you really want.',
       onApproved: async () => {
         const state = await getConfig();
@@ -1355,13 +1651,13 @@ function wireIOSAppsCard() {
     window.intentionScreenTime.pickApps(() => refreshIOSAppsCard());
   });
 
-  document.getElementById('ios-authorize-btn').addEventListener('click', () => {
+  bindOnce('ios-authorize-btn', 'click', () => {
     window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
   });
 
   document.getElementById('section-tab-unlock').hidden = false;
   document.getElementById('unlock-card').hidden = false;
-  document.getElementById('ios-request-time-btn').addEventListener('click', () => {
+  bindOnce('ios-request-time-btn', 'click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
   });
 
@@ -1408,41 +1704,82 @@ async function refreshIOSAppsCard() {
 // Adding tightens the rules, so it's applied immediately: during setup that
 // means the local setup accumulator, otherwise it saves straight to the
 // background config.
+// Returns false when the domain was already on the list, so the caller can say
+// so — silently doing nothing reads as the Add button being broken.
 async function addDomainToBlocklist(domain, limit) {
   if (!document.getElementById('setup-view').hidden) {
-    if (!setupBlockedDomains.includes(domain)) {
-      setupBlockedDomains.push(domain);
-      setupDomainLimits[domain] = { maxGrants: 3, maxMinutes: limit };
-      renderSetupDomains();
-    }
-    return;
+    if (setupBlockedDomains.includes(domain)) return false;
+    setupBlockedDomains.push(domain);
+    setupDomainLimits[domain] = { maxGrants: 3, maxMinutes: limit };
+    renderSetupDomains();
+    return true;
   }
   const state = await getConfig();
   const domains = state.blockedDomains || [];
   const limits = state.domainLimits || {};
-  if (!domains.includes(domain)) {
-    domains.push(domain);
-    limits[domain] = { maxGrants: 3, maxMinutes: limit };
-    await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
-    renderDomains(domains, limits, state.blockingMode);
-  }
+  if (domains.includes(domain)) return false;
+  domains.push(domain);
+  limits[domain] = { maxGrants: 3, maxMinutes: limit };
+  await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
+  renderDomains(domains, limits, state.blockingMode);
+  return true;
 }
 
+// Normalisation only ever stripped a scheme, a www. and a path, so anything at
+// all survived as a "domain" — "asdf" was accepted and then quietly never
+// matched a page for the rest of the install. A hostname needs at least one dot
+// and a plausible TLD to be worth adding.
+function isBlockableDomain(domain) {
+  return /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(domain);
+}
+
+function normalizeDomainInput(raw) {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0]
+    .split('?')[0]
+    .split('#')[0]
+    .replace(/:\d+$/, '');
+}
+
+function setAddSiteError(message) {
+  const el = document.getElementById('add-site-error');
+  if (!el) return;
+  el.textContent = message || '';
+  el.hidden = !message;
+}
+
+// Resolves true when the modal should close.
 async function addDomain() {
   const input = document.getElementById('domain-input');
   const limitInput = document.getElementById('domain-limit-input');
-  const raw = input.value.trim().toLowerCase();
-  if (!raw) return;
+  const raw = input.value.trim();
+  if (!raw) {
+    setAddSiteError('Type a website address first.');
+    return false;
+  }
+
+  const domain = normalizeDomainInput(raw);
+  if (!isBlockableDomain(domain)) {
+    setAddSiteError(`"${raw}" doesn't look like a website address. Try something like twitter.com.`);
+    return false;
+  }
 
   const limitVal = parseInt(limitInput.value, 10);
-  const limit = isNaN(limitVal) ? 10 : limitVal;
+  const limit = !isNaN(limitVal) && limitVal > 0 ? limitVal : 10;
 
-  const domain = raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-  if (domain) {
-    await addDomainToBlocklist(domain, limit);
-    input.value = '';
-    limitInput.value = '10';
+  const added = await addDomainToBlocklist(domain, limit);
+  if (!added) {
+    setAddSiteError(`${domain} is already on your list.`);
+    return false;
   }
+  setAddSiteError('');
+  input.value = '';
+  limitInput.value = '10';
+  return true;
 }
 
 // A per-item `mode` override on a domain/app limit entry wins; otherwise the
@@ -1511,12 +1848,13 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
     
     const limitSpan = document.createElement('span');
     limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Absolute Max: '));
+    limitSpan.appendChild(document.createTextNode('Daily limit: '));
 
     const inlineInput = document.createElement('input');
     inlineInput.type = 'number';
     inlineInput.min = '1';
     inlineInput.className = 'inline-limit-input';
+    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${d}`);
     const currentMins = mins > 0 ? mins : 10;
     inlineInput.value = currentMins;
     inlineInput.addEventListener('change', async (e) => {
@@ -1549,7 +1887,7 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
         domain: d,
         currentValue: currentlyUnlimited ? -1 : curMaxMinutes,
         newValue: val,
-        title: `Raise the absolute max on ${d}?`,
+        title: `Raise the daily limit on ${d}?`,
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${d}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
@@ -1587,8 +1925,13 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   const row = document.createElement('div');
   row.className = 'row-mode-control';
 
+  // Every control here is built without a visible label — the row is already
+  // dense, and repeating "Blocking mode" ten times would drown the site names.
+  // So each one names itself and the row it belongs to for a screen reader,
+  // which otherwise met three anonymous controls per site.
   const modeSelect = document.createElement('select');
   modeSelect.className = 'row-mode-select';
+  modeSelect.setAttribute('aria-label', `How ${key} is blocked`);
   modeSelect.innerHTML = `
     <option value="">Use default (${globalMode === 'simple' ? 'Simple' : 'Coach'})</option>
     <option value="coach">Coach</option>
@@ -1598,6 +1941,7 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
 
   const behaviorSelect = document.createElement('select');
   behaviorSelect.className = 'row-behavior-select';
+  behaviorSelect.setAttribute('aria-label', `What happens when you open ${key}`);
   behaviorSelect.innerHTML = `<option value="pass">Timed pass</option><option value="hard">Hard block</option>`;
   behaviorSelect.value = limitInfo.behavior || 'pass';
 
@@ -1606,6 +1950,7 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   minutesInput.min = '1';
   minutesInput.max = '180';
   minutesInput.className = 'row-minutes-input inline-limit-input';
+  minutesInput.setAttribute('aria-label', `Minutes per pass on ${key}`);
   minutesInput.value = limitInfo.passMinutes || 10;
 
   const updateVisibility = () => {
@@ -1804,12 +2149,13 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
 
     const limitSpan = document.createElement('span');
     limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Absolute Max: '));
+    limitSpan.appendChild(document.createTextNode('Daily limit: '));
 
     const inlineInput = document.createElement('input');
     inlineInput.type = 'number';
     inlineInput.min = '1';
     inlineInput.className = 'inline-limit-input';
+    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${labels[pkg] || pkg}`);
     const currentMins = mins > 0 ? mins : 10;
     inlineInput.value = currentMins;
     inlineInput.addEventListener('change', async (e) => {
@@ -1839,7 +2185,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
         domain: pkg,
         currentValue: currentlyUnlimited ? -1 : curMaxMinutes,
         newValue: val,
-        title: `Raise the absolute max on ${name}?`,
+        title: `Raise the daily limit on ${name}?`,
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${name}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
@@ -2382,5 +2728,11 @@ function setStatus(id, text, variant = '') {
   const el = document.getElementById(id);
   el.textContent = text;
   el.className = 'status ' + variant;
-  if (text) setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 3000);
+  // Confirmations can disappear on their own — the user saw the thing they
+  // asked for happen. An error is the one message they may still need on
+  // screen while they work out what to do about it, so it stays until the
+  // next action replaces it.
+  if (text && variant !== 'error') {
+    setTimeout(() => { el.textContent = ''; el.className = 'status'; }, 3000);
+  }
 }

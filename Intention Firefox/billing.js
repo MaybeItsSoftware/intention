@@ -215,9 +215,10 @@ function formatBalance(entitlement) {
 
 // ---- Paywall ---------------------------------------------------------------
 
+// Deliberately does not restate the lede — these are the things the lede
+// doesn't already say.
 const PAYWALL_BENEFITS = [
   'Your coach, on every blocked site and app',
-  'Pay once for a set amount of credit — no recurring charge',
   'Top up again any time your balance runs low'
 ];
 
@@ -248,7 +249,7 @@ function el(tag, className, text) {
 // through to the purchase buttons (as "add more"), it just leads with a
 // balance line instead of a lede.
 async function renderPaywall(container, opts = {}) {
-  const { entitlement, onPurchase, onRestore, onRedeem, onUseOwnKey, compact } = opts;
+  const { entitlement, onPurchase, onRestore, onRedeem, onUseOwnKey, onSaveKey, route, compact } = opts;
   container.innerHTML = '';
   container.className = 'int-paywall' + (compact ? ' int-paywall-compact' : '');
 
@@ -305,6 +306,11 @@ async function renderPaywall(container, opts = {}) {
       container.appendChild(linkBtn);
       container.appendChild(codeOut);
     }
+  } else if (BILLING_MODE === 'byok') {
+    // Two equal routes below, so the lede can't promise one of them.
+    container.appendChild(el('p', 'int-pw-lede', compact
+      ? 'Your coach needs an AI behind it. Two ways to do that:'
+      : 'Your coach needs an AI behind it. There are two ways to do that, and either one works — pick whichever suits you.'));
   } else {
     container.appendChild(el('p', 'int-pw-lede', compact
       ? 'Buy coaching credit to talk to your coach.'
@@ -388,20 +394,114 @@ async function renderPaywall(container, opts = {}) {
     return;
   }
 
-  const codeWrap = el('div', 'int-pw-code');
-  codeWrap.appendChild(el('label', null, 'Already have coaching credit? Enter your access code'));
-  const codeRow = el('div', 'input-group');
+  // A working custom key leaves no entitlement behind, so it has to be
+  // recognised here or the paywall keeps asking for access the user already has.
+  if (route === 'byok') {
+    const status = el('div', 'int-pw-status');
+    status.appendChild(el('strong', null, 'Your own API key is in use'));
+    status.appendChild(el('p', 'int-pw-sub',
+      'Coach requests go straight from this device to your provider. Change or remove the key in Settings → Advanced.'));
+    container.appendChild(status);
+    container.appendChild(errorEl);
+    return;
+  }
+
+  // A browser can't run a purchase, so credit here means "bought on a phone,
+  // redeemed with a code" — which is useless to someone who has never installed
+  // the app. Its equal-billing partner, a provider key, is the only route that
+  // can actually be finished on this device, so the two are shown side by side
+  // rather than burying the key behind an "advanced" disclosure.
+  const routes = el('div', 'int-pw-routes');
+
+  routes.appendChild(buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey }));
+  routes.appendChild(buildCodeRoute({ el, busy, setError, onRedeem }));
+
+  container.appendChild(routes);
+  container.appendChild(errorEl);
+}
+
+// Route 1: bring your own provider key. Finishable in place — the fields live
+// here rather than behind a jump into Settings -> Advanced.
+function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey }) {
+  const card = el('div', 'int-pw-route');
+  card.appendChild(el('strong', null, 'Use your own API key'));
+  card.appendChild(el('p', 'int-pw-sub',
+    'Point the coach at an account you already have. Nothing to buy here — you pay your provider directly, and usually very little.'));
+
+  // Without a save callback there is nowhere to put the key, so fall back to
+  // the old behaviour of handing the user to the settings field.
+  if (!onSaveKey) {
+    if (onUseOwnKey) {
+      const keyBtn = el('button', 'secondary int-pw-byok', 'Set up an API key');
+      keyBtn.type = 'button';
+      keyBtn.addEventListener('click', () => onUseOwnKey());
+      card.appendChild(keyBtn);
+    }
+    return card;
+  }
+
+  const provLabel = el('label', null, 'Provider');
+  provLabel.setAttribute('for', 'int-pw-provider');
+  const provSel = el('select');
+  provSel.id = 'int-pw-provider';
+  for (const [key, cfg] of Object.entries(PROVIDERS)) {
+    if (cfg.hosted) continue;
+    const opt = el('option', null, cfg.label);
+    opt.value = key;
+    provSel.appendChild(opt);
+  }
+
+  const keyLabel = el('label', null, 'API key');
+  keyLabel.setAttribute('for', 'int-pw-key');
+  const keyInput = el('input');
+  keyInput.type = 'password';
+  keyInput.id = 'int-pw-key';
+  keyInput.placeholder = 'Paste your key';
+
+  const saveBtn = el('button', 'primary', 'Save key');
+  saveBtn.type = 'button';
+
+  card.append(provLabel, provSel, keyLabel, keyInput, saveBtn);
+
+  saveBtn.addEventListener('click', async () => {
+    const apiKey = keyInput.value.trim();
+    setError('');
+    if (!apiKey) {
+      setError('Paste your API key first.');
+      return;
+    }
+    busy(saveBtn, true, 'Saving…');
+    try {
+      const provider = provSel.value;
+      await onSaveKey({ provider, apiKey, model: PROVIDERS[provider].defaultModel });
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      busy(saveBtn, false);
+    }
+  });
+
+  return card;
+}
+
+// Route 2: credit bought in the mobile app and carried across with a code.
+function buildCodeRoute({ el, busy, setError, onRedeem }) {
+  const card = el('div', 'int-pw-route');
+  card.appendChild(el('strong', null, 'Use coaching credit'));
+  card.appendChild(el('p', 'int-pw-sub',
+    'Credit is bought in the Intention app for iPhone or Android — nothing to configure. Buy it there, then paste the code it gives you.'));
+
+  const codeLabel = el('label', null, 'Access code');
+  codeLabel.setAttribute('for', 'int-pw-code-input');
   const codeInput = el('input');
   codeInput.type = 'text';
   codeInput.id = 'int-pw-code-input';
   codeInput.placeholder = 'INT-XXXX-XXXX';
   const codeBtn = el('button', 'primary', 'Unlock');
   codeBtn.type = 'button';
-  codeRow.appendChild(codeInput);
-  codeRow.appendChild(codeBtn);
-  codeWrap.appendChild(codeRow);
-  codeWrap.appendChild(el('p', 'int-pw-sub', 'Generate a code in the Intention mobile app under Settings → AI access.'));
-  container.appendChild(codeWrap);
+
+  card.append(codeLabel, codeInput, codeBtn);
+  card.appendChild(el('p', 'int-pw-sub', 'Generate a code in the app under Settings → AI access.'));
 
   codeBtn.addEventListener('click', async () => {
     const code = codeInput.value.trim();
@@ -417,14 +517,5 @@ async function renderPaywall(container, opts = {}) {
     }
   });
 
-  if (onUseOwnKey) {
-    const divider = el('div', 'int-pw-divider', 'or');
-    container.appendChild(divider);
-    const keyBtn = el('button', 'secondary int-pw-byok', 'Use your own API key');
-    keyBtn.type = 'button';
-    keyBtn.addEventListener('click', () => onUseOwnKey());
-    container.appendChild(keyBtn);
-  }
-
-  container.appendChild(errorEl);
+  return card;
 }

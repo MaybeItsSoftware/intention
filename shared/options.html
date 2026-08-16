@@ -15,14 +15,14 @@
         <div class="setup-progress-track">
           <div id="setup-progress-fill" class="setup-progress-fill"></div>
         </div>
-        <span id="setup-progress-label" class="setup-progress-label">Step 1 of 4</span>
+        <span id="setup-progress-label" class="setup-progress-label"></span>
       </div>
 
       <section class="card setup-step" id="setup-step-welcome" hidden>
         <h3 id="setup-welcome-title">Welcome to Intention</h3>
         <p class="subtitle" id="setup-welcome-intro">Intention puts a moment of choice between you and the things that pull you in. Open a blocked site or app and it stops you, then asks what you actually meant to do.</p>
         <ul class="setup-checklist" id="setup-welcome-checklist"></ul>
-        <p class="subtitle">This takes about a minute, and nothing is saved until you finish.</p>
+        <p class="subtitle">This takes about a minute. Nothing starts blocking until you finish, and if you stop halfway you'll pick up where you left off.</p>
       </section>
 
       <section class="card setup-step" id="setup-step-safari" hidden>
@@ -57,7 +57,7 @@
             </button>
             <button type="button" class="mode-choice-card" id="setup-simple-pass-btn" data-behavior="pass">
               <strong>Timed pass</strong>
-              <span>A "Take N minutes" button grants yourself limited access.</span>
+              <span id="setup-simple-pass-desc">A "Take 10 minutes" button lets you through without asking anyone.</span>
             </button>
           </div>
           <div id="setup-simple-minutes-group" class="input-group" hidden>
@@ -85,35 +85,40 @@
         <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
         <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
         <ul id="setup-websites-list"></ul>
+        <p class="setup-check" id="setup-sites-empty-hint">Nothing picked yet. Add at least one site or app before you finish — you can change the list any time.</p>
       </section>
 
-      <section class="card setup-step" id="setup-step-projects" hidden>
-        <h3>Your coach's context</h3>
-        <p class="subtitle" id="setup-projects-subtitle">Two questions. Your coach uses these to argue your own case back to you when you try to get past a block.</p>
+      <section class="card setup-step" id="setup-step-why" hidden>
+        <h3>What are you protecting?</h3>
+        <p class="subtitle" id="setup-projects-subtitle">Two questions, both optional. Your coach uses these to argue your own case back to you when you try to get past a block.</p>
         <label for="setup-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
         <div class="input-group">
           <textarea id="setup-projects-input" rows="4" placeholder="e.g. Coding my side project, writing, reading, exercising, or being present with family..."></textarea>
         </div>
-      </section>
-
-      <section class="card setup-step" id="setup-step-reasons" hidden>
-        <h3>Your coach's context</h3>
         <label for="setup-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
         <div class="input-group">
           <textarea id="setup-reasons-input" rows="4" placeholder="e.g. They make me feel anxious and scattered, I scroll mindlessly to procrastinate on hard tasks, and I want to reclaim my focus..."></textarea>
         </div>
+        <p class="subtitle">Leave either blank if you'd rather not say — your coach will just have less to go on.</p>
       </section>
 
       <section class="card setup-step" id="setup-step-access" hidden>
-        <h3>Turn on your coach</h3>
+        <h3 id="setup-access-title">Turn on your coach</h3>
         <p class="subtitle" id="setup-access-subtitle">You can also finish now and set this up later. Your sites and apps stay blocked either way, you just won't be able to talk your way past them yet.</p>
         <div id="setup-paywall"></div>
+      </section>
+
+      <section class="card setup-step" id="setup-step-done" hidden>
+        <h3 id="setup-done-title">You're set</h3>
+        <p class="subtitle" id="setup-done-summary"></p>
+        <ul class="setup-checklist" id="setup-done-list"></ul>
+        <p class="subtitle" id="setup-done-note"></p>
       </section>
 
       <div class="setup-nav">
         <button id="setup-back-btn" class="secondary" type="button">Back</button>
         <button id="setup-next-btn" class="primary" type="button">Next</button>
-        <button id="setup-save-btn" class="primary" type="button" hidden>Finish Setup & Start</button>
+        <button id="setup-save-btn" class="primary" type="button" hidden>Finish setup</button>
       </div>
       <div id="setup-status" class="status"></div>
     </main>
@@ -198,12 +203,11 @@
 
           <section class="card" id="websites-card" data-section="blocking">
             <h2>Blocked sites</h2>
-            <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below.</p>
+            <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below. Each row uses the blocking mode above unless you give it one of its own, and "Daily limit" is the most time you can spend there in a day however you ask.</p>
             <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
             <div id="sites-recommend-grid" class="recommend-grid"></div>
             <button type="button" id="sites-recommend-more" class="recommend-more" hidden></button>
             <ul id="domain-list"></ul>
-            <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
 
           <section class="card" id="apps-card" data-section="blocking" hidden>
@@ -217,6 +221,13 @@
               <p class="subtitle" id="ios-apps-status"></p>
               <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
             </div>
+          </section>
+
+          <section class="card danger-card" id="danger-card" data-section="blocking">
+            <h2>Turn everything off</h2>
+            <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
+            <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
+            <div id="disable-all-status" class="status"></div>
           </section>
 
           <section class="card" id="unlock-card" data-section="unlock" hidden>
@@ -236,9 +247,9 @@
             <summary>Advanced <span class="muted">(developer options)</span></summary>
             <div class="advanced-card-body">
               <details id="custom-key-details">
-                <summary>Custom API key <span class="muted">(optional developer mode)</span></summary>
+                <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
                 <div class="advanced-card-body">
-                  <p class="subtitle">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
+                  <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
                   <label for="provider-select-2">Provider</label>
                   <div class="input-group">
                     <select id="provider-select-2"></select>
@@ -336,11 +347,13 @@
           <h2>Add a website</h2>
           <button type="button" id="close-add-site-btn" class="secondary">Close</button>
         </div>
+        <label for="domain-input">Website address</label>
         <div class="input-group">
           <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
-          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10">
+          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10" aria-label="Daily limit in minutes">
           <button id="add-btn" class="primary">Add</button>
         </div>
+        <p class="int-pw-error" id="add-site-error" hidden></p>
       </div>
     </div>
 

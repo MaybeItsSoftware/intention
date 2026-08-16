@@ -13,8 +13,13 @@ body {
   min-height: 100vh;
 }
 
+/* One section is on screen at a time now, so the page no longer needs the full
+   width of a monitor — but a blocked-site row carries a lot (name, daily limit,
+   quick check, mode, behaviour, remove), so this can't go much below 1100
+   before the domain name starts getting truncated. Prose is held to a readable
+   measure separately, by .subtitle. */
 .container {
-  max-width: 1400px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 40px 32px 80px;
 }
@@ -42,7 +47,9 @@ header .muted { margin: 0 0 24px; color: #94a3b8; }
 
 .card h2 { margin: 0 0 8px; font-size: 18px; color: #f1f5f9; }
 .card h3 { margin: 20px 0 10px; font-size: 15px; font-weight: 600; color: #f1f5f9; }
-.subtitle { color: #94a3b8; font-size: 14px; margin: 0 0 14px; }
+/* max-width keeps help text at a readable measure now that the page is wider
+   than the prose wants to be. */
+.subtitle { color: #94a3b8; font-size: 14px; margin: 0 0 14px; max-width: 68ch; }
 
 label {
   display: block;
@@ -251,6 +258,13 @@ blockquote {
 
 .status { margin-top: 10px; font-size: 13px; color: #94a3b8; min-height: 18px; }
 .status.success { color: #22c55e; }
+/* Failures used to render in the same muted grey as "Saving…" */
+.status.error { color: #fca5a5; }
+
+/* Reversing a rule wholesale is not the same kind of action as editing one, so
+   it doesn't sit in the same card as the list it empties. */
+.danger-card { border-color: #7f1d1d; }
+.danger-card h2 { color: #fca5a5; }
 
 #coach-modal, #gate-modal, #add-site-modal, #add-app-modal, #paywall-modal {
   position: fixed;
@@ -387,8 +401,10 @@ blockquote {
 .domain-name {
   font-weight: 600;
   color: #f1f5f9;
-  flex: 1 1 auto;
-  min-width: 0;
+  /* Was flex:1 1 auto with min-width:0, so the controls beside it squeezed the
+     name down to "x…" — the one part of the row you actually need to read. */
+  flex: 0 1 auto;
+  min-width: 7ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,17 +739,14 @@ blockquote {
   margin: 0 auto;
 }
 
+/* Single column at every width. The two-column split used to cut across the
+   section grouping — a section's cards could land in either column, so showing
+   one section at a time left half the page empty. */
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  grid-template-columns: 1fr;
+  gap: 16px;
   align-items: start;
-}
-
-@media (max-width: 760px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 .settings-tabs { display: none; gap: 8px; margin-bottom: 4px; }
@@ -751,19 +764,21 @@ blockquote {
   border-color: rgba(59, 130, 246, 0.65);
   color: #f1f5f9;
 }
-@media (max-width: 760px) {
-  #settings-tabs:not([hidden]) { display: flex; }
-  .settings-column .card.tab-hidden { display: none; }
-}
+#settings-tabs:not([hidden]) { display: flex; }
+.settings-column .card.tab-hidden { display: none; }
 
-/* ---- Mobile section tabs (Blocking / Activity / Coach / Unlock (iOS) / Settings) ---- */
+/* ---- Section tabs (Blocking / Activity / Coach / Unlock (iOS) / Settings) ----
+   These used to be mobile-only, which left desktop rendering all twelve cards
+   at once in a two-column grid whose column split disagreed with the section
+   grouping — and left both the remembered tab and the ?section= deep link with
+   nothing to do. Same navigation at every width. */
 .section-tabs .tab-btn {
   padding: 10px 6px; /* all tabs must fit a 320px viewport */
   font-size: 13px;
 }
+.section-tabs { display: flex; flex-wrap: wrap; }
+#settings-view .section-hidden { display: none; }
 @media (max-width: 760px) {
-  .section-tabs { display: flex; flex-wrap: wrap; }
-  #settings-view .section-hidden { display: none; }
   .advanced-card { margin-top: 0; }
 }
 
@@ -826,6 +841,43 @@ blockquote {
   color: #94a3b8;
   font-size: 14px;
   line-height: 1.9;
+}
+
+/* The two equal access routes on browser builds (own key / coaching credit).
+   Side by side where there's room, stacked once there isn't — neither is the
+   fallback, so nothing here should read as secondary. */
+.int-pw-routes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.int-pw-route {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.int-pw-route strong {
+  color: #f1f5f9;
+  font-size: 15px;
+}
+
+.int-pw-route label {
+  margin: 4px 0 -4px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.int-pw-route input,
+.int-pw-route select,
+.int-pw-route button {
+  width: 100%;
 }
 
 .int-pw-plans {
@@ -965,6 +1017,12 @@ input[type="number"].inline-limit-input:focus {
   border-color: rgba(59, 130, 246, 0.6);
   outline: none;
 }
+
+/* An explicit `display` beats the `hidden` attribute's UA `display: none`, so
+   buildRowModeControl's minutesInput.hidden = true did nothing and every row
+   in coach mode carried a stray "minutes per pass" box that controls nothing.
+   Applies to any hidden element with a display of its own. */
+[hidden] { display: none !important; }
 
 
 /* Compact layout for phones (Android/iOS WebView and narrow windows) */
