@@ -1022,7 +1022,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   }
 
   // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
-  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit';
+  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit' || changeType === 'increase_app_quick_check';
   let pageCtx = pageContext || null;
   if (!pageCtx && tabId != null) {
     const nav = await readNavContext(tabId);
@@ -1051,7 +1051,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // page to describe, and saying nothing let the coach invent a screen it
   // cannot see. See renderAppContextBlock.
   let appCtx = null;
-  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit') {
+  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit' || changeType === 'increase_app_quick_check') {
     const { appLabels = {} } = await getStorage(['appLabels']);
     const label = appLabel || appLabels[domain];
     displayName = label ? `the ${label} app` : 'a blocked app';
@@ -1408,6 +1408,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     } else if (settingApproved) {
       if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced — I've removed ${displayName} from your blocklist.`;
       else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${displayName}.`;
+      else if (changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check') acceptanceFallback = `Okay, you've made your case — I've loosened the daily quick check on ${displayName}.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
@@ -1536,6 +1537,23 @@ async function applySettingChange({ domain, changeType, newValue }) {
     limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
     await setStorage({ appLimits: limits });
     return { changeType, domain, appLimits: limits, maxMinutes: limits[domain].maxMinutes };
+  }
+
+  if (changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check') {
+    const forApp = changeType === 'increase_app_quick_check';
+    const limits = { ...(forApp ? appLimits : domainLimits) };
+    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
+    const m = Math.round(Number(newValue && newValue.minutes));
+    const u = Math.round(Number(newValue && newValue.usesPerDay));
+    // Anything not a positive pair is stored as the explicit off shape — with
+    // the lane on by default, only an explicit zero means disabled.
+    const quickCheck = (Number.isFinite(m) && m > 0 && Number.isFinite(u) && u > 0)
+      ? { minutes: Math.min(m, 60), usesPerDay: u }
+      : { minutes: 0, usesPerDay: 0 };
+    limits[domain] = { ...limits[domain], quickCheck };
+    await setStorage(forApp ? { appLimits: limits } : { domainLimits: limits });
+    if (!forApp) await syncBlockingRules();
+    return { changeType, domain, ...(forApp ? { appLimits: limits } : { domainLimits: limits }), quickCheck };
   }
 
   if (changeType === 'disable_all') {

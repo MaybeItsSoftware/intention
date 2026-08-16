@@ -607,37 +607,110 @@ function buildRecommendCard(meta, label, title, onAdd) {
   return card;
 }
 
-function renderSiteRecommendations(containerId, blockedDomains) {
-  const container = document.getElementById(containerId);
-  container.innerHTML = '';
-  const pool = COMMON_SITES.filter(s => !blockedDomains.includes(s) && !RECOMMEND_IGNORE_SITES.includes(s));
-  for (const site of pool) {
-    const meta = SITE_META[site];
-    container.appendChild(buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, 10)));
+// How many suggestions sit above the fold. Detected sites are never folded
+// away — they are the whole point of detecting them — so this is a floor on
+// what shows, not a ceiling.
+const RECOMMEND_VISIBLE = 6;
+
+// Expanded state is per grid, so opening the sites list doesn't also open the
+// apps one, and it survives the re-render that adding a suggestion triggers.
+const recommendExpanded = {};
+
+// Both grids want the same tally, and the setup wizard re-renders on every
+// add, so ask the worker once per page load. A visit banked while the page is
+// open can wait for the next one.
+let siteVisitsPromise = null;
+function getSiteVisits() {
+  if (!siteVisitsPromise) {
+    siteVisitsPromise = sendBg({ action: 'getSiteVisits' }).then(r => r || {}, () => ({}));
   }
-  container.hidden = pool.length === 0;
+  return siteVisitsPromise;
 }
 
-function renderAppRecommendations(containerId, blockedApps) {
+// Shared tail of both grids: lay out `ordered`, fold everything past the cap
+// behind the "show more" button, and label the detected run at the front.
+// `seenCount` is how many leading entries came from the visit tally.
+function renderRecommendGrid(container, more, ordered, seenCount, buildCard, rerender) {
+  const expanded = !!recommendExpanded[container.id];
+  const cap = Math.max(seenCount, RECOMMEND_VISIBLE);
+  const shown = expanded ? ordered : ordered.slice(0, cap);
+
+  container.innerHTML = '';
+  // The labels are grid items themselves (the row is a wrapping flex line, and
+  // a full-width item breaks it), so an unvisited chip can't be mistaken for
+  // one the person actually opens.
+  const addLabel = (text) => {
+    const label = document.createElement('p');
+    label.className = 'recommend-label';
+    label.textContent = text;
+    container.appendChild(label);
+  };
+  if (seenCount > 0) addLabel("You've been on these");
+  shown.forEach((item, i) => {
+    if (seenCount > 0 && i === seenCount) addLabel('Commonly blocked');
+    container.appendChild(buildCard(item));
+  });
+  container.hidden = ordered.length === 0;
+
+  const folded = ordered.length - shown.length;
+  more.hidden = ordered.length === 0 || (!expanded && folded === 0);
+  more.textContent = expanded ? 'Show fewer' : `Show ${folded} more`;
+  more.onclick = () => {
+    recommendExpanded[container.id] = !expanded;
+    rerender();
+  };
+}
+
+async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
   const container = document.getElementById(containerId);
+  const more = document.getElementById(moreId);
+  const pool = COMMON_SITES.filter(s => !blockedDomains.includes(s) && !RECOMMEND_IGNORE_SITES.includes(s));
+  const visits = await getSiteVisits();
+  // Visited candidates lead, most-visited first; the rest keep the
+  // catalogue's own order. With an empty tally this is just that order.
+  const seen = pool
+    .filter(s => visits[s] && visits[s].count > 0)
+    .sort((a, b) => visits[b].count - visits[a].count);
+  const seenSet = new Set(seen);
+  const ordered = [...seen, ...pool.filter(s => !seenSet.has(s))];
+  renderRecommendGrid(
+    container, more, ordered, seen.length,
+    (site) => {
+      const meta = SITE_META[site];
+      return buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, 10));
+    },
+    () => renderSiteRecommendations(containerId, moreId, blockedDomains)
+  );
+}
+
+function renderAppRecommendations(containerId, moreId, blockedApps) {
+  const container = document.getElementById(containerId);
+  const more = document.getElementById(moreId);
   container.innerHTML = '';
   if (!HAS_APP_BLOCKING) {
     container.hidden = true;
+    more.hidden = true;
     return;
   }
   getInstalledApps().then(installed => {
     const installedPkgs = new Set(installed.map(a => a.packageName));
+    // Apps have no equivalent of the visit tally — Android blocks natively, so
+    // nothing on this device sees app launches until one is already blocked —
+    // but "is it even installed" is the same kind of signal, and it does most
+    // of the same narrowing.
     const pool = COMMON_APPS.filter(a =>
       installedPkgs.has(a.packageName) &&
       !blockedApps.includes(a.packageName) &&
       !RECOMMEND_IGNORE_APPS.includes(a.packageName)
     );
-    container.innerHTML = '';
-    for (const app of pool) {
-      const meta = SITE_META[APP_ICON_SITE[app.packageName]];
-      container.appendChild(buildRecommendCard(meta, app.label, app.packageName, () => addApp(app)));
-    }
-    container.hidden = pool.length === 0;
+    renderRecommendGrid(
+      container, more, pool, 0,
+      (app) => {
+        const meta = SITE_META[APP_ICON_SITE[app.packageName]];
+        return buildRecommendCard(meta, app.label, app.packageName, () => addApp(app));
+      },
+      () => renderAppRecommendations(containerId, moreId, blockedApps)
+    );
   });
 }
 
@@ -724,7 +797,7 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
 }
 
 function renderSetupDomains() {
-  renderSiteRecommendations('setup-sites-recommend-grid', setupBlockedDomains);
+  renderSiteRecommendations('setup-sites-recommend-grid', 'setup-sites-recommend-more', setupBlockedDomains);
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
@@ -787,7 +860,7 @@ function addSetupApp(app) {
 }
 
 function renderSetupApps() {
-  renderAppRecommendations('setup-apps-recommend-grid', setupBlockedApps);
+  renderAppRecommendations('setup-apps-recommend-grid', 'setup-apps-recommend-more', setupBlockedApps);
   const list = document.getElementById('setup-apps-list');
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
@@ -854,6 +927,7 @@ function renderSetupIOSApps() {
   document.getElementById('setup-open-add-app-btn').textContent = 'Choose apps to block';
   document.getElementById('setup-apps-recommend-grid').hidden = true;
   document.getElementById('setup-apps-recommend-grid').innerHTML = '';
+  document.getElementById('setup-apps-recommend-more').hidden = true;
   document.getElementById('setup-apps-list').hidden = true;
   document.getElementById('setup-ios-apps-status').hidden = false;
   refreshSetupIOSApps();
@@ -1404,6 +1478,7 @@ function removeDomain(d, isSimple) {
 }
 
 function renderDomains(domains, limits = {}, globalMode = 'coach') {
+  renderSiteRecommendations('sites-recommend-grid', 'sites-recommend-more', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   for (const d of domains) {
@@ -1592,6 +1667,7 @@ function removeApp(pkg, label, isSimple) {
 
 function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
   settingsBlockedApps = apps;
+  renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   for (const pkg of apps) {

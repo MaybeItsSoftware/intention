@@ -72,6 +72,7 @@
         <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
         <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
+        <button type="button" id="setup-apps-recommend-more" class="recommend-more" hidden></button>
         <ul id="setup-apps-list"></ul>
         <p class="setup-check" id="setup-ios-apps-status" hidden></p>
         <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Allow Screen Time</button>
@@ -82,6 +83,7 @@
         <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 10 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-site-btn" class="primary add-row-btn">+ Add website</button>
         <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
+        <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
         <ul id="setup-websites-list"></ul>
       </section>
 
@@ -198,6 +200,8 @@
             <h2>Blocked sites</h2>
             <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below.</p>
             <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+            <div id="sites-recommend-grid" class="recommend-grid"></div>
+            <button type="button" id="sites-recommend-more" class="recommend-more" hidden></button>
             <ul id="domain-list"></ul>
             <button id="disable-all-btn" class="secondary" style="width: 100%; margin-top: 8px;">Disable all blocking</button>
           </section>
@@ -206,6 +210,8 @@
             <h2>Blocked apps</h2>
             <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device, or tap a suggestion below.</p>
             <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+            <div id="apps-recommend-grid" class="recommend-grid"></div>
+            <button type="button" id="apps-recommend-more" class="recommend-more" hidden></button>
             <ul id="app-list"></ul>
             <div id="ios-apps-controls" hidden>
               <p class="subtitle" id="ios-apps-status"></p>
@@ -352,6 +358,7 @@
     </div>
   </div>
 
+  <script src="sites.js"></script>
   <script src="providers.js"></script>
   <script src="billing.js"></script>
   <script src="options.js"></script>

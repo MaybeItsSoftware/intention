@@ -1057,6 +1057,58 @@ describe('the quick-check lane', () => {
   });
 });
 
+// Loosening the lane is gated like every other loosening: the coach approves
+// it through the settings gate, and applySettingChange writes the normalized
+// shape without dropping the entry's other fields.
+describe('loosening the quick check through the settings gate', () => {
+  const approvingFetch = () => makeMockFetch({
+    content: [
+      { type: 'text', text: 'Alright.' },
+      { type: 'tool_use', id: 't1', name: 'approve_setting_change', input: { reason: 'considered' } }
+    ]
+  });
+
+  it('applies an approved increase and preserves sibling fields', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, domainLimits: { 'reddit.com': { maxGrants: 2, maxMinutes: 20, mode: 'coach' } } },
+      fetch: approvingFetch()
+    });
+    const resp = await ctx.handleMessage(
+      {
+        action: 'chat', mode: 'settings_gate', domain: 'reddit.com',
+        changeType: 'increase_quick_check',
+        currentValue: { minutes: 3, usesPerDay: 1 }, newValue: { minutes: 5, usesPerDay: 2 },
+        userMessage: 'I need slightly longer checks for work'
+      },
+      EXT_PAGE
+    );
+    expect(resp.approved).toBeTruthy();
+    const entry = chrome.storage._store.domainLimits['reddit.com'];
+    expect(entry.quickCheck).toEqual({ minutes: 5, usesPerDay: 2 });
+    expect(entry.maxGrants).toBe(2);
+    expect(entry.maxMinutes).toBe(20);
+    expect(entry.mode).toBe('coach');
+  });
+
+  it('stores a non-positive newValue as the explicit off shape, for apps too', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, appLimits: { 'com.instagram.android': { maxGrants: 3 } } },
+      fetch: approvingFetch()
+    });
+    await ctx.handleMessage(
+      {
+        action: 'chat', mode: 'settings_gate', domain: 'com.instagram.android',
+        changeType: 'increase_app_quick_check',
+        currentValue: { minutes: 3, usesPerDay: 1 }, newValue: { minutes: 0, usesPerDay: 0 },
+        userMessage: 'turn it off'
+      },
+      EXT_PAGE
+    );
+    expect(chrome.storage._store.appLimits['com.instagram.android'].quickCheck)
+      .toEqual({ minutes: 0, usesPerDay: 0 });
+  });
+});
+
 // Sessions used to be keyed on the tab id alone, so a pass earned on one
 // blocked site opened every other blocked site in that tab for the rest of the
 // pass -- no conversation required -- and handed the next site's gate the
