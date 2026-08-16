@@ -42,9 +42,11 @@ const PROVIDERS = {
   },
   groq: {
     label: 'Groq',
-    defaultModel: 'llama-3.3-70b-versatile',
-    models: ['llama-3.3-70b-versatile'],
-    modelPlaceholder: 'llama-3.3-70b-versatile'
+    // gpt-oss-120b holds the coach's instructions and calls its tools far
+    // more reliably than the Llama it replaces as default, and costs less.
+    defaultModel: 'openai/gpt-oss-120b',
+    models: ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile'],
+    modelPlaceholder: 'openai/gpt-oss-120b / openai/gpt-oss-20b'
   },
   gemini: {
     label: 'Google Gemini',
