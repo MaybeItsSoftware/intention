@@ -1,7 +1,11 @@
 package uk.co.maybeitssoftware.intention
 
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Bundle
 import android.provider.Browser
 import android.util.Log
@@ -26,6 +30,39 @@ class CoachingActivity : AppCompatActivity() {
     private var domain: String = ""
     private var isApp: Boolean = true
     private var browserPackage: String? = null
+
+    // Launching this screen over a playing video looks, to the player, like a
+    // background switch — so YouTube and friends pop into picture-in-picture
+    // ON TOP of the coach and keep playing, which defeats the entire
+    // intervention. Every well-behaved player also pauses on a permanent
+    // audio-focus loss and stays paused, so the gate holds exclusive focus
+    // for as long as it is on screen: the miniplayer freezes the moment the
+    // coach appears. Focus is dropped in onStop, so a granted pass gets its
+    // sound back as soon as the coach goes away.
+    private var focusRequest: AudioFocusRequest? = null
+
+    override fun onStart() {
+        super.onStart()
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .build()
+        audioManager.requestAudioFocus(request)
+        focusRequest = request
+    }
+
+    override fun onStop() {
+        focusRequest?.let {
+            (getSystemService(Context.AUDIO_SERVICE) as AudioManager).abandonAudioFocusRequest(it)
+        }
+        focusRequest = null
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

@@ -3,9 +3,11 @@ package uk.co.maybeitssoftware.intention
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import org.json.JSONObject
@@ -35,6 +37,10 @@ class IntentionAccessibilityService : AccessibilityService() {
         // How recently a session must have run out for the relaunched coach to
         // open as a check-in rather than a fresh gate.
         private const val CHECKIN_WINDOW_MS = 5 * 60_000L
+        // Floor between picture-in-picture pause dispatches, so a stream of
+        // content events from a playing PiP surface can't machine-gun the
+        // active media session.
+        private const val PIP_PAUSE_THROTTLE_MS = 1_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -79,6 +85,10 @@ class IntentionAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val expiryRecheck = Runnable { recheckForeground() }
     private var lastForegroundPackage: String? = null
+    private var lastPipPauseAt = 0L
+    // Which blocked packages have already eaten their one pause for the
+    // current PiP appearance — see checkPipBypass.
+    private val pipPausedOnce = mutableSetOf<String>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -96,6 +106,11 @@ class IntentionAccessibilityService : AccessibilityService() {
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         ) return
+
+        // Before anything package-specific: a blocked app may be living on in
+        // a picture-in-picture window regardless of which app this event is
+        // from, so the check can't sit behind the per-package filtering below.
+        checkPipBypass()
 
         val packageName = event.packageName?.toString() ?: return
 
@@ -193,6 +208,59 @@ class IntentionAccessibilityService : AccessibilityService() {
             Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
             launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
         }
+    }
+
+    // The coach covering a playing video looks, to the player, like a
+    // background switch, so the video pops into picture-in-picture on top of
+    // the gate. CoachingActivity freezes it by holding audio focus while the
+    // gate is up — but nothing stops the user tapping play in the leftover
+    // PiP window afterwards and watching on with no session and no tracking.
+    // Android has no API to dismiss another app's PiP window, so the
+    // effective equivalent is a pause dispatched at whatever is playing
+    // whenever a blocked, session-less package is caught in one.
+    //
+    // The media-key route is deliberately blunt (it hits the ACTIVE session,
+    // which is not provably the PiP app without Notification Access), so two
+    // guards keep it from harassing innocent audio: it only fires while
+    // something is actually playing, and only once per playback burst —
+    // re-armed when the audio stops — so every tap of play in the PiP is
+    // answered with a pause, while unrelated music next to a parked PiP
+    // window costs at most one wrongly-eaten pause per resume.
+    private fun checkPipBypass() {
+        val now = System.currentTimeMillis()
+        if (now - lastPipPauseAt < PIP_PAUSE_THROTTLE_MS) return
+
+        val pipPackages = windows
+            .filter { it.isInPictureInPictureMode }
+            .mapNotNull { it.root?.packageName?.toString() }
+        if (pipPackages.isEmpty()) {
+            // Every PiP window is gone; the next appearance earns a fresh pause.
+            pipPausedOnce.clear()
+            return
+        }
+
+        val offender = pipPackages.firstOrNull {
+            it != packageName && isAppBlocked(it) && sessionExpiresAt(it) == null
+        } ?: return
+
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (!audioManager.isMusicActive) {
+            // Nothing is playing: the pause landed, or the user stopped it
+            // themselves. Re-arm so the next tap of play with this PiP still
+            // on screen gets paused again — otherwise one pause per
+            // appearance would make "tap play twice" the workaround.
+            pipPausedOnce.remove(offender)
+            return
+        }
+        if (offender in pipPausedOnce) return
+
+        lastPipPauseAt = now
+        pipPausedOnce.add(offender)
+        Log.d(TAG, "Blocked app $offender playing in PiP without a session — pausing playback")
+        // KEYCODE_MEDIA_PAUSE, not PLAY_PAUSE: idempotent, so a mis-aimed
+        // dispatch can pause something but never start it.
+        audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
+        audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PAUSE))
     }
 
     // Re-evaluates whatever is currently in the foreground, independent of
