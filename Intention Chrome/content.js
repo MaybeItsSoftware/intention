@@ -1182,6 +1182,8 @@ function addMessage(container, role, text, isThinking) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+  // Press and hold anything the coach said to report it (report.js).
+  if (role === "assistant") attachReportPress(div);
   return div;
 }
 

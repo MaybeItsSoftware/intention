@@ -2004,3 +2004,81 @@ describe('save_onboarding limits', () => {
     expect(chrome.storage._store.domainLimits['y.com']).toEqual({ maxGrants: 2, maxMinutes: -1 });
   });
 });
+
+// Reporting a coach message (Play's AI-Generated Content policy). The page
+// sends only the text it can see; everything else is resolved here, because a
+// page has no stable handle on a turn — they carry no ids, and histories are
+// truncated from the front as they grow.
+describe('reporting a coach message', () => {
+  const seeded = (histories) => ({ ...CONFIGURED, chatHistories: histories });
+
+  it('sends the reported message with the user turn that provoked it', async () => {
+    const fetch = makeMockFetch({});
+    const { ctx } = loadBackground({
+      fetch,
+      seed: seeded({
+        [transcript('instagram.com')]: [
+          { role: 'user', content: 'why not' },
+          { role: 'assistant', content: 'something unkind' }
+        ]
+      })
+    });
+
+    const res = await ctx.handleMessage(
+      { action: 'reportMessage', text: 'something unkind', note: 'this was cruel' },
+      tab(1)
+    );
+
+    expect(res.ok).toBe(true);
+    const call = fetch.calls.at(-1);
+    expect(call.url).toMatch(/\/v1\/report$/);
+    const body = JSON.parse(call.init.body);
+    expect(body.reported).toBe('something unkind');
+    expect(body.prompt).toBe('why not');
+    expect(body.note).toBe('this was cruel');
+    // Which route produced it is the point of collecting these.
+    expect(body.provider).toBe('byok:anthropic');
+  });
+
+  it('still reports a message it cannot find a transcript for', async () => {
+    const fetch = makeMockFetch({});
+    const { ctx } = loadBackground({ fetch, seed: seeded({}) });
+    const res = await ctx.handleMessage(
+      { action: 'reportMessage', text: 'a canned simple-mode line', note: '' },
+      tab(1)
+    );
+    expect(res.ok).toBe(true);
+    expect(JSON.parse(fetch.calls.at(-1).init.body).prompt).toBe('');
+  });
+
+  it('does not attach an assistant turn as the prompt', async () => {
+    const fetch = makeMockFetch({});
+    const { ctx } = loadBackground({
+      fetch,
+      seed: seeded({
+        context: [
+          { role: 'assistant', content: 'an opener nobody asked for' },
+          { role: 'assistant', content: 'and then this' }
+        ]
+      })
+    });
+    await ctx.handleMessage({ action: 'reportMessage', text: 'and then this' }, EXT_PAGE);
+    expect(JSON.parse(fetch.calls.at(-1).init.body).prompt).toBe('');
+  });
+
+  it('refuses an empty report rather than posting one', async () => {
+    const fetch = makeMockFetch({});
+    const { ctx } = loadBackground({ fetch, seed: seeded({}) });
+    const res = await ctx.handleMessage({ action: 'reportMessage', text: '   ' }, EXT_PAGE);
+    expect(res.ok).toBe(false);
+    expect(fetch.calls.length).toBe(0);
+  });
+
+  it('tells the user when the report could not be sent', async () => {
+    const fetch = makeMockFetch({ status: 500 });
+    const { ctx } = loadBackground({ fetch, seed: seeded({}) });
+    const res = await ctx.handleMessage({ action: 'reportMessage', text: 'x' }, EXT_PAGE);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBeTruthy();
+  });
+});

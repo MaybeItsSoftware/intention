@@ -130,6 +130,8 @@ function makeMedia({ paused = false, muted = false } = {}) {
 }
 
 // Load content.js the way the browser does: as a plain script over a DOM.
+// report.js comes first, as it does in the manifest — every assistant bubble
+// the gate renders binds its press-and-hold reporting handler.
 // `withPageContext` also loads page_context.js first, as the manifest does —
 // content.js only extracts page context when that file is present.
 function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageContext = false } = {}) {
@@ -168,7 +170,9 @@ function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageConte
     fetch: async () => { throw new Error('offline'); }
   };
   sandbox.globalThis = sandbox;
-  const files = withPageContext ? ['page_context.js', 'content.js'] : ['content.js'];
+  const files = withPageContext
+    ? ['page_context.js', 'report.js', 'content.js']
+    : ['report.js', 'content.js'];
   const source = files
     .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
     .join('\n;\n');

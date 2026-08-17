@@ -713,6 +713,10 @@ function addMessage(container, role, text, isThinking) {
   div.textContent = text;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+  // Press and hold anything the coach said to report it (report.js). Bound
+  // even while it is still the typing indicator, because that same node is
+  // what the reply gets typed into.
+  if (role === 'assistant') attachReportPress(div);
   return div;
 }
 

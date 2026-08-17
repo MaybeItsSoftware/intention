@@ -205,6 +205,33 @@ async function callIntentionHosted({ accessToken, backendUrl, model, system, mes
   };
 }
 
+// Reporting an offensive coach message (Play's AI-Generated Content policy
+// requires the affordance; report.js is the UI).
+//
+// The one call in this file that must work for everyone. Someone using their
+// own API key has no entitlement token at all, and they are exactly the users
+// whose conversations we otherwise never see — an unreportable coach for them
+// would defeat the point. So the bearer goes on when there is one and is simply
+// left off when there isn't, and the server leans on its per-IP limit instead.
+async function postCoachReport({ backendUrl, accessToken, reported, prompt, note, provider, model }) {
+  const base = (backendUrl || DEFAULT_INTENTION_BACKEND_URL).replace(/\/+$/, '');
+  const headers = { 'content-type': 'application/json' };
+  if (accessToken) headers.authorization = `Bearer ${accessToken}`;
+  const res = await fetchWithTimeout(`${base}/v1/report`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ reported, prompt, note, provider, model })
+  }, 15000);
+  if (!res.ok) {
+    const err = new Error(res.status === 429
+      ? "That's a lot of reports at once — give it a minute and try again."
+      : `Report failed (${res.status})`);
+    err.code = res.status === 429 ? 'rate_limited' : 'backend_error';
+    throw err;
+  }
+  return true;
+}
+
 const HOSTED_ERROR_MESSAGES = {
   entitlement_invalid: 'Your coaching credit could not be verified. Open Settings to restore it.',
   entitlement_expired: 'Your access has expired. Open Settings to restore it.',

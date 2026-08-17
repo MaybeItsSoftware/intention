@@ -859,6 +859,86 @@ describe('FileStore durability', () => {
 
 // The backend had no rate limiting at all: nothing bounded chat volume per
 // token, and the short human-typeable linking codes were open to brute force.
+// Play requires that a user be able to report AI-generated content. The thing
+// that makes this endpoint unusual is that it must work for someone with no
+// entitlement at all — a user on their own API key — because they are exactly
+// the people whose conversations never otherwise reach us.
+describe('POST /v1/report', () => {
+  const report = { reported: 'something the coach said', prompt: 'what I asked', note: 'this was cruel' };
+
+  // The store is a flat key-value with no enumeration of its own, so the test
+  // reaches into the MemoryStore's map to find the row that was just written.
+  const findReport = (store) => {
+    for (const key of store.map.keys()) {
+      if (key.startsWith('report:')) return store.get(key);
+    }
+    return null;
+  };
+
+  it('accepts a report with no token at all', async () => {
+    const d = deps();
+    const res = await post('/v1/report', report, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('stores what was reported, along with the turn that provoked it', async () => {
+    const d = deps();
+    await post('/v1/report', { ...report, provider: 'byok:groq', model: 'oss-120b' }, {}, d);
+    const record = findReport(d.store);
+    expect(record.reported).toBe('something the coach said');
+    expect(record.prompt).toBe('what I asked');
+    expect(record.note).toBe('this was cruel');
+    expect(record.provider).toBe('byok:groq');
+    expect(record.subject).toBe('');
+  });
+
+  it('attributes a report to the hashed subject when a token is presented', async () => {
+    const d = deps();
+    const token = signToken({ sub: 'sub-reporter', platform: 'apple', productId: 'p' }, SECRET, 60_000);
+    await post('/v1/report', report, { authorization: `Bearer ${token}` }, d);
+    expect(findReport(d.store).subject).toBe('sub-reporter');
+  });
+
+  // Losing the report would be worse than losing the attribution.
+  it('still takes the report when the token is junk', async () => {
+    const d = deps();
+    const res = await post('/v1/report', report, { authorization: 'Bearer not-a-token' }, d);
+    expect(res.status).toBe(200);
+    expect(findReport(d.store).subject).toBe('');
+  });
+
+  it('refuses a report with nothing in it', async () => {
+    const res = await post('/v1/report', { note: 'just a note' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('invalid_request');
+  });
+
+  it('truncates rather than accepting an unbounded body', async () => {
+    const d = deps();
+    await post('/v1/report', { reported: 'x'.repeat(9000), note: 'y'.repeat(4000) }, {}, d);
+    const record = findReport(d.store);
+    expect(record.reported.length).toBe(4000);
+    expect(record.note.length).toBe(1000);
+  });
+
+  it('throttles per IP, since there is no token to throttle on', async () => {
+    const d = deps();
+    let last;
+    for (let i = 0; i < 21; i++) {
+      last = await handleRequest({
+        method: 'POST', path: '/v1/report', headers: {}, body: report, ip: '203.0.113.44'
+      }, d);
+    }
+    expect(last.status).toBe(429);
+
+    const otherIp = await handleRequest({
+      method: 'POST', path: '/v1/report', headers: {}, body: report, ip: '203.0.113.45'
+    }, d);
+    expect(otherIp.status).toBe(200);
+  });
+});
+
 describe('rate limiting', () => {
   const chatBody = { messages: [{ role: 'user', content: 'hi' }] };
   const tokenFor = (sub) => signToken({ sub, platform: 'apple', productId: 'p' }, SECRET, 60_000);

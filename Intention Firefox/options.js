@@ -2500,6 +2500,9 @@ function addCoachMsg(role, text, isThinking, isSystem) {
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  // Press and hold anything the coach said to report it (report.js). System
+  // notes are our own machinery talking, not the model, so they stay out.
+  if (role === 'assistant' && !isSystem) attachReportPress(div);
   return div;
 }
 
@@ -2708,6 +2711,7 @@ function addGateMsg(role, text, isThinking, isSystem) {
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (role === 'assistant' && !isSystem) attachReportPress(div);
   return div;
 }
 

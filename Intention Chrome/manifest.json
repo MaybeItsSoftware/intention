@@ -30,6 +30,7 @@
       ],
       "js": [
         "page_context.js",
+        "report.js",
         "content.js"
       ],
       "run_at": "document_start",

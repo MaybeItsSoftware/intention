@@ -10,7 +10,7 @@ import {
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
 import { rateLimiter } from './ratelimit.js';
-import { logEvent } from './log.js';
+import { logEvent, newRequestId } from './log.js';
 
 // Request handling, kept transport-agnostic: `handleRequest` takes a plain
 // { method, path, headers, body, ip, query } and returns { status, body }.
@@ -54,7 +54,13 @@ const IP_LIMITS = {
   '/v1/entitlement/refresh': { limit: 60, windowMs: 10 * MINUTE },
   '/v1/entitlement/redeem': { limit: 30, windowMs: HOUR },
   '/v1/webhooks/apple': { limit: 120, windowMs: MINUTE },
-  '/v1/webhooks/google': { limit: 120, windowMs: MINUTE }
+  '/v1/webhooks/google': { limit: 120, windowMs: MINUTE },
+  // Reporting is deliberately reachable without a token (a user on their own
+  // API key has none, and Play requires them to be able to report too), so the
+  // IP limit is the only thing standing in front of it. Low, because reporting
+  // is a rare human act — but not so low that a genuinely bad session can't be
+  // reported several times over.
+  '/v1/report': { limit: 20, windowMs: HOUR }
 };
 
 // Failed redemptions are tracked separately from volume: a miss means someone
@@ -99,6 +105,7 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
       case '/v1/entitlement/code': return codeEndpoint(headers, backing, limiter);
       case '/v1/entitlement/redeem': return redeemEndpoint(body, backing, limiter, ip);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
+      case '/v1/report': return reportEndpoint(headers, body, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
       case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing, query);
       default:
@@ -609,6 +616,74 @@ function sanitizeToolSchema(node, depth = 0) {
   }
   if (node === null || ['string', 'number', 'boolean'].includes(typeof node)) return node;
   return INVALID_SCHEMA; // functions/symbols can't appear in JSON bodies anyway
+}
+
+// ---- Reports --------------------------------------------------------------
+
+const MAX_REPORT_CHARS = 4_000;
+const MAX_REPORT_NOTE_CHARS = 1_000;
+// Long enough to spot a pattern across weeks of reports, short enough that this
+// isn't an open-ended archive of things people found upsetting.
+const REPORT_TTL_MS = 180 * 24 * HOUR;
+
+// A user reporting something the coach said. Play's AI-Generated Content policy
+// requires the affordance and requires that reports "inform content filtering
+// and moderation" — which they can't do if they land somewhere unreadable, so
+// this both persists the report and emits it as a log event.
+//
+// That log line is the one deliberate exception to log.js's rule against
+// logging message content. It is narrow and it is consented: the client says in
+// plain words, on the sheet, exactly what it is about to send, and nothing
+// reaches here that a user did not choose to send.
+//
+// Unauthenticated by design — see the IP_LIMITS note. A token is used when one
+// is presented, purely so a repeat reporter can be recognised across reports,
+// and a bad token is ignored rather than rejected: losing the report would be
+// worse than losing the attribution.
+function reportEndpoint(headers, body, backing) {
+  const reported = clampReportText(body && body.reported, MAX_REPORT_CHARS);
+  if (!reported) {
+    return json(400, { error: 'Nothing to report', code: 'invalid_request' });
+  }
+
+  let subject = '';
+  const token = bearer(headers);
+  if (token) {
+    try {
+      subject = verifyToken(token, config.tokenSecret).sub || '';
+    } catch (e) {
+      subject = '';
+    }
+  }
+
+  const record = {
+    reported,
+    prompt: clampReportText(body && body.prompt, MAX_REPORT_CHARS),
+    note: clampReportText(body && body.note, MAX_REPORT_NOTE_CHARS),
+    provider: clampReportText(body && body.provider, 64),
+    model: clampReportText(body && body.model, 128),
+    subject,
+    at: new Date().toISOString()
+  };
+
+  const id = newRequestId();
+  try {
+    backing.set(`report:${id}`, record, REPORT_TTL_MS);
+  } catch (e) {
+    // A full or unmounted volume must not swallow the report — the log line
+    // below is what actually gets read, so carry on and let it through.
+    console.error('[intention] report store write failed', e);
+  }
+  logEvent('coach_report', { id, ...record });
+
+  // 200 rather than 204: index.js writes a JSON body for every reply, and a
+  // 204 carrying one is a protocol violation waiting to confuse a proxy.
+  return json(200, { ok: true });
+}
+
+function clampReportText(value, max) {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, max);
 }
 
 // ---- helpers --------------------------------------------------------------

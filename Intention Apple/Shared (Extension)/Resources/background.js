@@ -784,6 +784,11 @@ async function handleMessage(message, sender) {
       }
       return { duplicate: false };
     }
+    case 'reportMessage': {
+      const text = String(message.text || '').trim();
+      if (!text) return { ok: false, error: 'Nothing to report.' };
+      return await reportCoachMessage(text, String(message.note || '').trim());
+    }
     default:
       throw new Error('Unknown action: ' + message.action);
   }
@@ -880,6 +885,65 @@ async function resolveAIRoute() {
     };
   }
   return { route: 'locked' };
+}
+
+// Caps on what a report carries. Generous enough for a long coach reply,
+// bounded so a report can't become a channel for shipping arbitrary bulk.
+const REPORT_TEXT_CAP = 4000;
+const REPORT_NOTE_CAP = 1000;
+
+// Sends a coach message to Intention as an offensive-content report, along with
+// the user turn that provoked it — a reply is rarely judgeable on its own.
+//
+// The reported line is located by matching its text against the stored
+// transcripts rather than by an index the page could pass: turns carry no ids
+// (see the { role, content } shape written in handleChat), and histories are
+// truncated from the front as they grow, so any position sent from a page would
+// already be capable of pointing at the wrong turn by the time it arrived.
+//
+// Nothing here trusts the caller beyond the text itself, which is why no sender
+// check is needed: the worst a hostile content script achieves is a report
+// containing words it made up, at whatever rate the server's IP limit allows.
+async function reportCoachMessage(text, note) {
+  const { chatHistories = {}, backendUrl } = await getStorage(['chatHistories', 'backendUrl']);
+
+  let prompt = '';
+  outer:
+  for (const history of Object.values(chatHistories)) {
+    if (!Array.isArray(history)) continue;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      if (!turn || turn.role !== 'assistant' || turn.content !== text) continue;
+      const before = history[i - 1];
+      if (before && before.role === 'user') prompt = String(before.content || '');
+      break outer;
+    }
+  }
+
+  const route = await resolveAIRoute();
+  try {
+    await postCoachReport({
+      backendUrl,
+      accessToken: route.accessToken || '',
+      reported: text.slice(0, REPORT_TEXT_CAP),
+      prompt: prompt.slice(0, REPORT_TEXT_CAP),
+      note: note.slice(0, REPORT_NOTE_CAP),
+      // Which route produced it is the whole point of collecting these: a bad
+      // pattern on the hosted model is ours to fix, the same pattern on a
+      // stranger's key is not.
+      provider: route.route === 'byok' ? `byok:${route.provider}` : (route.provider || 'unknown'),
+      model: route.model || ''
+    });
+    return { ok: true };
+  } catch (e) {
+    console.warn(INT_LOG, 'report failed', e);
+    return {
+      ok: false,
+      error: isNetworkError(e)
+        ? "Couldn't reach Intention. Check your connection and try again."
+        : String(e.message || e)
+    };
+  }
 }
 
 // An entitlement the backend has rejected must stop counting as access, or
