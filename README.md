@@ -93,6 +93,10 @@ The purchase itself is always the platform's own: StoreKit 2 on Apple (`Intentio
 
 `server/` is the backend: it verifies App Store / Play receipts, mints entitlement tokens, and proxies coaching calls. It has no dependencies — `cd server && npm start`. See [`server/README.md`](server/README.md).
 
+## Privacy
+
+[`PRIVACY.md`](PRIVACY.md) is the policy, and it is the source of what the stores link to: it is published at <https://maybeitssoftware.co.uk/intention/privacy>, which is the URL registered in both the App Store and Google Play listings. Changing that file changes the published policy, so it needs to keep pace with what the code actually does — the store data-safety declarations are checked against it.
+
 ## Technology
 
 - Vanilla JavaScript, Manifest V3, HTML + CSS (glassmorphic)

@@ -2,6 +2,8 @@
 
 _Last updated: 2026-08-17_
 
+_Published at <https://maybeitssoftware.co.uk/intention/privacy> — that URL is what the App Store and Google Play listings point at, so this file is the source of it and any change here is a change to the published policy._
+
 **Intention** is available as a browser extension (Chrome, Firefox, Safari) and as native Android and iOS apps. This policy covers all of them.
 
 There are two ways the coach can run, and they have different data flows:
