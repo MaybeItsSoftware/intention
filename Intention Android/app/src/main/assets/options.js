@@ -707,15 +707,16 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       const backendUrl = await currentBackendUrl();
       return requestAccessCode(entitlement, backendUrl);
     },
-    // Only offered where no store sells credit (Chrome/Firefox); elsewhere
-    // the key field exists solely in Settings -> Advanced, because store
-    // builds may not name an LLM vendor in their purchase UI at all.
+    // Offered wherever a store doesn't forbid it: Chrome/Firefox, where it is
+    // the way in, and Android, where it sits under the purchase buttons as an
+    // alternative. On Apple it stays null and lives solely in Settings ->
+    // Advanced (see BYOK_IS_OFFERED in billing.js for why the two differ).
     //
-    // Where it is offered, the key can be entered in place rather than by
-    // being sent off to a disclosure inside a disclosure — but only in the
+    // Entering the key in place, rather than jumping to a disclosure inside a
+    // disclosure, is reserved for builds where BYOK leads — and only in the
     // full-size paywall. The compact one renders inside a blocked page, which
     // is the worst possible moment to ask someone to go and fetch a key.
-    onUseOwnKey: BYOK_IS_PRIMARY ? () => openAdvancedKeySection() : null,
+    onUseOwnKey: BYOK_IS_OFFERED ? () => openAdvancedKeySection() : null,
     onSaveKey: BYOK_IS_PRIMARY && !compact ? async ({ provider, apiKey, model }) => {
       await sendBg({ action: 'saveSettings', config: { provider, apiKey, model } });
       await rerender();
@@ -752,9 +753,11 @@ async function openPaywallModal() {
 }
 
 async function openAdvancedKeySection() {
-  // Reached from the onboarding paywall on browser builds: the advanced field
-  // lives in the settings view, so the wizard has to be committed first or the
-  // click would silently do nothing behind a hidden view.
+  // Reached from the onboarding paywall on browser and Android builds: the
+  // advanced field lives in the settings view, so the wizard has to be
+  // committed first or the click would silently do nothing behind a hidden
+  // view. Committing is safe by then — the access step is the last thing
+  // before "done", and blocking is already configured either way.
   if (!document.getElementById('setup-view').hidden) {
     await finishSetup();
   }

@@ -34,6 +34,74 @@ describe('billing mode detection', () => {
   it('is "store" on Android too, not "byok"', () => {
     const { ctx } = loadBilling({ window: bridge(), userAgent: ANDROID_UA });
     expect(ctx.BILLING_MODE).toBe('store');
+    expect(ctx.BYOK_IS_PRIMARY).toBe(false);
+  });
+});
+
+// Being *allowed to mention* a user's own key is a weaker thing than leading
+// with it, and the two stores differ: Play's payments policy never engages on a
+// key the user already holds with a third party, Apple's 3.1.1 does. So Android
+// may offer it under the purchase buttons while Apple may not.
+describe('whether a build may offer a user-supplied key at all', () => {
+  it('offers it on Android, without demoting Play Billing', () => {
+    const { ctx } = loadBilling({ window: bridge(), userAgent: ANDROID_UA });
+    expect(ctx.BYOK_IS_OFFERED).toBe(true);
+    expect(ctx.BYOK_IS_PRIMARY).toBe(false);
+  });
+
+  it('does not offer it on an Apple store build', () => {
+    const { ctx } = loadBilling({ window: bridge(), userAgent: SAFARI_UA });
+    expect(ctx.BYOK_IS_OFFERED).toBe(false);
+  });
+
+  it('does not offer it on Safari extension pages either', () => {
+    const { ctx } = loadBilling({ userAgent: SAFARI_UA });
+    expect(ctx.BYOK_IS_OFFERED).toBe(false);
+  });
+
+  it('offers it in the browsers, where it is the way in', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.BYOK_IS_OFFERED).toBe(true);
+  });
+});
+
+describe('store product strings', () => {
+  // Play appends " (App name)" to every in-app product title it returns.
+  it('drops the app name Play appends to product titles', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductTitle('1,000 Intention Coach Credits (Intention)'))
+      .toBe('1,000 Intention Coach Credits');
+  });
+
+  it('leaves a title alone when the store did not append anything', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductTitle('1,000 Coach Credits')).toBe('1,000 Coach Credits');
+    expect(ctx.cleanProductTitle('')).toBe('');
+  });
+
+  // Only the app's own name comes off — a bracket someone meant to be there stays.
+  it('keeps a trailing bracket that is not the app name', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductTitle('5,000 Credits (best value)')).toBe('5,000 Credits (best value)');
+  });
+
+  it('drops a description that opens by restating the title', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductDesc('1,000 Intention Coach Credits', '1,000 Credits for about 500 messages'))
+      .toBe('For about 500 messages');
+    expect(ctx.cleanProductDesc('2,000 Intention Credits', '2,000 Intention Credits for about 1,000 messages'))
+      .toBe('For about 1,000 messages');
+  });
+
+  it('keeps a description whose count is not the one in the title', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductDesc('1,000 Coach Credits', '500 credits of bonus time'))
+      .toBe('500 credits of bonus time');
+  });
+
+  it('keeps a description that says nothing but the count', () => {
+    const { ctx } = loadBilling({ userAgent: CHROME_UA });
+    expect(ctx.cleanProductDesc('1,000 Coach Credits', '1,000 Credits')).toBe('1,000 Credits');
   });
 
   // The Safari extension's pages ship inside the same App Store app, so they

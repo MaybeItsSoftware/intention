@@ -886,37 +886,49 @@ blockquote {
   gap: 10px;
 }
 
-/* Plan buttons stack their own title/price/description lines, so they opt out
-   of the single-line layout `button.primary` otherwise gets. */
+/* Plan buttons carry their own title/price/description, so they opt out of the
+   single-line filled layout a bare `button` otherwise gets. Bordered rather
+   than filled: three saturated blocks stacked read as three warnings, and the
+   price is the only part worth spending colour on. Title and price share the
+   top row, the description runs full width beneath. */
 .int-pw-plan {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 12px;
   width: 100%;
   text-align: left;
+  padding: 12px 14px;
+  border: 1px solid #334155;
+  background: rgba(15, 23, 42, 0.45);
+  color: #f1f5f9;
 }
 
-.int-pw-plan-title { font-weight: 700; }
-.int-pw-plan-price { font-size: 13px; opacity: 0.92; }
-.int-pw-plan-desc { font-size: 12px; opacity: 0.8; }
+.int-pw-plan:hover {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
 
-.int-pw-restore, .int-pw-manage, .int-pw-byok { width: 100%; }
+.int-pw-plan-title { grid-column: 1; font-weight: 700; }
+.int-pw-plan-price {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 15px;
+  font-weight: 700;
+  color: #60a5fa;
+}
+.int-pw-plan-desc {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.int-pw-restore, .int-pw-byok { width: 100%; }
 
 .int-pw-status strong {
   color: #f1f5f9;
   font-size: 16px;
-}
-
-.int-pw-divider {
-  color: #64748b;
-  font-size: 12px;
-  text-align: center;
-}
-
-.int-pw-code label {
-  display: block;
-  margin-bottom: 6px;
 }
 
 .int-pw-error {

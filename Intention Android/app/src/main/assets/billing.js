@@ -34,11 +34,29 @@ function detectBillingMode() {
 
 const BILLING_MODE = detectBillingMode();
 
-// Whether a user-supplied provider key may be offered as a starting option.
-// Everywhere Apple or Google review the build, it may not — it stays reachable
-// only from Settings -> Advanced, which is what STORE_MODES gates.
+// Whether a user-supplied provider key may be offered as a starting option —
+// the first thing a new user is asked to do. Nowhere a store reviews the build
+// may it be that, so on 'store'/'managed' the purchase route leads and the key
+// is reachable only from Settings -> Advanced.
 const STORE_MODES = ['store', 'managed'];
 const BYOK_IS_PRIMARY = !STORE_MODES.includes(BILLING_MODE);
+
+// Whether the key may be *offered at all* from the paywall, as a secondary
+// route beneath the purchase buttons. This is a weaker thing than being
+// primary, and the two stores differ on it:
+//
+//   Apple  — no. 3.1.1 reads unlocking app functionality against anything
+//            bought outside IAP, so the field stays unadvertised.
+//   Google — yes. Play's Payments policy governs digital goods *you* sell; a
+//            key the user already holds with Anthropic or Groq was never a
+//            purchase from us, so it never engages. Hiding it there was only
+//            ever collateral from sharing this flag with Apple.
+//
+// BILLING_MODE stays 'store' on Android either way: Play Billing is still how
+// coaching credit is bought, and this changes nothing about that.
+const IS_ANDROID_STORE = BILLING_MODE === 'store'
+  && /Android/.test((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+const BYOK_IS_OFFERED = BYOK_IS_PRIMARY || IS_ANDROID_STORE;
 
 function sendBilling(method, arg) {
   return new Promise(resolve => {
@@ -229,6 +247,35 @@ function el(tag, className, text) {
   return node;
 }
 
+// Play appends " (App name)" to every in-app product title it hands back, so
+// the store's own titles arrive as "1,000 Intention Coach Credits (Intention)".
+// Inside our own paywall the app name is the one thing the reader already
+// knows, and repeating it pushed the actual number off the line on a phone.
+// StoreKit doesn't do this, so on Apple this is a no-op.
+// Matches only the app's own name, not any trailing bracket: a product
+// deliberately called "5,000 Credits (best value)" must survive this.
+const STORE_TITLE_SUFFIX_RE = /\s*\(\s*Intention\s*\)\s*$/i;
+
+function cleanProductTitle(title) {
+  return String(title || '').replace(STORE_TITLE_SUFFIX_RE, '').trim();
+}
+
+// The store description often opens by restating the count already in the
+// title ("1,000 Credits for about 500 messages" under "1,000 … Credits"), which
+// reads as a stutter once they are stacked in the same button. Drop the leading
+// count when the title already carries it, keeping whatever the description
+// says that the title doesn't.
+function cleanProductDesc(title, desc) {
+  const text = String(desc || '').trim();
+  const lead = text.match(/^([\d][\d,.\s]*)\s*(?:[A-Za-z]+\s+)*?credits?\b[\s:,-]*/i);
+  if (!lead) return text;
+  const count = lead[1].replace(/[^\d]/g, '');
+  if (!count || !String(title || '').replace(/[^\d]/g, '').includes(count)) return text;
+  const rest = text.slice(lead[0].length).trim();
+  if (!rest) return text;
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 // Renders the access UI into `container`.
 //
 // opts:
@@ -312,9 +359,11 @@ async function renderPaywall(container, opts = {}) {
       ? 'Your coach needs an AI behind it. Two ways to do that:'
       : 'Your coach needs an AI behind it. There are two ways to do that, and either one works — pick whichever suits you.'));
   } else {
+    // Does not open by restating the step's own heading ("Turn on your coach")
+    // — by the time anyone reads this they have been told twice already.
     container.appendChild(el('p', 'int-pw-lede', compact
       ? 'Buy coaching credit to talk to your coach.'
-      : 'Coaching credit turns on your coach. Pay once for a set amount — no recurring charge.'));
+      : 'Pay once for a set amount of credit. No subscription, no recurring charge.'));
 
     if (!compact) {
       const list = el('ul', 'int-pw-benefits');
@@ -340,6 +389,20 @@ async function renderPaywall(container, opts = {}) {
     const restoreBtn = el('button', 'secondary int-pw-restore', 'Recover an interrupted purchase');
     restoreBtn.type = 'button';
     container.appendChild(restoreBtn);
+
+    // Android only — onUseOwnKey is null on Apple, so nothing renders there and
+    // that build is byte-identical to before. Deliberately below the purchase
+    // buttons and worded as a route rather than an offer: Play has no rule
+    // against it, but it is still the sideroad, not the road.
+    if (onUseOwnKey && !compact) {
+      const keyBtn = el('button', 'secondary int-pw-byok', 'Use my own API key instead');
+      keyBtn.type = 'button';
+      keyBtn.addEventListener('click', () => onUseOwnKey());
+      container.appendChild(keyBtn);
+      container.appendChild(el('p', 'int-pw-sub',
+        'Already pay for an AI provider? Point the coach at that account instead and skip the credit.'));
+    }
+
     container.appendChild(errorEl);
 
     restoreBtn.addEventListener('click', async () => {
@@ -366,11 +429,15 @@ async function renderPaywall(container, opts = {}) {
       plansEl.appendChild(el('p', 'int-pw-sub', 'Add more coaching credit:'));
     }
     for (const product of products) {
-      const btn = el('button', 'primary int-pw-plan');
+      const title = cleanProductTitle(product.title) || 'Coaching credit';
+      const desc = cleanProductDesc(title, product.description);
+      // Bordered, not filled: three saturated blocks stacked read as an alert,
+      // and the price is the thing worth the colour.
+      const btn = el('button', 'int-pw-plan');
       btn.type = 'button';
-      btn.appendChild(el('span', 'int-pw-plan-title', product.title || 'Coaching credit'));
+      btn.appendChild(el('span', 'int-pw-plan-title', title));
       if (product.price) btn.appendChild(el('span', 'int-pw-plan-price', product.price));
-      if (product.description) btn.appendChild(el('span', 'int-pw-plan-desc', product.description));
+      if (desc) btn.appendChild(el('span', 'int-pw-plan-desc', desc));
       btn.addEventListener('click', async () => {
         setError('');
         busy(btn, true, 'Opening store…');
