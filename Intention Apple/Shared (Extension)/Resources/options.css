@@ -156,6 +156,28 @@ button.secondary:hover, button.delete-btn:hover {
   background: rgba(255, 255, 255, 0.06);
 }
 
+/* An anchor that reads as a secondary button. It stays an anchor because the
+   native shells decide what to do with a real link — MainActivity's
+   WebViewClient and ViewController's navigation delegate both hand http(s)
+   link taps to the browser, which a scripted button would bypass. */
+a.link-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: #cbd5e1;
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+a.link-button:hover { background: rgba(255, 255, 255, 0.06); }
+
 ul#domain-list, ul#setup-websites-list,
 ul#app-list, ul#setup-apps-list, ul#usage-log-list {
   list-style: none;

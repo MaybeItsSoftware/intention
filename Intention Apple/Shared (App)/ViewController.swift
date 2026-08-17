@@ -148,6 +148,29 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     }
 #endif
 
+    // options.html is loaded from the bundle and this web view has no chrome of
+    // its own — no back button, no address bar. A tapped link would replace the
+    // settings UI with a web page the user has no way back from, so anything
+    // off-app is handed to the real browser instead. Only link taps: the page's
+    // own loads and the bridge's navigations fall through untouched.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard navigationAction.navigationType == .linkActivated,
+              let url = navigationAction.request.url,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(.cancel)
+#if os(macOS)
+        NSWorkspace.shared.open(url)
+#else
+        UIApplication.shared.open(url)
+#endif
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
 #if os(macOS)
         webView.evaluateJavaScript("show('mac')")

@@ -7,8 +7,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.View
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
@@ -120,6 +122,17 @@ class MainActivity : AppCompatActivity() {
             settings.allowFileAccess = true
             settings.cacheMode = WebSettings.LOAD_NO_CACHE
             visibility = View.GONE
+            // options.html is injected with loadDataWithBaseURL, so this WebView
+            // has no history to go back to. A tapped link would replace the
+            // whole settings UI with a web page and leave the system back
+            // button as the only way out — so anything off-app is handed to a
+            // real browser instead.
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): Boolean = openExternally(request.url)
+            }
         }
 
         rootLayout.addView(accessibilityGate)
@@ -167,6 +180,24 @@ class MainActivity : AppCompatActivity() {
             "UTF-8",
             null
         )
+    }
+
+    // Hands an http(s) link to whatever browser the user actually uses.
+    // Returns whether the WebView should consider the navigation handled —
+    // false for anything else (file:// and the bridge's own URLs), which lets
+    // the page load normally.
+    private fun openExternally(uri: Uri?): Boolean {
+        val scheme = uri?.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") return false
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        } catch (e: android.content.ActivityNotFoundException) {
+            // No browser installed. Doing nothing is the right failure here —
+            // the alternative is navigating the settings UI away from itself.
+        }
+        return true
     }
 
     override fun onResume() {
