@@ -77,6 +77,106 @@ describe('renderQuestionsBlock', () => {
   });
 });
 
+describe('renderSiteReasonBlock', () => {
+  const reason = {
+    purpose: 'Replying to DMs from my sister, who lives abroad.',
+    legitimateUse: 'A specific reply, or an event invite. Never the feed.'
+  };
+
+  it('renders both answers against the site being gated', () => {
+    const out = P.renderSiteReasonBlock('instagram.com', reason);
+    expect(out).toContain('Why they said they need instagram.com');
+    expect(out).toContain('who lives abroad');
+    expect(out).toContain('When they said it would be legitimate to open instagram.com');
+    expect(out).toContain('Never the feed');
+  });
+
+  // The whole risk of the feature: without this, a stated legitimate use is a
+  // password and the coach waves through anyone who recites it.
+  it('tells the coach the answer is evidence, not permission', () => {
+    const out = P.renderSiteReasonBlock('instagram.com', reason);
+    expect(out).toContain('evidence, not a standing permission');
+  });
+
+  it('renders only the half that was answered', () => {
+    const out = P.renderSiteReasonBlock('reddit.com', { purpose: 'Two niche subs.' });
+    expect(out).toContain('Why they said they need reddit.com');
+    expect(out).not.toContain('legitimate to open');
+  });
+
+  it('is empty for a missing, blank or malformed reason', () => {
+    expect(P.renderSiteReasonBlock('x.com', null)).toBe('');
+    expect(P.renderSiteReasonBlock('x.com', {})).toBe('');
+    expect(P.renderSiteReasonBlock('x.com', { purpose: '   ' })).toBe('');
+    expect(P.renderSiteReasonBlock('x.com', 'not an object')).toBe('');
+  });
+});
+
+describe('renderQuestionsBlock carries the per-site answers', () => {
+  const siteReason = { purpose: 'DMs only.', legitimateUse: 'A specific reply.' };
+
+  it('appends them under the two global answers', () => {
+    const out = P.renderQuestionsBlock({
+      contextProjects: 'Ship the app',
+      contextReasons: 'It scatters me',
+      domain: 'instagram.com',
+      siteReason
+    });
+    expect(out).toContain('It scatters me');
+    expect(out.indexOf('It scatters me')).toBeLessThan(out.indexOf('DMs only.'));
+  });
+
+  it('appends them for a legacy user who only has the blob', () => {
+    const out = P.renderQuestionsBlock({
+      userContext: 'I am a legacy user.',
+      domain: 'instagram.com',
+      siteReason
+    });
+    expect(out).toContain('I am a legacy user.');
+    expect(out).toContain('DMs only.');
+  });
+
+  it('leaves the block untouched when there is no per-site answer', () => {
+    const withNone = P.renderQuestionsBlock({ contextProjects: 'Ship the app' });
+    expect(withNone).not.toContain('Why they said they need');
+  });
+});
+
+// These strings never change within a day. Below the cache-break marker they
+// would cost a full prompt-cache miss on every single message.
+describe('the per-site answers sit in the cacheable half of the prompt', () => {
+  it('lands above CACHE_BREAK_MARKER in the gate prompt', () => {
+    const out = P.buildGateSystemPrompt({
+      domain: 'instagram.com',
+      contextProjects: 'Ship the app',
+      siteReason: { purpose: 'DMs only.' },
+      grantsToday: 0, grantsCap: 3, minutesCap: 10,
+      minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0
+    });
+    const [stable] = P.splitSystemForCache(out);
+    expect(stable.text).toContain('DMs only.');
+    expect(stable.cache).toBe(true);
+  });
+
+  it('reaches the check-in and the settings gate too', () => {
+    const checkin = P.buildCheckinSystemPrompt({
+      domain: 'instagram.com',
+      siteReason: { purpose: 'DMs only.' },
+      grantsToday: 1, grantsCap: 3, minutesCap: 10,
+      minutesTodaySite: 5, minutesTodayAll: 5
+    });
+    expect(checkin).toContain('DMs only.');
+
+    const settings = P.buildSettingsGateSystemPrompt({
+      domain: 'instagram.com',
+      changeType: 'remove',
+      siteReason: { purpose: 'DMs only.' },
+      minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0
+    });
+    expect(settings).toContain('DMs only.');
+  });
+});
+
 describe('buildGateSystemPrompt', () => {
   const base = {
     domain: 'twitter.com',

@@ -198,9 +198,36 @@ Bad: "Your goals say you want to finish your thesis. Is scrolling aligned with t
 
 END EXAMPLES.`;
 
-// The two questions the user answers in settings, plus their answers. This is
-// inserted into the system prompt so the coach always has the user's own words.
-function renderQuestionsBlock({ contextProjects, contextReasons, userContext }) {
+// What the user said, during setup, that THIS service is for. Written when they
+// were nowhere near it, which is the whole point — it is the calm version of
+// them speaking to the version at the gate.
+//
+// The closing paragraph is not decoration. Without it a stated legitimate use
+// becomes a password: the coach waves through anyone who remembers to say
+// "DMs", and a user learns within a week that reciting their own setup answer
+// is the way past. It has to be evidence, not permission.
+function renderSiteReasonBlock(domain, siteReason) {
+  if (!siteReason || typeof siteReason !== 'object') return '';
+  const purpose = String(siteReason.purpose || '').trim();
+  const legitimate = String(siteReason.legitimateUse || '').trim();
+  if (!purpose && !legitimate) return '';
+
+  const parts = [];
+  if (purpose) parts.push(`Why they said they need ${domain}:\n> ${purpose}`);
+  if (legitimate) parts.push(`When they said it would be legitimate to open ${domain}:\n> ${legitimate}`);
+  parts.push(`They wrote that during setup, thinking clearly and not in front of it. Use it to tell a genuine errand from a scroll dressed up as one — a request that matches it earns real credit, and one that plainly doesn't should be named as such. It is evidence, not a standing permission.`);
+  return `\n\n${parts.join('\n\n')}`;
+}
+
+// The two questions the user answers in settings, plus their answers, plus
+// whatever they said about this particular site or app. This is inserted into
+// the system prompt so the coach always has the user's own words.
+//
+// It belongs here rather than in the usage block because none of it changes
+// within a day: composeSystemPrompt splices this above CACHE_BREAK_MARKER, and
+// anything below that marker costs a full prompt-cache miss on every message.
+function renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }) {
+  const siteBlock = renderSiteReasonBlock(domain, siteReason);
   const projects = (contextProjects || '').trim();
   const reasons = (contextReasons || '').trim();
   if (projects || reasons) {
@@ -208,11 +235,12 @@ function renderQuestionsBlock({ contextProjects, contextReasons, userContext }) 
 > ${projects || '(not set)'}
 
 How distracting sites make them feel and why they want to step away:
-> ${reasons || '(not set)'}`;
+> ${reasons || '(not set)'}${siteBlock}`;
   }
   // Legacy users have only the combined userContext blob.
   const ctx = (userContext || '').trim();
-  return ctx || '(Not yet filled in — be gentle; suggest they tell you more via the settings page.)';
+  const base = ctx || '(Not yet filled in — be gentle; suggest they tell you more via the settings page.)';
+  return `${base}${siteBlock}`;
 }
 
 // Compose the final prompt from the (configurable) instructions plus the
@@ -670,7 +698,7 @@ Instructions for using app context:
 - A concrete, finishable errand in an app is a real thing ("reply to one message", "check the delivery date") and deserves a small, specific grant. An open-ended visit does not.`;
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
@@ -720,7 +748,7 @@ ${reasonsStr === '(none yet today)'
 
 - YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${grantsCap} grants allowed today). DO NOT call grant_access — it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : ''}`;
   return composeSystemPrompt(coachInstructions, {
-    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
+    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }),
     usage
   }, {
     domain,
@@ -729,6 +757,8 @@ ${reasonsStr === '(none yet today)'
     minutes_today: minutesTodaySite,
     minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
     reasons_today: reasonsStr,
+    site_purpose: (siteReason && siteReason.purpose) || '',
+    site_legitimate: (siteReason && siteReason.legitimateUse) || '',
     quick_check_minutes: qc.enabled ? qc.minutes : 0,
     quick_checks_left: qc.enabled ? Math.max(0, qc.usesPerDay - qcUsed) : 0,
     time: coarseClock().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
@@ -736,7 +766,7 @@ ${reasonsStr === '(none yet today)'
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
@@ -782,7 +812,7 @@ Open with: asking warmly whether they finished what they came for. Then:
 - ABSOLUTE MAX REACHED (${minutesCapReached ? `${minutesCap} minutes on this site` : `${grantsCap} grants allowed today`}). DO NOT call grant_access — it will be rejected. This is the moment the user most needs kindness, not scolding. Help them feel OK about closing. Acknowledge what they're doing right by talking to you at all.` : ''}
 - Keep messages short (2-4 sentences). Warm, not preachy.`;
   return composeSystemPrompt(coachInstructions, {
-    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
+    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }),
     usage
   }, {
     domain,
@@ -791,6 +821,8 @@ Open with: asking warmly whether they finished what they came for. Then:
     minutes_today: minutesTodaySite,
     minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
     reasons_today: reasonsStr,
+    site_purpose: (siteReason && siteReason.purpose) || '',
+    site_legitimate: (siteReason && siteReason.legitimateUse) || '',
     quick_check_minutes: qc.enabled ? qc.minutes : 0,
     quick_checks_left: qc.enabled ? Math.max(0, qc.usesPerDay - qcUsed) : 0,
     time: coarseClock().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
@@ -834,7 +866,7 @@ Guidance for the conversation:
 - Write plain conversational prose only — no markdown, asterisks, bullets or headers; your words are shown as raw text.`;
 }
 
-function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newValue, userContext, contextProjects, contextReasons, coachInstructions, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday }) {
+function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newValue, userContext, contextProjects, contextReasons, siteReason, coachInstructions, minutesTodaySite, minutesTodayAll, minutesWeekAll, reasonsToday }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   let changeDesc;
   if (changeType === 'remove') {
@@ -882,7 +914,7 @@ How to handle this:
 - Keep messages short (2-4 sentences).`;
 
   return composeSystemPrompt(coachInstructions, {
-    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext }),
+    questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }),
     usage
   }, {
     domain,

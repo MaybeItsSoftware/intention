@@ -28,7 +28,9 @@ beforeAll(() => {
     setTimeout, clearTimeout, URL, URLSearchParams, fetch: async () => ({ ok: false })
   };
   sandbox.globalThis = sandbox;
-  const source = ['providers.js', 'options.js']
+  // Same order options.html loads them in — options.js resolves service groups
+  // through sites.js, so it has to be in scope.
+  const source = ['sites.js', 'providers.js', 'options.js']
     .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
     .join('\n;\n');
   ctx = vm.createContext(sandbox);
@@ -110,5 +112,116 @@ describe('which entries are accepted onto the blocklist', () => {
     ['spaced out.com', 'a space inside the hostname']
   ])('rejects %s (%s)', (raw) => {
     expect(accepts(raw)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The step order stopped being a fixed list of section ids the moment the
+// wizard grew a screen per selected service. These are the seams that broke
+// when it did: an id that now repeats, a length that depends on the
+// blocklist, and a draft that used to store a bare index.
+// ---------------------------------------------------------------------------
+
+// HAS_APP_BLOCKING and friends are consts captured at load, so the platform is
+// whatever the stub said (no window.intentionApps → browser build).
+const orderFor = (state) => vm.runInContext(`
+  setupBlockedDomains = ${JSON.stringify(state.domains || [])};
+  setupBlockedApps = ${JSON.stringify(state.apps || [])};
+  setupAppLabels = ${JSON.stringify(state.appLabels || {})};
+  JSON.stringify(computeStepOrder());
+`, ctx);
+
+describe('computeStepOrder', () => {
+  it('adds one purpose step per service, between the global why and the mode', () => {
+    const order = JSON.parse(orderFor({ domains: ['reddit.com', 'x.com'] }));
+    expect(order.map(s => s.id)).toEqual([
+      'setup-step-welcome',
+      'setup-step-sites',
+      'setup-step-why',
+      'setup-step-purpose',
+      'setup-step-purpose',
+      'setup-step-mode',
+      'setup-step-access',
+      'setup-step-done'
+    ]);
+    expect(order.filter(s => s.group).map(s => s.group)).toEqual(['reddit.com', 'x.com']);
+  });
+
+  it('asks once for a site and its app, not twice', () => {
+    const order = JSON.parse(orderFor({
+      domains: ['instagram.com'],
+      apps: ['com.instagram.android'],
+      appLabels: { 'com.instagram.android': 'Instagram' }
+    }));
+    expect(order.filter(s => s.group).map(s => s.group)).toEqual(['instagram.com']);
+  });
+
+  it('has no purpose steps at all for an empty blocklist', () => {
+    const order = JSON.parse(orderFor({}));
+    expect(order.some(s => s.group)).toBe(false);
+  });
+
+  // The wizard's own guard is that the access step is unconditionally in the
+  // order, so toggling Coach/Simple can't move the denominator. The purpose
+  // steps have to hold the same line.
+  it('keeps the questions in simple mode, where nothing will read them', () => {
+    const coach = JSON.parse(vm.runInContext(`
+      setupBlockedDomains = ['reddit.com']; setupBlockedApps = [];
+      setupBlockingMode = 'coach'; JSON.stringify(computeStepOrder());
+    `, ctx));
+    const simple = JSON.parse(vm.runInContext(`
+      setupBlockingMode = 'simple'; JSON.stringify(computeStepOrder());
+    `, ctx));
+    expect(simple).toEqual(coach);
+  });
+
+  it('every id it can emit is one the wizard test already checks exists', () => {
+    const order = JSON.parse(orderFor({ domains: ['reddit.com'] }));
+    for (const step of order) expect(step.id).toMatch(/^setup-step-[a-z-]+$/);
+  });
+});
+
+describe('collectServiceReasons', () => {
+  const collect = (state) => vm.runInContext(`
+    setupBlockedDomains = ${JSON.stringify(state.domains || [])};
+    setupBlockedApps = ${JSON.stringify(state.apps || [])};
+    setupAppLabels = {};
+    setupServiceReasons = ${JSON.stringify(state.reasons || {})};
+    JSON.stringify(collectServiceReasons());
+  `, ctx);
+
+  it('keeps what was written', () => {
+    const out = JSON.parse(collect({
+      domains: ['reddit.com'],
+      reasons: { 'reddit.com': { purpose: 'Two niche subs.', legitimateUse: '' } }
+    }));
+    expect(out['reddit.com'].purpose).toBe('Two niche subs.');
+  });
+
+  it('drops an answer left blank — no answer and a blank answer are the same', () => {
+    const out = JSON.parse(collect({
+      domains: ['reddit.com'],
+      reasons: { 'reddit.com': { purpose: '   ', legitimateUse: '' } }
+    }));
+    expect(out).toEqual({});
+  });
+
+  // Answer, go back, remove the site, finish: the answer must not survive as a
+  // key for something no longer blocked.
+  it('drops an answer for a service since removed from the list', () => {
+    const out = JSON.parse(collect({
+      domains: ['x.com'],
+      reasons: { 'reddit.com': { purpose: 'Two niche subs.' } }
+    }));
+    expect(out).toEqual({});
+  });
+
+  it('files an app answer under the site it shares an identity with', () => {
+    const out = JSON.parse(collect({
+      domains: [],
+      apps: ['com.instagram.android'],
+      reasons: { 'instagram.com': { purpose: 'DMs only.' } }
+    }));
+    expect(Object.keys(out)).toEqual(['instagram.com']);
   });
 });

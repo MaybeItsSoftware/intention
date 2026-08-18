@@ -217,6 +217,66 @@ ul#usage-log-list li.log-date-heading {
   color: rgba(255, 255, 255, 0.45);
 }
 
+/* ---- Per-row "why you need it" (buildServiceReasonControl) ---- */
+
+/* The row's controls sit on one line and this drops below all of them. `wrap`
+   on the row itself is what allows it: without it the disclosure becomes a
+   third flex sibling and squeezes the domain name. Harmless when nothing needs
+   to wrap, and the mobile block at the foot of this file already depends on
+   the same behaviour. */
+ul#domain-list li, ul#app-list li {
+  flex-wrap: wrap;
+}
+
+.row-reason {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.row-reason summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.row-reason summary::-webkit-details-marker { display: none; }
+
+.row-reason summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 14px;
+  transition: transform 0.2s ease;
+  color: #94a3b8;
+}
+
+.row-reason[open] summary::before { transform: rotate(90deg); }
+
+/* Muted, not a warning colour. These answers are optional, and painting a
+   blank one red would claim the product needs something it doesn't. */
+.row-reason-empty { color: #94a3b8; }
+
+.row-reason-shared {
+  margin: 2px 0 8px 14px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.row-reason-label {
+  display: block;
+  margin: 8px 0 4px 14px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.row-reason-input {
+  width: calc(100% - 14px);
+  margin-left: 14px;
+  resize: vertical;
+}
+
 /* Search-results dropdown: a popup detached to <body> and fixed-positioned
    under the search input via JS (see wireAppSearch), so it floats above
    everything — including ancestors like .card/.setup-nav that create their
@@ -569,6 +629,60 @@ blockquote {
 
 #setup-safari-skip-hint {
   margin-top: 12px;
+}
+
+/* ---- Per-service questions (one section, repainted per service) ---- */
+
+/* The signature micro-label: hierarchy from surface and position, not from
+   font size. Section eyebrows, column headers and chip captions all use it. */
+.micro-label {
+  margin: 2px 0 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #94a3b8;
+}
+
+.setup-purpose-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.setup-purpose-head h3 {
+  margin: 0;
+}
+
+/* Brand glyph where the catalogue has one, the service's initial where it
+   doesn't — a hand-typed domain still gets a mark rather than a gap. */
+.setup-purpose-mark {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: #cbd5e1;
+}
+
+.setup-purpose-mark svg {
+  width: 17px;
+  height: 17px;
+  fill: #cbd5e1;
+}
+
+/* Skips the whole run, not one screen — deliberately quiet, and deliberately
+   not next to Next, so it reads as the way out rather than the way on. */
+.setup-purpose-skip {
+  margin-top: 4px;
+  font-size: 13px;
 }
 
 /* This one is followed by the button that acts on it, so it needs the gap. */

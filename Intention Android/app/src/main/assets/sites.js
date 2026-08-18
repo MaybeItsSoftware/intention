@@ -75,7 +75,14 @@ const COMMON_APPS = [
 const RECOMMEND_IGNORE_APPS = ['com.whatsapp', 'com.whatsapp.w4b'];
 const RECOMMEND_IGNORE_SITES = [];
 
-// Reuse the site brand icons for the app chips where they overlap.
+// The pairing between an Android package and the website that is the same
+// service. It started life as icon reuse and is now also the answer to "are
+// these the same thing?" — serviceKeyFor() below resolves through it, so a
+// package added here immediately shares its site's setup answers.
+//
+// Only the answers are shared. Minutes, grants, quick-check lanes and chat
+// transcripts stay per-target, because getLimitsForDomain() relies on
+// domainLimits and appLimits being a disjoint namespace.
 const APP_ICON_SITE = {
   'com.instagram.android': 'instagram.com',
   'com.zhiliaoapp.musically': 'tiktok.com',
@@ -94,3 +101,62 @@ const APP_ICON_SITE = {
   'com.amazon.avod.thirdpartyclient': 'primevideo.com',
   'com.disney.disneyplus': 'disneyplus.com',
 };
+
+// The identity a site or app is grouped under. A hostname is its own service;
+// a package resolves to its website where we know of one, and otherwise stands
+// alone under its own id. Both gate paths can call this with whatever they
+// have — background.js's `domain` is a hostname on the web and a package name
+// in an app, and one lookup covers both.
+function serviceKeyFor(target) {
+  const key = String(target == null ? '' : target);
+  return APP_ICON_SITE[key] || key;
+}
+
+// A human name for a service key. SITE_META covers the catalogue; a hand-typed
+// domain is its own best label; an app outside the catalogue falls back to the
+// label the native bridge reported for it.
+function serviceLabelFor(key, members, appLabels) {
+  const meta = SITE_META[key];
+  if (meta && meta.name) return meta.name;
+  for (const pkg of (members || [])) {
+    const label = (appLabels || {})[pkg];
+    if (label) return label;
+  }
+  return key;
+}
+
+// Collapse a blocklist into one entry per service, preserving the order things
+// were picked in. `appsFirst` follows the wizard: where a native bridge exists
+// the apps step comes before the sites step, so the groups should read in that
+// order too.
+//
+// Returns [{ key, label, domains: [...], apps: [...] }].
+function buildServiceGroups({ domains = [], apps = [], appLabels = {}, appsFirst = false } = {}) {
+  const groups = new Map();
+  const push = (target, bucket) => {
+    const key = serviceKeyFor(target);
+    if (!groups.has(key)) groups.set(key, { key, domains: [], apps: [] });
+    const group = groups.get(key);
+    if (!group[bucket].includes(target)) group[bucket].push(target);
+  };
+  const addApps = () => { for (const p of apps) push(p, 'apps'); };
+  const addDomains = () => { for (const d of domains) push(d, 'domains'); };
+  if (appsFirst) { addApps(); addDomains(); } else { addDomains(); addApps(); }
+
+  return [...groups.values()].map(group => ({
+    ...group,
+    label: serviceLabelFor(group.key, group.apps, appLabels)
+  }));
+}
+
+// "instagram.com and the Instagram app" — the line that explains to the user
+// why two things they picked separately are asking them one set of questions.
+function serviceMembersLabel(group, appLabels) {
+  const parts = [...(group.domains || [])];
+  for (const pkg of (group.apps || [])) {
+    const label = (appLabels || {})[pkg] || (SITE_META[serviceKeyFor(pkg)] || {}).name;
+    parts.push(label ? `the ${label} app` : pkg);
+  }
+  if (parts.length <= 1) return parts[0] || '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}

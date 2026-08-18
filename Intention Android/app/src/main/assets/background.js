@@ -1002,8 +1002,32 @@ async function getEffectiveMode(domain) {
   return { mode, behavior, passMinutes };
 }
 
+// The two setup answers, keyed by service (see serviceKeyFor in sites.js).
+// They go straight into a system prompt, so they are trimmed, capped, and
+// dropped entirely when blank — "never answered" and "answered blank" mean the
+// same thing to the coach, and collapsing them saves a falsy check everywhere
+// downstream.
+const SERVICE_REASON_CAP = 500;
+
+function sanitizeServiceReasons(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!key || !value || typeof value !== 'object') continue;
+    const purpose = String(value.purpose || '').trim().slice(0, SERVICE_REASON_CAP);
+    const legitimateUse = String(value.legitimateUse || '').trim().slice(0, SERVICE_REASON_CAP);
+    if (!purpose && !legitimateUse) continue;
+    const entry = {};
+    if (purpose) entry.purpose = purpose;
+    if (legitimateUse) entry.legitimateUse = legitimateUse;
+    entry.updatedAt = Number(value.updatedAt) || Date.now();
+    out[key] = entry;
+  }
+  return out;
+}
+
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'setupComplete', 'entitlement', 'backendUrl', 'blockingMode', 'simpleBehavior', 'simplePassMinutes'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'blockingMode', 'simpleBehavior', 'simplePassMinutes'];
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -1024,6 +1048,7 @@ async function getFullConfig() {
     blockedApps: stored.blockedApps || [],
     appLimits: stored.appLimits || {},
     appLabels: stored.appLabels || {},
+    serviceReasons: stored.serviceReasons || {},
     blockingMode: stored.blockingMode || 'coach',
     simpleBehavior: stored.simpleBehavior || 'pass',
     simplePassMinutes: Number(stored.simplePassMinutes) > 0 ? Number(stored.simplePassMinutes) : 10,
@@ -1031,7 +1056,7 @@ async function getFullConfig() {
   };
 }
 
-async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels, blockingMode, simpleBehavior, simplePassMinutes }) {
+async function saveSetup({ provider, apiKey, model, userContext, contextProjects, contextReasons, blockedDomains, domainLimits, blockedApps, appLimits, appLabels, serviceReasons, blockingMode, simpleBehavior, simplePassMinutes }) {
   await setStorage({
     provider: provider || '',
     apiKey: apiKey || '',
@@ -1044,6 +1069,7 @@ async function saveSetup({ provider, apiKey, model, userContext, contextProjects
     blockedApps: blockedApps || [],
     appLimits: appLimits || {},
     appLabels: appLabels || {},
+    serviceReasons: sanitizeServiceReasons(serviceReasons),
     blockingMode: blockingMode || 'coach',
     simpleBehavior: simpleBehavior === 'hard' ? 'hard' : 'pass',
     simplePassMinutes: Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10,
@@ -1054,6 +1080,11 @@ async function saveSetup({ provider, apiKey, model, userContext, contextProjects
 }
 
 async function saveSettings(partial) {
+  // The one key that must never be written through raw: it is user free text
+  // that ends up in a system prompt.
+  if (partial && partial.serviceReasons) {
+    partial = { ...partial, serviceReasons: sanitizeServiceReasons(partial.serviceReasons) };
+  }
   await setStorage(partial);
   if (partial.blockedDomains) {
     await syncBlockingRules();
@@ -1079,7 +1110,13 @@ async function applyHostedBalance(access, llmResponse) {
 }
 
 async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext }) {
-  const { userContext, contextProjects, contextReasons, coachInstructions, coachObservations = [] } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'coachObservations']);
+  const { userContext, contextProjects, contextReasons, coachInstructions, coachObservations = [], serviceReasons = {} } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'coachObservations', 'serviceReasons']);
+  // What the user said this particular service is for, written during setup
+  // when they were nowhere near it. One lookup covers both gates: `domain` is
+  // a hostname on the web and a package name in an app, and serviceKeyFor
+  // folds the second onto the first so instagram.com and the Instagram app
+  // share one answer.
+  const siteReason = serviceReasons[serviceKeyFor(domain)] || null;
   const access = await resolveAIRoute();
   if (access.route === 'locked') {
     return { error: 'You need coaching credit to talk to your coach.', locked: true };
@@ -1140,6 +1177,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       userContext,
       contextProjects,
       contextReasons,
+      siteReason,
       coachInstructions,
       grantsToday: stats.grantsToday,
       grantsCap: limits.maxGrants,
@@ -1173,6 +1211,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       userContext,
       contextProjects,
       contextReasons,
+      siteReason,
       coachInstructions,
       originalReason: session.reason,
       grantsToday: stats.grantsToday,
@@ -1203,6 +1242,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       userContext,
       contextProjects,
       contextReasons,
+      siteReason,
       coachInstructions,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,

@@ -102,6 +102,30 @@
         <p class="subtitle">Leave either blank if you'd rather not say — your coach will just have less to go on.</p>
       </section>
 
+      <!-- One section, repainted once per service. Generating a section per
+           selection would break the wizard guard in tests/options-wizard.test.js,
+           which resolves every setup-step-* literal in options.js against a real
+           id in this file. -->
+      <section class="card setup-step" id="setup-step-purpose" hidden>
+        <div class="setup-purpose-head">
+          <span class="setup-purpose-mark" id="setup-purpose-mark"></span>
+          <div>
+            <h3 id="setup-purpose-title">This service</h3>
+            <p class="micro-label" id="setup-purpose-members"></p>
+          </div>
+        </div>
+        <p class="subtitle" id="setup-purpose-subtitle"></p>
+        <label for="setup-purpose-why-input" id="setup-purpose-why-label">Why do you need to use this with Intention?</label>
+        <div class="input-group">
+          <textarea id="setup-purpose-why-input" rows="3" placeholder="e.g. Replying to DMs from my sister, who lives abroad."></textarea>
+        </div>
+        <label for="setup-purpose-legit-input" id="setup-purpose-legit-label">When do you consider yourself to have legitimate reason to use it?</label>
+        <div class="input-group">
+          <textarea id="setup-purpose-legit-input" rows="3" placeholder="e.g. A specific reply, or an event I've been invited to. Never the feed."></textarea>
+        </div>
+        <button type="button" id="setup-purpose-skip-btn" class="secondary setup-purpose-skip">Skip these questions</button>
+      </section>
+
       <section class="card setup-step" id="setup-step-access" hidden>
         <h3 id="setup-access-title">Turn on your coach</h3>
         <p class="subtitle" id="setup-access-subtitle">You can also finish now and set this up later. Your sites and apps stay blocked either way, you just won't be able to talk your way past them yet.</p>
@@ -281,7 +305,7 @@
       <details class="card advanced-card" data-section="coach">
         <summary>Coach instructions <span class="muted">(advanced)</span></summary>
         <div class="advanced-card-body">
-          <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
+          <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
           <div class="input-group">
             <textarea id="coach-instructions-input" rows="8"></textarea>
           </div>

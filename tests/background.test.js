@@ -667,6 +667,113 @@ describe('setup no longer collects credentials', () => {
   });
 });
 
+// What the user said each service is for, written during setup. It is the one
+// piece of free text that reaches a system prompt without ever passing through
+// a model first, which is why it is trimmed, capped and dropped when blank
+// rather than stored as the page sent it.
+describe('per-service setup answers', () => {
+  const reasons = {
+    'instagram.com': { purpose: '  DMs from my sister.  ', legitimateUse: 'A specific reply.' }
+  };
+
+  it('persists them through saveSetup, trimmed', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({
+      action: 'saveSetup',
+      config: { blockedDomains: ['instagram.com'], domainLimits: {}, serviceReasons: reasons }
+    }, {});
+    expect(chrome.storage._store.serviceReasons['instagram.com'].purpose).toBe('DMs from my sister.');
+    expect(chrome.storage._store.serviceReasons['instagram.com'].updatedAt).toBeGreaterThan(0);
+  });
+
+  it('drops an entry with nothing written in it', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({
+      action: 'saveSetup',
+      config: {
+        blockedDomains: ['x.com'],
+        domainLimits: {},
+        serviceReasons: { 'x.com': { purpose: '   ', legitimateUse: '' } }
+      }
+    }, {});
+    expect(chrome.storage._store.serviceReasons).toEqual({});
+  });
+
+  it('caps a very long answer rather than letting it flood the prompt', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({
+      action: 'saveSetup',
+      config: {
+        blockedDomains: ['x.com'],
+        domainLimits: {},
+        serviceReasons: { 'x.com': { purpose: 'a'.repeat(5000) } }
+      }
+    }, {});
+    expect(chrome.storage._store.serviceReasons['x.com'].purpose).toHaveLength(500);
+  });
+
+  it('sanitizes on the settings path too, not just setup', async () => {
+    const { ctx, chrome } = loadBackground();
+    await ctx.handleMessage({
+      action: 'saveSettings',
+      config: { serviceReasons: { 'x.com': { purpose: '  Two niche subs.  ' } } }
+    }, {});
+    expect(chrome.storage._store.serviceReasons['x.com'].purpose).toBe('Two niche subs.');
+  });
+
+  it('hands them back to the options page', async () => {
+    const { ctx } = loadBackground({ seed: { serviceReasons: reasons } });
+    const config = await ctx.handleMessage({ action: 'getConfig' }, {});
+    expect(config.serviceReasons['instagram.com'].purpose).toContain('sister');
+  });
+});
+
+// The point of the whole feature: at the gate, the coach is holding what the
+// user said this particular site is for.
+describe('the gate prompt carries the per-service answers', () => {
+  const seed = {
+    entitlement: ACTIVE_ENTITLEMENT,
+    serviceReasons: {
+      'instagram.com': { purpose: 'DMs from my sister.', legitimateUse: 'A specific reply.' }
+    }
+  };
+
+  it('reaches a website gate', async () => {
+    const fetch = makeMockFetch({ text: 'Okay.', toolCalls: [] });
+    const { ctx } = loadBackground({ seed, fetch });
+    await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'instagram.com', userMessage: 'hi' });
+    expect(systemPromptOf(fetch)).toContain('DMs from my sister.');
+  });
+
+  // The whole reason serviceKeyFor exists: the app and the site are separate
+  // targets everywhere else, and the user answered the questions once.
+  it('reaches the Instagram app gate from the answer written about the website', async () => {
+    const fetch = makeMockFetch({ text: 'Okay.', toolCalls: [] });
+    const { ctx } = loadBackground({ seed, fetch });
+    await ctx.handleChat({
+      mode: 'gate', domain: 'com.instagram.android', isApp: true,
+      appLabel: 'Instagram', userMessage: 'hi'
+    });
+    const prompt = systemPromptOf(fetch);
+    expect(prompt).toContain('DMs from my sister.');
+    expect(prompt).toContain('A specific reply.');
+  });
+
+  it('does not leak one service\'s answer into another\'s gate', async () => {
+    const fetch = makeMockFetch({ text: 'Okay.', toolCalls: [] });
+    const { ctx } = loadBackground({ seed, fetch });
+    await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'reddit.com', userMessage: 'hi' });
+    expect(systemPromptOf(fetch)).not.toContain('DMs from my sister.');
+  });
+
+  it('says nothing at all when the user skipped the questions', async () => {
+    const fetch = makeMockFetch({ text: 'Okay.', toolCalls: [] });
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    await ctx.handleChat({ tabId: 1, mode: 'gate', domain: 'instagram.com', userMessage: 'hi' });
+    expect(systemPromptOf(fetch)).not.toContain('Why they said they need');
+  });
+});
+
 // --------------------------------------------------------------------------
 // Safari: the coaching page has no sender.tab, and WebKit does not reliably
 // honour a session rule's tabIds condition. Both used to strand the user on

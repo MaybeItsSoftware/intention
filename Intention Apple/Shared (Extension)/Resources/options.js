@@ -49,8 +49,34 @@ function sendBgChat(msg, timeoutMs = 75000) {
   });
 }
 
+// The blocklist as of the last getConfig, used for one thing only: telling a
+// settings row that another row is the same service, so editing one visibly
+// edits the other. Not a cache — read it for display, never to decide a write.
+let lastKnownBlocked = { domains: [], apps: [], appLabels: {} };
+
 async function getConfig() {
-  return sendBg({ action: 'getConfig' });
+  const state = await sendBg({ action: 'getConfig' });
+  if (state) {
+    lastKnownBlocked = {
+      domains: state.blockedDomains || [],
+      apps: state.blockedApps || [],
+      appLabels: state.appLabels || {}
+    };
+  }
+  return state;
+}
+
+// Everything currently blocked, sites and apps together, named the way the
+// user would recognise them — a package name in a sentence about their own
+// settings reads as a bug.
+function allBlockedTargets() {
+  return [
+    ...lastKnownBlocked.domains.map(d => ({ target: d, label: d })),
+    ...lastKnownBlocked.apps.map(p => ({
+      target: p,
+      label: lastKnownBlocked.appLabels[p] ? `the ${lastKnownBlocked.appLabels[p]} app` : p
+    }))
+  ];
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -103,8 +129,15 @@ let setupDomainLimits = {};
 let setupBlockedApps = [];
 let setupAppLimits = {};
 let setupAppLabels = {};
+// { [serviceKey]: { purpose, legitimateUse } } — keyed by serviceKeyFor(), so a
+// site and its app share one answer. See shared/sites.js.
+let setupServiceReasons = {};
 let setupStep = 1;
-let setupStepOrder = []; // computed per-render — apps step only exists where the native bridge does
+// Computed per-render, and recomputed whenever the selection changes. Entries
+// are { id, group }: the apps step only exists where a native bridge does, and
+// the purpose steps are one per selected service, so neither the contents nor
+// the length is known up front.
+let setupStepOrder = [];
 let setupBlockingMode = 'coach';
 let setupSimpleBehavior = 'pass';
 let setupSimplePassMinutes = 10;
@@ -141,13 +174,14 @@ function showSetupView() {
   // The access step is always in the order, even in simple mode where it has
   // nothing to sell. It used to be added and removed as the mode was toggled,
   // which changed the denominator of "Step 4 of 8" under the user's finger.
-  const computeStepOrder = () => {
-    const order = ['setup-step-welcome'];
-    if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
-    if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
-    order.push('setup-step-sites', 'setup-step-why', 'setup-step-mode', 'setup-step-access', 'setup-step-done');
-    return order;
-  };
+  //
+  // The per-service questions sit after the global "what are you protecting?"
+  // — the general case, then the specifics — and they stay in the order even
+  // in simple mode, where nothing will read them. Dropping them when there is
+  // no coach is tempting and wrong: it would re-create the bug that put the
+  // access step here unconditionally, where toggling Coach/Simple changed the
+  // denominator of "Step 4 of 8" under the user's finger. The subtitle adapts
+  // instead.
   setupStepOrder = computeStepOrder();
 
   // ---- Step: welcome ----
@@ -214,6 +248,9 @@ function showSetupView() {
     document.getElementById(id).addEventListener('change', saveSetupDraft);
   }
 
+  // ---- Step: per-service questions ----
+  wirePurposeStep();
+
   // Hoisted for the same reason as showSetupStep below: restoring a draft has
   // to repaint the mode cards, and it runs outside this closure.
   renderSetupModeStep = renderModeStep;
@@ -254,15 +291,23 @@ function showSetupView() {
   const showStep = (n) => {
     setupStep = n;
     const total = setupStepOrder.length;
-    setupStepOrder.forEach((id, i) => {
-      document.getElementById(id).hidden = i !== n - 1;
-    });
+    // Hide every distinct section first, then reveal the one. The old
+    // hidden = i !== n - 1 loop cannot survive an id appearing more than once
+    // in the order: a later iteration would re-hide the section an earlier one
+    // had just shown, and the purpose step appears once per service.
+    for (const id of new Set(setupStepOrder.map(s => s.id))) {
+      document.getElementById(id).hidden = true;
+    }
+    const step = setupStepOrder[n - 1];
+    document.getElementById(step.id).hidden = false;
+
     document.getElementById('setup-progress-fill').style.width = `${(n / total) * 100}%`;
     document.getElementById('setup-progress-label').textContent = `Step ${n} of ${total}`;
     backBtn.disabled = n === 1;
     nextBtn.hidden = n === total;
     saveBtn.hidden = n !== total;
-    const stepId = setupStepOrder[n - 1];
+    const stepId = step.id;
+    if (step.group) renderPurposeStep(step.group);
     // Prices come from the store, so the paywall is only built once the user
     // actually reaches it — and rebuilt each time, to pick up a purchase made
     // and then backed out of.
@@ -278,6 +323,16 @@ function showSetupView() {
     if (stepId === 'setup-step-apps' && HAS_IOS_APP_BLOCKING) refreshSetupIOSApps();
     refreshSetupNav();
     saveSetupDraft();
+  };
+
+  // Skips the whole run of per-service questions, not just this one. Someone
+  // who picked twelve sites needs a way out that isn't twelve taps on Next,
+  // and capping the number of screens would have taken the choice away from
+  // the people who want to answer all twelve.
+  document.getElementById('setup-purpose-skip-btn').onclick = () => {
+    let n = setupStep;
+    while (n < setupStepOrder.length && setupStepOrder[n].group) n++;
+    showStep(Math.min(n + 1, setupStepOrder.length));
   };
   // Hoisted onto the module scope so the site/app list renderers can re-run the
   // empty-list check after an add or a remove, without reaching into this
@@ -300,6 +355,41 @@ function showSetupView() {
 let showSetupStep = () => {};
 let renderSetupModeStep = () => {};
 
+// The services the wizard currently holds, collapsed so a site and its app ask
+// their questions once. iOS contributes no app groups on purpose: Screen Time's
+// FamilyActivitySelection is opaque and the web layer only ever learns a count,
+// never which apps — so there is nothing to name a screen after.
+function currentServiceGroups() {
+  return buildServiceGroups({
+    domains: setupBlockedDomains,
+    apps: setupBlockedApps,
+    appLabels: setupAppLabels,
+    appsFirst: HAS_APP_BLOCKING
+  });
+}
+
+// Step descriptors, not bare ids: the purpose step reuses one section for every
+// service, so an id alone no longer identifies a step.
+//
+// Recomputing is safe at any point during the wizard because the selection can
+// only be edited on the apps and sites steps, which sit before every purpose
+// step — so adding a site lengthens the run ahead of the user, never under
+// their feet.
+function computeStepOrder() {
+  const order = ['setup-step-welcome'];
+  if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
+  if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
+  order.push('setup-step-sites', 'setup-step-why');
+  const steps = order.map(id => ({ id, group: null }));
+  for (const group of currentServiceGroups()) {
+    steps.push({ id: 'setup-step-purpose', group: group.key });
+  }
+  for (const id of ['setup-step-mode', 'setup-step-access', 'setup-step-done']) {
+    steps.push({ id, group: null });
+  }
+  return steps;
+}
+
 // Finishing with an empty blocklist produces an install that does nothing at
 // all, silently — so it's the one thing the wizard refuses to do.
 function setupHasSomethingBlocked() {
@@ -312,6 +402,25 @@ function refreshSetupNav() {
   const ok = setupHasSomethingBlocked();
   if (saveBtn) saveBtn.disabled = !ok;
   if (hint) hint.hidden = ok;
+
+  // Adding or removing a site changes how many per-service questions there
+  // are, so the order has to be rebuilt here — this runs after every add and
+  // remove. Safe mid-wizard: see computeStepOrder.
+  if (setupStepOrder.length) {
+    const current = setupStepOrder[setupStep - 1];
+    setupStepOrder = computeStepOrder();
+    // Removing the service whose screen is open would otherwise leave the step
+    // pointing past the end of the order.
+    if (current) {
+      const index = setupStepOrder.findIndex(s => s.id === current.id && s.group === current.group);
+      if (index !== -1) setupStep = index + 1;
+    }
+    setupStep = Math.min(setupStep, setupStepOrder.length);
+    const label = document.getElementById('setup-progress-label');
+    const fill = document.getElementById('setup-progress-fill');
+    if (label) label.textContent = `Step ${setupStep} of ${setupStepOrder.length}`;
+    if (fill) fill.style.width = `${(setupStep / setupStepOrder.length) * 100}%`;
+  }
 }
 
 // ---- Wizard draft ---------------------------------------------------------
@@ -332,13 +441,19 @@ function saveSetupDraft() {
   if (!setupDraftReady) return;
   const projects = document.getElementById('setup-projects-input');
   const reasons = document.getElementById('setup-reasons-input');
+  // The step is stored as an id plus a service key rather than an index: the
+  // order's length now depends on the selection, so an index saved before a
+  // site was added points somewhere else entirely when it is read back.
+  const step = setupStepOrder[setupStep - 1] || null;
   const draft = {
-    step: setupStep,
+    stepId: step ? step.id : null,
+    stepGroup: step ? step.group : null,
     blockedDomains: setupBlockedDomains,
     domainLimits: setupDomainLimits,
     blockedApps: setupBlockedApps,
     appLimits: setupAppLimits,
     appLabels: setupAppLabels,
+    serviceReasons: setupServiceReasons,
     blockingMode: setupBlockingMode,
     simpleBehavior: setupSimpleBehavior,
     simplePassMinutes: setupSimplePassMinutes,
@@ -372,6 +487,7 @@ async function restoreSetupDraft() {
   setupBlockedApps = Array.isArray(draft.blockedApps) ? draft.blockedApps : [];
   setupAppLimits = draft.appLimits || {};
   setupAppLabels = draft.appLabels || {};
+  setupServiceReasons = draft.serviceReasons || {};
   if (draft.blockingMode === 'simple' || draft.blockingMode === 'coach') setupBlockingMode = draft.blockingMode;
   if (draft.simpleBehavior === 'hard' || draft.simpleBehavior === 'pass') setupSimpleBehavior = draft.simpleBehavior;
   if (Number(draft.simplePassMinutes) > 0) setupSimplePassMinutes = Number(draft.simplePassMinutes);
@@ -382,15 +498,103 @@ async function restoreSetupDraft() {
   if (reasons) reasons.value = draft.reasons || '';
 
   setupDraftReady = true;
+  // These rebuild the step order off the restored selection, which is what the
+  // stored step is about to be resolved against.
   renderSetupDomains();
   if (HAS_APP_BLOCKING) renderSetupApps();
   renderSetupModeStep();
 
   // A saved step that no longer exists (a build change, a bridge that stopped
-  // reporting) must not leave the wizard on a blank screen.
-  const step = Number(draft.step);
-  if (!Number.isInteger(step) || step < 1 || step > setupStepOrder.length) return 1;
-  return step;
+  // reporting, a service since removed from the blocklist) must not leave the
+  // wizard on a blank screen.
+  if (!draft.stepId) return 1;
+  const index = setupStepOrder.findIndex(s => s.id === draft.stepId && s.group === (draft.stepGroup || null));
+  return index === -1 ? 1 : index + 1;
+}
+
+// ---- Step: why this one? --------------------------------------------------
+//
+// One section serving N services, so the inputs are wired once and read this
+// to know who they are currently writing about.
+let currentPurposeGroup = null;
+
+function purposeAnswersFor(key) {
+  if (!setupServiceReasons[key]) setupServiceReasons[key] = { purpose: '', legitimateUse: '' };
+  return setupServiceReasons[key];
+}
+
+function wirePurposeStep() {
+  const fields = [
+    ['setup-purpose-why-input', 'purpose'],
+    ['setup-purpose-legit-input', 'legitimateUse']
+  ];
+  for (const [id, field] of fields) {
+    const el = document.getElementById(id);
+    // 'change' rather than 'input' for the same reason as the two global
+    // answers: these invite several sentences, and banking a draft on every
+    // keystroke writes to storage far more often than it is worth.
+    el.addEventListener('change', () => {
+      if (!currentPurposeGroup) return;
+      purposeAnswersFor(currentPurposeGroup)[field] = el.value.trim();
+      saveSetupDraft();
+    });
+  }
+}
+
+function renderPurposeStep(key) {
+  currentPurposeGroup = key;
+  const group = currentServiceGroups().find(g => g.key === key);
+  // The order is recomputed on every selection change, so a step can only
+  // point at a service that still exists. Guarding anyway: a stale draft
+  // resolving to a removed service must not blank the screen.
+  if (!group) return;
+
+  document.getElementById('setup-purpose-title').textContent = group.label;
+
+  // Only worth saying when it explains something — that two things the user
+  // picked separately are asking their questions once.
+  const members = document.getElementById('setup-purpose-members');
+  const membersText = serviceMembersLabel(group, setupAppLabels);
+  const merged = (group.domains.length + group.apps.length) > 1;
+  members.textContent = merged ? membersText : '';
+  members.hidden = !merged;
+
+  const mark = document.getElementById('setup-purpose-mark');
+  applyServiceMark(mark, group);
+
+  document.getElementById('setup-purpose-subtitle').textContent = setupBlockingMode === 'simple'
+    ? 'Both optional. Simple mode has no coach to read these, but they are kept — turn a coach on later and it starts here.'
+    : 'Both optional. Your coach reads these at the gate, so it can tell a real errand from a scroll dressed up as one.';
+
+  document.getElementById('setup-purpose-why-label').textContent =
+    `Why do you need to use ${group.label} with Intention?`;
+  document.getElementById('setup-purpose-legit-label').textContent =
+    `When do you consider yourself to have legitimate reason to use ${group.label}?`;
+
+  const answers = purposeAnswersFor(key);
+  document.getElementById('setup-purpose-why-input').value = answers.purpose || '';
+  document.getElementById('setup-purpose-legit-input').value = answers.legitimateUse || '';
+}
+
+// The brand glyph from the suggestion chips, reused so the service is
+// recognisable at a glance. Falls back to its initial where the catalogue has
+// no mark — a hand-typed domain, or an app we don't know.
+function applyServiceMark(el, group) {
+  el.textContent = '';
+  el.removeAttribute('style');
+  const meta = SITE_META[group.key];
+  if (meta && meta.icon) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', meta.icon);
+    if (meta.color) path.setAttribute('fill', meta.color);
+    svg.appendChild(path);
+    el.appendChild(svg);
+    return;
+  }
+  el.textContent = (group.label || '?').trim().charAt(0).toUpperCase();
 }
 
 // ---- Step: you're set -----------------------------------------------------
@@ -460,6 +664,11 @@ function renderWelcomeStep() {
     'The ones you want a moment of friction in front of.']);
   items.push(['Say what you’re trying to focus on',
     'Two short answers, so a block can point at your own reasons instead of just saying no.']);
+  // Announced here rather than discovered at step 6 of 14. The run is as long
+  // as the list they are about to pick, and saying so up front is what makes
+  // it read as thorough instead of endless.
+  items.push([blocksApps ? 'Then the same, for each one' : 'Then the same, for each site',
+    'Why you need it, and when using it is fair enough. Skippable, and worth more than anything else you tell your coach.']);
   items.push(['Pick how a block should work',
     'A coach you have to talk past, or a plain block with no AI involved.']);
 
@@ -490,7 +699,7 @@ function wireSafariStep() {
   // switch — so the host fires this event instead, from
   // ViewController.appDidBecomeActive.
   window.addEventListener('intention-app-active', () => {
-    if (setupStepOrder[setupStep - 1] === 'setup-step-safari') refreshSafariStatus();
+    if (setupStepOrder[setupStep - 1]?.id === 'setup-step-safari') refreshSafariStatus();
   });
   refreshSafariStatus();
 }
@@ -530,6 +739,22 @@ async function refreshSafariStatus() {
   statusEl.textContent = active
     ? 'The Safari extension is on and running. Nothing else to do here.'
     : 'Not running yet. After turning it on, open Safari and load any page once. That’s what wakes the extension up.';
+}
+
+// Drops empty answers and anything written about a service the user has since
+// removed from the blocklist. background.js sanitizes again on the way in —
+// this is about not shipping dead keys, not about trusting the page.
+function collectServiceReasons() {
+  const live = new Set(currentServiceGroups().map(g => g.key));
+  const out = {};
+  for (const [key, value] of Object.entries(setupServiceReasons)) {
+    if (!live.has(key)) continue;
+    const purpose = (value?.purpose || '').trim();
+    const legitimateUse = (value?.legitimateUse || '').trim();
+    if (!purpose && !legitimateUse) continue;
+    out[key] = { purpose, legitimateUse, updatedAt: Date.now() };
+  }
+  return out;
 }
 
 // Commits whatever the wizard currently holds and switches to the settings
@@ -592,6 +817,10 @@ ${reasonsAns || '(not configured)'}`;
       blockedApps: setupBlockedApps,
       appLimits,
       appLabels: setupAppLabels,
+      // Only services still on the list, and only where something was written.
+      // A blank answer and no answer mean the same thing to the coach, so
+      // storing the difference would buy a falsy check and nothing else.
+      serviceReasons: collectServiceReasons(),
       blockingMode: setupBlockingMode,
       simpleBehavior: setupSimpleBehavior,
       simplePassMinutes: setupSimplePassMinutes
@@ -1431,9 +1660,9 @@ function wireBlockingModeCard(state) {
     await sendBg({ action: 'saveSettings', config: { blockingMode: mode, simpleBehavior: behavior, simplePassMinutes } });
     setStatus('blocking-mode-status', 'Saved.', 'success');
     const fresh = await getConfig();
-    renderDomains(fresh.blockedDomains || [], fresh.domainLimits || {}, fresh.blockingMode);
+    renderDomains(fresh.blockedDomains || [], fresh.domainLimits || {}, fresh.blockingMode, fresh.serviceReasons || {});
     if (HAS_APP_BLOCKING) {
-      renderApps(fresh.blockedApps || [], fresh.appLimits || {}, fresh.appLabels || {}, fresh.blockingMode);
+      renderApps(fresh.blockedApps || [], fresh.appLimits || {}, fresh.appLabels || {}, fresh.blockingMode, fresh.serviceReasons || {});
     }
   };
 }
@@ -1577,12 +1806,12 @@ async function showSettingsView(state) {
 
   wireBlockingModeCard(state);
 
-  renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+  renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
   wireAddModals();
 
   if (HAS_APP_BLOCKING) {
     document.getElementById('apps-card').hidden = false;
-    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
   } else if (HAS_IOS_APP_BLOCKING) {
     wireIOSAppsCard();
   }
@@ -1622,9 +1851,9 @@ async function showSettingsView(state) {
       subtitle: 'This turns off blocking for every site and app on your list. Convince your coach this is what you really want.',
       onApproved: async () => {
         const state = await getConfig();
-        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
         if (HAS_APP_BLOCKING) {
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
         }
         if (HAS_IOS_APP_BLOCKING) {
           window.intentionScreenTime.clear(() => refreshIOSAppsCard());
@@ -1724,7 +1953,7 @@ async function addDomainToBlocklist(domain, limit) {
   domains.push(domain);
   limits[domain] = { maxGrants: 3, maxMinutes: limit };
   await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
-  renderDomains(domains, limits, state.blockingMode);
+  renderDomains(domains, limits, state.blockingMode, state.serviceReasons || {});
   return true;
 }
 
@@ -1826,12 +2055,12 @@ function removeDomain(d, isSimple) {
     subtitle: `Removing ${d} means it won't be blocked anymore. Convince your coach this is the right call.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
     }
   });
 }
 
-function renderDomains(domains, limits = {}, globalMode = 'coach') {
+function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReasons = {}) {
   renderSiteRecommendations('sites-recommend-grid', 'sites-recommend-more', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
@@ -1894,7 +2123,7 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${d}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
-          renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+          renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
         }
       });
     });
@@ -1905,7 +2134,7 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
 
     const rerenderDomains = async () => {
       const state = await getConfig();
-      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode);
+      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
     };
     infoContainer.appendChild(buildQuickCheckControl(d, limitInfo, globalMode, rerenderDomains));
     infoContainer.appendChild(buildRowModeControl(d, limitInfo, globalMode, rerenderDomains));
@@ -1917,8 +2146,78 @@ function renderDomains(domains, limits = {}, globalMode = 'coach') {
     btn.className = 'delete-btn';
     btn.addEventListener('click', () => removeDomain(d, effectiveModeFor(limitInfo, globalMode) === 'simple'));
     li.appendChild(btn);
+    // Last, and full width: it is prose, not another control competing for the
+    // row's horizontal space.
+    li.appendChild(buildServiceReasonControl(d, d, serviceReasons, allBlockedTargets()));
     list.appendChild(li);
   }
+}
+
+// The two setup questions, per row, so a site added on day two can still be
+// explained to the coach. A disclosure rather than more inline controls: the
+// row already carries a name, a limit, a quick-check and two mode selects, and
+// it is the reason .container has a 1100px floor.
+//
+// Autosaved on blur, matching the coach-context answers rather than adding a
+// fourth explicit Save button to a page that has too many already.
+function buildServiceReasonControl(target, label, serviceReasons, allBlocked) {
+  const key = serviceKeyFor(target);
+  const answers = (serviceReasons || {})[key] || {};
+  const answered = !!(answers.purpose || answers.legitimateUse);
+
+  const details = document.createElement('details');
+  details.className = 'row-reason';
+
+  const summary = document.createElement('summary');
+  summary.textContent = answered ? 'Why you need it' : 'Why you need it — not set';
+  // Deliberately not a warning colour. These answers are optional, and dressing
+  // a blank one as an error would be a lie about what the product needs.
+  if (!answered) summary.classList.add('row-reason-empty');
+  details.appendChild(summary);
+
+  // Only worth saying where it is true, and it is the entire explanation for
+  // why editing this row also changes another one.
+  const shared = (allBlocked || [])
+    .filter(t => t.target !== target && serviceKeyFor(t.target) === key)
+    .map(t => t.label);
+  if (shared.length) {
+    const note = document.createElement('p');
+    note.className = 'row-reason-shared';
+    note.textContent = `Shared with ${shared.join(', ')} — the same service, so this edits both.`;
+    details.appendChild(note);
+  }
+
+  const fields = [
+    ['purpose', `Why do you need to use ${label} with Intention?`],
+    ['legitimateUse', `When is it a legitimate reason to open it?`]
+  ];
+  for (const [field, labelText] of fields) {
+    const fieldLabel = document.createElement('label');
+    fieldLabel.textContent = labelText;
+    fieldLabel.className = 'row-reason-label';
+    const area = document.createElement('textarea');
+    area.rows = 2;
+    area.className = 'row-reason-input';
+    area.value = answers[field] || '';
+    area.setAttribute('aria-label', `${labelText} (${label})`);
+    area.addEventListener('change', async () => {
+      // Re-read rather than trusting the closure: another row of the same
+      // service may have been edited since this one was drawn.
+      const state = await getConfig();
+      const next = { ...(state.serviceReasons || {}) };
+      const entry = { ...(next[key] || {}) };
+      entry[field] = area.value.trim();
+      entry.updatedAt = Date.now();
+      next[key] = entry;
+      await sendBg({ action: 'saveSettings', config: { serviceReasons: next } });
+      summary.textContent = (entry.purpose || entry.legitimateUse)
+        ? 'Why you need it'
+        : 'Why you need it — not set';
+      summary.classList.toggle('row-reason-empty', !(entry.purpose || entry.legitimateUse));
+    });
+    details.append(fieldLabel, area);
+  }
+  return details;
 }
 
 // Builds the "Use default / Coach / Simple" row control shown under each
@@ -2112,7 +2411,7 @@ async function addApp(app) {
     limits[app.packageName] = { maxGrants: 3, maxMinutes: 10 };
     labels[app.packageName] = app.label;
     await sendBg({ action: 'saveSettings', config: { blockedApps: apps, appLimits: limits, appLabels: labels } });
-    renderApps(apps, limits, labels, state.blockingMode);
+    renderApps(apps, limits, labels, state.blockingMode, state.serviceReasons || {});
   }
 }
 
@@ -2126,12 +2425,12 @@ function removeApp(pkg, label, isSimple) {
     subtitle: `Removing ${name} means it won't be blocked anymore. Convince your coach this is the right call.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
     }
   });
 }
 
-function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
+function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', serviceReasons = {}) {
   settingsBlockedApps = apps;
   renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
@@ -2192,7 +2491,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
         subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : curMaxMinutes + 'm/day'} to ${val}m/day gives you more time on ${name}. Convince your coach.`,
         onApproved: async () => {
           const state = await getConfig();
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
         }
       });
     });
@@ -2203,7 +2502,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
 
     const rerenderApps = async () => {
       const state = await getConfig();
-      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode);
+      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
     };
     infoContainer.appendChild(buildQuickCheckControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits', labels[pkg] || pkg));
     infoContainer.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits'));
@@ -2215,6 +2514,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach') {
     btn.className = 'delete-btn';
     btn.addEventListener('click', () => removeApp(pkg, labels[pkg], effectiveModeFor(limitInfo, globalMode) === 'simple'));
     li.appendChild(btn);
+    li.appendChild(buildServiceReasonControl(pkg, labels[pkg] || pkg, serviceReasons, allBlockedTargets()));
     list.appendChild(li);
   }
 }
