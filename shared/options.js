@@ -551,13 +551,22 @@ function renderPurposeStep(key) {
 
   document.getElementById('setup-purpose-title').textContent = group.label;
 
-  // Only worth saying when it explains something — that two things the user
-  // picked separately are asking their questions once.
+  // Two things at once, and both earn their place. "3 of 6" makes the run
+  // finite: "Step 7 of 14" says where you are in the wizard but not how much
+  // of *this* is left, and a repeating screen with no end in sight is what
+  // makes a thorough setup read as an interrogation. The members clause only
+  // appears when it explains something — that two things the user picked
+  // separately are asking their questions once.
+  const purposeSteps = setupStepOrder.filter(s => s.group);
+  const position = purposeSteps.findIndex(s => s.group === key) + 1;
+  const parts = [];
+  if (purposeSteps.length > 1) parts.push(`${position} of ${purposeSteps.length}`);
+  if ((group.domains.length + group.apps.length) > 1) {
+    parts.push(serviceMembersLabel(group, setupAppLabels));
+  }
   const members = document.getElementById('setup-purpose-members');
-  const membersText = serviceMembersLabel(group, setupAppLabels);
-  const merged = (group.domains.length + group.apps.length) > 1;
-  members.textContent = merged ? membersText : '';
-  members.hidden = !merged;
+  members.textContent = parts.join(' · ');
+  members.hidden = !parts.length;
 
   const mark = document.getElementById('setup-purpose-mark');
   applyServiceMark(mark, group);

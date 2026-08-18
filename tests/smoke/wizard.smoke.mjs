@@ -108,6 +108,11 @@ async function main() {
     record('the question names the service',
       whyLabel.includes('Instagram'), whyLabel);
 
+    // "Step 4 of 8" says where you are in the wizard but not how much of the
+    // per-service run is left, which is the bit that reads as endless.
+    record('the run says how long it is',
+      step.members.startsWith('1 of 2'), step.members);
+
     await page.fill('#setup-purpose-why-input', 'DMs from my sister.');
     await page.fill('#setup-purpose-legit-input', 'A specific reply. Never the feed.');
     await page.locator('#setup-purpose-legit-input').blur();
