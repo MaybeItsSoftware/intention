@@ -1,0 +1,127 @@
+/* Intention's design tokens: the palette declared once as literal hex, then
+   semantic roles that flip with the system theme. Components only ever touch
+   the roles — a hex in a component file is a bug, because it cannot flip.
+
+   Linked ahead of options.css by options.html and coaching.html.
+
+   The in-page gate (content.css / the OVERLAY_CSS copy in content.js) cannot
+   use this file. It is injected into arbitrary third-party pages, where a
+   :root block would restyle the host site — and `all: initial` on
+   #intention-root does NOT reset custom properties (the `all` shorthand
+   excludes them by spec), so a page defining its own --border would bleed
+   straight into the gate. The overlay therefore declares the same roles on
+   #intention-root itself, which both contains them and shadows anything the
+   host page set. Keep the two in step. */
+
+:root {
+  /* ---- Palette: literal values, named for what they are ---- */
+  --c-chalk: #faf8f4;      /* warm off-white; pure white glares, and left no room to layer */
+  --c-white: #ffffff;
+  --c-grape: #444054;      /* desaturated purple-slate — what makes the neutrals warm */
+  --c-azure: #007fff;
+  --c-emerald: #4cc38e;
+  --c-raspberry: #d62246;
+  --c-amber: #ffbf00;
+
+  /* ---- Surfaces (light) ----
+     Warm at the paper end, cool at the ink end, the way real paper behaves. */
+  --paper: var(--c-chalk);
+  --raised: var(--c-white);   /* cards sit ABOVE the page: half a step of tone + a hairline */
+  --alt: #f5f3f1;
+  --hover: #f1eff1;
+  --well: #edebef;            /* recessed: inputs, chips, code */
+
+  /* ---- Ink ---- */
+  --ink: var(--c-grape);      /* 9.4:1 on chalk */
+  --text-muted: #6e6b7c;      /* 4.9:1 — AA for body copy */
+  --text-dim: #b6b3bf;        /* decorative only; never carries meaning alone */
+
+  /* ---- Hairlines. Borders do the work; there are no shadows. ---- */
+  --border: #e6e4ea;
+  --border-muted: #efedf2;
+  --border-input: #d8d5dd;
+
+  /* ---- Accents ----
+     Three separate jobs, because one azure cannot do all of them at AA:
+
+     --primary        borders, focus rings, the progress bar — UI components,
+                      which need 3:1, and where the brand hue belongs.
+     --primary-text   anything actually read on paper. Plain #007fff is 3.6:1
+                      on chalk: fine for a button edge, not for a price or a
+                      link in running text.
+     --primary-solid  a filled button that carries a label. White on #007fff is
+                      3.8:1 — under the 4.5 a 14px label needs — so light mode
+                      deepens the fill and keeps white text, and dark mode goes
+                      the other way: the bright brand azure with ink on top,
+                      which reads better against a dark page anyway. */
+  --primary: var(--c-azure);
+  --primary-solid: #0063c6;              /* white on this: 5.8:1 */
+  --primary-solid-hover: #00519f;        /* 7.8:1 */
+  --primary-text: #0063c6;
+  --primary-on: var(--c-white);          /* text on a filled primary */
+  --primary-fill: rgba(0, 127, 255, 0.10);
+  --primary-fill-soft: rgba(0, 127, 255, 0.06);
+  --primary-line: rgba(0, 127, 255, 0.45);
+
+  /* Status is a fixed four-way convention — success / danger / warning / info
+     -> emerald / raspberry / amber / azure — as tinted fill + border + text of
+     one hue, never a solid block. The -text variants are darkened for light
+     mode: emerald itself is 2.2:1 on chalk and unreadable. */
+  --success-text: #1f7a54;
+  --success-fill: rgba(76, 195, 142, 0.12);
+  --success-line: rgba(76, 195, 142, 0.45);
+
+  --danger-text: var(--c-raspberry);     /* 4.7:1 on chalk */
+  --danger-fill: rgba(214, 34, 70, 0.10);
+  --danger-line: rgba(214, 34, 70, 0.40);
+
+  --warning-text: #8a6200;
+  --warning-fill: rgba(255, 191, 0, 0.14);
+  --warning-line: rgba(255, 191, 0, 0.45);
+
+  /* Behind a dialog. Fixed black rather than themed: it is dimming whatever
+     happens to be under it, not participating in the surface stack. */
+  --scrim: rgba(20, 18, 26, 0.45);
+
+  /* ---- One radius scale, and nothing between ---- */
+  --radius-shell: 20px;      /* outermost app shell only */
+  --radius-card: 8px;        /* cards, panels, popovers */
+  --radius-control: 6px;     /* buttons, inputs, chips, tooltips */
+  --radius-pill: 9999px;     /* pills, badges, avatars */
+}
+
+/* Dark is the same grape hue pulled down, never a neutral grey. Accents keep
+   their hex and are used at low alpha for fills. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1c1a23;
+    --raised: #25232f;
+    --alt: #25232f;
+    --hover: #2d2b38;
+    --well: #2d2b38;
+
+    --ink: #f5f4f7;
+    --text-muted: #b6b3bf;
+    --text-dim: #6e6b7c;
+
+    --border: #34313f;
+    --border-muted: #2d2b38;
+    --border-input: #43404f;
+
+    /* A deep fill would vanish into a dark page, so this goes the other way:
+       the brand azure at full strength, with ink on top. 4.8:1. */
+    --primary-solid: var(--c-azure);
+    --primary-solid-hover: #3d9bff;      /* 6.3:1 against --primary-on below */
+    --primary-on: #14121a;
+    --primary-text: #66b2ff;
+    --primary-fill: rgba(0, 127, 255, 0.18);
+    --primary-fill-soft: rgba(0, 127, 255, 0.10);
+    --primary-line: rgba(0, 127, 255, 0.55);
+
+    --success-text: var(--c-emerald);
+    --danger-text: #ff6b85;
+    --warning-text: var(--c-amber);
+
+    --scrim: rgba(0, 0, 0, 0.6);
+  }
+}

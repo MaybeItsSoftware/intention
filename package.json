@@ -2,13 +2,13 @@
   "name": "intention-extension",
   "version": "0.22.1",
   "private": true,
-  "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
+  "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself \u2014 see .agents/AGENTS.md.",
   "type": "module",
   "scripts": {
     "start": "node server/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:smoke": "node tests/smoke/gate.smoke.mjs && node tests/smoke/wizard.smoke.mjs",
+    "test:smoke": "node tests/smoke/gate.smoke.mjs && node tests/smoke/wizard.smoke.mjs && node tests/smoke/overlay.smoke.mjs && node tests/smoke/contrast.smoke.mjs",
     "test:smoke:headed": "node tests/smoke/gate.smoke.mjs --headed --print-prompt",
     "test:smoke:wizard": "node tests/smoke/wizard.smoke.mjs",
     "test:smoke:wizard:headed": "node tests/smoke/wizard.smoke.mjs --headed",
@@ -26,7 +26,10 @@
     "build": "./build.sh",
     "build:firefox": "web-ext build --source-dir=\"Intention Firefox\" --artifacts-dir=build --overwrite-dest --ignore-files env.txt",
     "sign:firefox": "web-ext sign --source-dir=\"Intention Firefox\" --artifacts-dir=build --channel=unlisted --ignore-files env.txt",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:smoke:overlay": "node tests/smoke/overlay.smoke.mjs",
+    "test:smoke:contrast": "node tests/smoke/contrast.smoke.mjs",
+    "shots": "node tests/smoke/shots.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.1",

@@ -180,9 +180,15 @@ describe('tracking.js parity across variants', () => {
 // nothing keeping them honest: scripts/sync.sh copies whole files between
 // platforms, but it cannot see a rule edited in one copy and not the other.
 //
-// The overlay is deliberately a superset (it carries a few rules the injected
-// stylesheet has no need for), so the contract is one-way: everything in
-// content.css must appear in OVERLAY_CSS, saying the same thing.
+// This used to be a one-way contract, on the theory that the overlay was
+// deliberately a superset. It wasn't: the one rule making it one turned out to
+// be plain drift — .int-primary-btn, the simple-mode "Take N minutes" pass
+// button, existed only in the JS copy, and rendered only because the runtime
+// injection wins. content.css was simply stale, and a one-way check could
+// never have said so.
+//
+// The two are now byte-identical and the contract is equality. Edit
+// content.css, then paste it back between the OVERLAY_CSS backticks.
 describe('the overlay CSS copy does not drift from content.css', () => {
   // Splits a stylesheet into selector -> declarations, flattening one level of
   // at-rule nesting (@keyframes is the only one either copy uses).
@@ -222,7 +228,7 @@ describe('the overlay CSS copy does not drift from content.css', () => {
 
   it('parses both copies (guards the test itself against a rewrite)', () => {
     expect(contentCss.size).toBeGreaterThan(20);
-    expect(overlayCss.size).toBeGreaterThanOrEqual(contentCss.size);
+    expect(overlayCss.size).toBe(contentCss.size);
     // Nested at-rules survive the flattening rather than being dropped, which
     // would quietly exempt every rule inside them.
     expect([...contentCss.keys()].some(k => k.startsWith('@keyframes'))).toBe(true);
@@ -239,6 +245,15 @@ describe('the overlay CSS copy does not drift from content.css', () => {
     expect(edited.get('.int-btn')).not.toBe(original.get('.int-btn'));
     expect(dropped.has('.int-btn')).toBe(false);
     expect(original.get('@keyframes k { to')).toBe('opacity: 1');
+  });
+
+  // The whole contract in one line. The rule-level checks below survive
+  // because they name *which* rule moved; this one is what actually holds.
+  it('is byte-identical to content.css', () => {
+    const raw = /const OVERLAY_CSS = `([\s\S]*?)`;/.exec(
+      readFileSync(join(VARIANTS.chrome, 'content.js'), 'utf8')
+    )[1];
+    expect(raw.trim()).toBe(readFileSync(join(VARIANTS.chrome, 'content.css'), 'utf8').trim());
   });
 
   it('has every content.css rule in OVERLAY_CSS', () => {

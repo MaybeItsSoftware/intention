@@ -8,8 +8,8 @@
 body {
   margin: 0;
   font-family: 'Arvo', Georgia, 'Times New Roman', serif;
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  color: #e5e7eb;
+  background: var(--paper);
+  color: var(--ink);
   min-height: 100vh;
 }
 
@@ -24,57 +24,60 @@ body {
   padding: 40px 32px 80px;
 }
 
+/* The outermost shell is the only place the large radius is allowed — every
+   card, panel and popover inside it is 8px. */
+#setup-view > .setup-step:first-of-type { border-radius: var(--radius-shell); }
+
 header h1 {
   margin: 0 0 4px;
   font-size: 34px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
-header .muted { margin: 0 0 24px; color: #94a3b8; }
-.muted { color: #94a3b8; }
+header .muted { margin: 0 0 24px; color: var(--text-muted); }
+.muted { color: var(--text-muted); }
 
 .card {
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   padding: 22px 24px;
   margin-bottom: 16px;
 }
 
-.card h2 { margin: 0 0 8px; font-size: 18px; color: #f1f5f9; }
-.card h3 { margin: 20px 0 10px; font-size: 15px; font-weight: 600; color: #f1f5f9; }
+.card h2 { margin: 0 0 8px; font-size: 18px; color: var(--ink); }
+.card h3 { margin: 20px 0 10px; font-size: 15px; font-weight: 600; color: var(--ink); }
 /* max-width keeps help text at a readable measure now that the page is wider
    than the prose wants to be. */
-.subtitle { color: #94a3b8; font-size: 14px; margin: 0 0 14px; max-width: 68ch; }
+.subtitle { color: var(--text-muted); font-size: 14px; margin: 0 0 14px; max-width: 68ch; }
 
 label {
   display: block;
   font-size: 13px;
-  color: #cbd5e1;
+  color: var(--ink);
   margin-bottom: 6px;
   margin-top: 10px;
 }
 
+/* Fields are recessed: a well, one step down from the card they sit on, with a
+   stronger hairline than a divider so the edge of the input is unambiguous. */
 input[type="text"], input[type="password"], input[type="number"], select, textarea {
   width: 100%;
   padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
+  border-radius: var(--radius-control);
+  background: var(--well);
+  border: 1px solid var(--border-input);
+  color: var(--ink);
   font-size: 14px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.2s ease, background-color 0.2s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 input[type="text"]:hover, input[type="password"]:hover, input[type="number"]:hover, select:hover, textarea:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--text-dim);
 }
 
 /* Hide number input spinners globally */
@@ -95,11 +98,16 @@ textarea { resize: vertical; }
 #context-edit-input { margin-bottom: 14px; }
 #save-context-btn { margin-bottom: 10px; }
 
+/* The chevron's colour is baked into the data URI, so it cannot reference a
+   token and cannot flip on its own — hence the one duplicated rule in this
+   file. A CSS mask would flip with currentColor, but masking a <select> clips
+   its text along with the arrow. The two values are --text-muted, light then
+   dark; change them together. */
 select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg fill='%2394a3b8' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>");
+  background-image: url("data:image/svg+xml;utf8,<svg fill='%236e6b7c' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
   background-repeat: no-repeat;
   background-position: right 12px center;
   background-size: 16px;
@@ -107,14 +115,35 @@ select {
   cursor: pointer;
 }
 
-select option {
-  background-color: #1e293b;
-  color: #f1f5f9;
+@media (prefers-color-scheme: dark) {
+  select {
+    background-image: url("data:image/svg+xml;utf8,<svg fill='%23b6b3bf' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+  }
 }
 
-input:focus, select:focus, textarea:focus {
-  border-color: rgba(59, 130, 246, 0.6);
-  background: rgba(255, 255, 255, 0.08);
+select option {
+  background-color: var(--raised);
+  color: var(--ink);
+}
+
+/* Selection is a ring or a border-colour change, never elevation. */
+input:focus, select:focus, textarea:focus,
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-fill);
+}
+
+/* Buttons, tabs and chips had no focus style at all, so keyboard navigation of
+   the tab strip and the suggestion grid was invisible. */
+button:focus-visible,
+summary:focus-visible,
+a.link-button:focus-visible,
+.pill:focus-visible,
+.recommend-card:focus-visible,
+.tab-btn:focus-visible,
+.mode-choice-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .input-group {
@@ -133,27 +162,27 @@ input[type="number"].input-minutes { width: 80px; }
 
 button {
   padding: 10px 16px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   border: none;
   font-weight: 600;
   cursor: pointer;
   font-size: 14px;
   font-family: inherit;
-  background: #3b82f6;
-  color: white;
+  background: var(--primary-solid);
+  color: var(--primary-on);
 }
 
-button.primary { background: #3b82f6; color: white; }
-button.primary:hover { background: #2563eb; }
+button.primary { background: var(--primary-solid); color: var(--primary-on); }
+button.primary:hover { background: var(--primary-solid-hover); }
 
 button.secondary, button.delete-btn {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #cbd5e1;
+  border: 1px solid var(--border-input);
+  color: var(--ink);
 }
 
 button.secondary:hover, button.delete-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover);
 }
 
 /* An anchor that reads as a secondary button. It stays an anchor because the
@@ -167,16 +196,16 @@ a.link-button {
   min-height: 44px;
   padding: 10px 16px;
   box-sizing: border-box;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-input);
   background: transparent;
-  color: #cbd5e1;
+  color: var(--ink);
   font-weight: 600;
   font-size: 14px;
   text-decoration: none;
 }
 
-a.link-button:hover { background: rgba(255, 255, 255, 0.06); }
+a.link-button:hover { background: var(--hover); }
 
 ul#domain-list, ul#setup-websites-list,
 ul#app-list, ul#setup-apps-list, ul#usage-log-list {
@@ -194,8 +223,8 @@ ul.app-results li {
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
+  background: var(--alt);
+  border-radius: var(--radius-control);
   margin-bottom: 6px;
   font-size: 14px;
 }
@@ -214,7 +243,7 @@ ul#usage-log-list li.log-date-heading {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-dim);
 }
 
 /* ---- Per-row "why you need it" (buildServiceReasonControl) ---- */
@@ -238,7 +267,7 @@ ul#domain-list li, ul#app-list li {
   cursor: pointer;
   list-style: none;
   padding: 4px 0;
-  color: #cbd5e1;
+  color: var(--ink);
   font-size: 12px;
 }
 
@@ -249,25 +278,25 @@ ul#domain-list li, ul#app-list li {
   display: inline-block;
   width: 14px;
   transition: transform 0.2s ease;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .row-reason[open] summary::before { transform: rotate(90deg); }
 
 /* Muted, not a warning colour. These answers are optional, and painting a
    blank one red would claim the product needs something it doesn't. */
-.row-reason-empty { color: #94a3b8; }
+.row-reason-empty { color: var(--text-muted); }
 
 .row-reason-shared {
   margin: 2px 0 8px 14px;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
 .row-reason-label {
   display: block;
   margin: 8px 0 4px 14px;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -279,9 +308,10 @@ ul#domain-list li, ul#app-list li {
 
 /* Search-results dropdown: a popup detached to <body> and fixed-positioned
    under the search input via JS (see wireAppSearch), so it floats above
-   everything — including ancestors like .card/.setup-nav that create their
-   own stacking context via backdrop-filter — instead of pushing the rest of
-   the form down or getting clipped/covered by them. */
+   everything instead of pushing the rest of the form down or getting clipped
+   by an ancestor. It used to have to clear the stacking contexts .card and
+   .setup-nav created with backdrop-filter; that glass is gone, but detaching
+   is still the right answer for a popup anchored to a scrolling input. */
 ul.app-results {
   list-style: none;
   position: fixed;
@@ -290,19 +320,19 @@ ul.app-results {
   padding: 8px;
   max-height: 320px;
   overflow-y: auto;
-  background: #1c2333;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: 0 16px 40px var(--scrim);
 }
 
 ul.app-results li {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--raised);
   cursor: pointer;
 }
 
 ul.app-results li:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover);
 }
 
 ul.app-results li:last-child {
@@ -312,15 +342,15 @@ ul.app-results li:last-child {
 .app-icon {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover);
   object-fit: cover;
 }
 
 .app-pkg {
   font-size: 12px;
-  color: #64748b;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -329,29 +359,29 @@ ul.app-results li:last-child {
 blockquote {
   margin: 0 0 14px;
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border-left: 3px solid rgba(59, 130, 246, 0.5);
-  border-radius: 8px;
-  color: #cbd5e1;
+  background: var(--alt);
+  border-left: 3px solid var(--primary-line);
+  border-radius: var(--radius-card);
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
 }
 
-.status { margin-top: 10px; font-size: 13px; color: #94a3b8; min-height: 18px; }
-.status.success { color: #22c55e; }
+.status { margin-top: 10px; font-size: 13px; color: var(--text-muted); min-height: 18px; }
+.status.success { color: var(--success-text); }
 /* Failures used to render in the same muted grey as "Saving…" */
-.status.error { color: #fca5a5; }
+.status.error { color: var(--danger-text); }
 
 /* Reversing a rule wholesale is not the same kind of action as editing one, so
    it doesn't sit in the same card as the list it empties. */
-.danger-card { border-color: #7f1d1d; }
-.danger-card h2 { color: #fca5a5; }
+.danger-card { border-color: var(--danger-line); }
+.danger-card h2 { color: var(--danger-text); }
 
 #coach-modal, #gate-modal, #add-site-modal, #add-app-modal, #paywall-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -364,12 +394,27 @@ blockquote {
 }
 
 .add-modal-box { width: min(420px, 100%); max-height: none; }
+/* Full width, but not a saturated band. This sits directly above the
+   suggestion chips, which are the easier path for most people — a solid azure
+   bar across the card made the harder route look like the intended one, and
+   colour here is meant to be reserved for meaning. */
 .add-row-btn { width: 100%; margin-bottom: 14px; }
 
+.add-row-btn.primary {
+  background: transparent;
+  border: 1px solid var(--primary-line);
+  color: var(--primary-text);
+}
+
+.add-row-btn.primary:hover {
+  background: var(--primary-fill-soft);
+  border-color: var(--primary);
+}
+
 .coach-box {
-  background: #1e293b;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
   padding: 22px 24px;
   width: min(580px, 100%);
   max-height: 82vh;
@@ -400,7 +445,7 @@ blockquote {
 
 #coach-messages .int-msg, #gate-messages .int-msg {
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   max-width: 85%;
   font-size: 14px;
   line-height: 1.55;
@@ -408,33 +453,33 @@ blockquote {
 }
 
 #coach-messages .int-msg-assistant, #gate-messages .int-msg-assistant {
-  background: rgba(59, 130, 246, 0.14);
-  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: var(--primary-fill);
+  border: 1px solid var(--primary-fill);
   align-self: flex-start;
-  color: #e2e8f0;
+  color: var(--ink);
 }
 
 #coach-messages .int-msg-user, #gate-messages .int-msg-user {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover);
   align-self: flex-end;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 #coach-messages .int-thinking, #gate-messages .int-thinking { opacity: 0.6; font-style: italic; }
 
 #coach-messages .int-system, #gate-messages .int-system {
   align-self: center;
-  background: rgba(34, 197, 94, 0.12);
-  border: 1px solid rgba(34, 197, 94, 0.22);
-  color: #86efac;
+  background: var(--success-fill);
+  border: 1px solid var(--success-fill);
+  color: var(--success-text);
   font-size: 12px;
   padding: 6px 12px;
 }
 
 .setup-messages-box {
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
+  background: var(--well);
+  border: 1px solid var(--well);
+  border-radius: var(--radius-card);
   padding: 16px;
   height: 320px;
   overflow-y: auto;
@@ -446,7 +491,7 @@ blockquote {
 
 .setup-messages-box .int-msg {
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   max-width: 85%;
   font-size: 14px;
   line-height: 1.55;
@@ -454,16 +499,16 @@ blockquote {
 }
 
 .setup-messages-box .int-msg-assistant {
-  background: rgba(59, 130, 246, 0.14);
-  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: var(--primary-fill);
+  border: 1px solid var(--primary-fill);
   align-self: flex-start;
-  color: #e2e8f0;
+  color: var(--ink);
 }
 
 .setup-messages-box .int-msg-user {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover);
   align-self: flex-end;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 .setup-messages-box .int-thinking {
@@ -482,7 +527,7 @@ blockquote {
 
 .domain-name {
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--ink);
   /* Was flex:1 1 auto with min-width:0, so the controls beside it squeezed the
      name down to "x…" — the one part of the row you actually need to read. */
   flex: 0 1 auto;
@@ -497,7 +542,7 @@ blockquote {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -517,22 +562,29 @@ blockquote {
 .setup-progress-track {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
+  background: var(--hover);
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 
 .setup-progress-fill {
   height: 100%;
   width: 25%;
-  background: #3b82f6;
-  border-radius: 999px;
+  background: var(--primary-solid);
+  border-radius: var(--radius-pill);
   transition: width 0.25s ease;
 }
 
+/* The counter is a micro-label, not a sentence: it is a marker, and it now has
+   a longer journey to describe (the per-service questions add a screen each),
+   so it should sit quietly beside the bar rather than competing with the
+   heading below it. */
 .setup-progress-label {
-  font-size: 13px;
-  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -540,7 +592,7 @@ blockquote {
   margin: 0 0 8px;
   font-size: 17px;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 /* The setup steps toggle visibility with the `hidden` attribute, and several
@@ -576,20 +628,20 @@ blockquote {
   top: 5px;
   width: 8px;
   height: 8px;
-  border-radius: 999px;
-  background: rgba(59, 130, 246, 0.75);
+  border-radius: var(--radius-pill);
+  background: var(--primary-line);
 }
 
 .setup-checklist strong {
   font-size: 14px;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 .setup-checklist span {
   font-size: 13px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 /* Numbered instructions for steps the user has to carry out in iOS Settings,
@@ -605,7 +657,7 @@ blockquote {
 .setup-steps-list li {
   font-size: 13px;
   line-height: 1.45;
-  color: #cbd5e1;
+  color: var(--ink);
 }
 
 /* Live readout of something the user changed outside this page (a Safari
@@ -613,18 +665,18 @@ blockquote {
 .setup-check {
   margin: 14px 0 0;
   padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-control);
+  background: var(--alt);
+  border: 1px solid var(--border);
   font-size: 13px;
   line-height: 1.45;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .setup-check.ok {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.08);
-  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--success-text);
+  background: var(--success-fill);
+  border-color: var(--success-line);
 }
 
 #setup-safari-skip-hint {
@@ -641,7 +693,7 @@ blockquote {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .setup-purpose-head {
@@ -661,21 +713,21 @@ blockquote {
   flex: 0 0 auto;
   width: 34px;
   height: 34px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--raised);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 15px;
   font-weight: 700;
-  color: #cbd5e1;
+  color: var(--ink);
 }
 
 .setup-purpose-mark svg {
   width: 17px;
   height: 17px;
-  fill: #cbd5e1;
+  fill: var(--ink);
 }
 
 /* Skips the whole run, not one screen — deliberately quiet, and deliberately
@@ -711,32 +763,37 @@ blockquote {
   width: 100%;
   margin: 6px 0 0;
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-muted);
 }
 
 .recommend-label:first-child {
   margin-top: 0;
 }
 
+/* `color` is set explicitly rather than left to .recommend-card-name: the base
+   button rule paints text in --primary-on for filled buttons, and a monochrome
+   brand mark drawn in currentColor would inherit that and come out white on
+   white. */
 .recommend-card {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 7px 10px 7px 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-pill);
+  background: var(--alt);
+  border: 1px solid var(--border);
+  color: var(--ink);
   cursor: pointer;
   text-align: left;
 }
 
 .recommend-card:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--hover);
 }
 
 .recommend-card-name {
   font-size: 13px;
-  color: #f1f5f9;
+  color: var(--ink);
   white-space: nowrap;
 }
 
@@ -744,12 +801,12 @@ blockquote {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(59, 130, 246, 0.22);
-  color: #f1f5f9;
+  background: var(--primary-fill);
+  color: var(--ink);
   font-size: 13px;
   line-height: 1;
 }
@@ -760,14 +817,14 @@ blockquote {
   padding: 0;
   background: none;
   border: none;
-  color: #94a3b8;
+  color: var(--text-muted);
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
 }
 
 .recommend-more:hover {
-  color: #e5e7eb;
+  color: var(--ink);
 }
 
 .mode-choice-grid {
@@ -782,32 +839,32 @@ blockquote {
   flex-direction: column;
   gap: 6px;
   padding: 14px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-card);
+  background: var(--alt);
+  border: 1px solid var(--border);
   cursor: pointer;
   text-align: left;
   width: 100%;
 }
 
 .mode-choice-card:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--hover);
 }
 
 .mode-choice-card strong {
   font-size: 14px;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 .mode-choice-card span {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-muted);
   line-height: 1.4;
 }
 
 .mode-choice-card.selected {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: rgba(59, 130, 246, 0.65);
+  background: var(--primary-fill);
+  border-color: var(--primary-line);
 }
 
 .model-pills {
@@ -819,22 +876,22 @@ blockquote {
 
 .pill {
   padding: 7px 14px;
-  border-radius: 10px;
+  border-radius: var(--radius-control);
   font-size: 13px;
   font-weight: 400;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #cbd5e1;
+  background: var(--well);
+  border: 1px solid var(--border-input);
+  color: var(--ink);
 }
 
 .pill:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover);
 }
 
 .pill.selected {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: rgba(59, 130, 246, 0.65);
-  color: #f1f5f9;
+  background: var(--primary-fill);
+  border-color: var(--primary-line);
+  color: var(--ink);
 }
 
 .setup-nav {
@@ -862,7 +919,7 @@ blockquote {
   font-size: 26px;
   font-weight: 400;
   letter-spacing: -0.01em;
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 .settings-header .muted {
@@ -889,16 +946,16 @@ blockquote {
 .settings-tabs .tab-btn {
   flex: 1;
   padding: 10px 16px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.05);
-  color: #cbd5e1;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border-input);
+  background: var(--well);
+  color: var(--ink);
   font-weight: 600;
 }
 .settings-tabs .tab-btn.selected {
-  background: rgba(59, 130, 246, 0.22);
-  border-color: rgba(59, 130, 246, 0.65);
-  color: #f1f5f9;
+  background: var(--primary-fill);
+  border-color: var(--primary-line);
+  color: var(--ink);
 }
 #settings-tabs:not([hidden]) { display: flex; }
 .settings-column .card.tab-hidden { display: none; }
@@ -908,9 +965,14 @@ blockquote {
    at once in a two-column grid whose column split disagreed with the section
    grouping — and left both the remembered tab and the ?section= deep link with
    nothing to do. Same navigation at every width. */
+/* Chrome is quiet: the tab strip is a micro-label row, so hierarchy comes from
+   the selected surface rather than from type size. */
 .section-tabs .tab-btn {
-  padding: 10px 6px; /* all tabs must fit a 320px viewport */
-  font-size: 13px;
+  padding: 12px 6px; /* all tabs must fit a 320px viewport */
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 .section-tabs { display: flex; flex-wrap: wrap; }
 #settings-view .section-hidden { display: none; }
@@ -933,7 +995,7 @@ blockquote {
   max-height: 320px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  scrollbar-color: var(--border-input) transparent;
 }
 
 #context-display::-webkit-scrollbar {
@@ -941,8 +1003,8 @@ blockquote {
 }
 
 #context-display::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
+  background: var(--border-input);
+  border-radius: var(--radius-pill);
 }
 
 #context-display::-webkit-scrollbar-track {
@@ -950,132 +1012,6 @@ blockquote {
 }
 
 /* ---- Paywall (billing.js renderPaywall) ---- */
-
-.int-paywall {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.int-pw-lede {
-  margin: 0;
-  color: #e2e8f0;
-  font-size: 15px;
-  line-height: 1.55;
-}
-
-.int-pw-sub, .int-pw-note {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.int-pw-benefits {
-  margin: 0;
-  padding-left: 20px;
-  color: #94a3b8;
-  font-size: 14px;
-  line-height: 1.9;
-}
-
-/* The two equal access routes on browser builds (own key / coaching credit).
-   Side by side where there's room, stacked once there isn't — neither is the
-   fallback, so nothing here should read as secondary. */
-.int-pw-routes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 12px;
-  align-items: start;
-}
-
-.int-pw-route {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.45);
-}
-
-.int-pw-route strong {
-  color: #f1f5f9;
-  font-size: 15px;
-}
-
-.int-pw-route label {
-  margin: 4px 0 -4px;
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.int-pw-route input,
-.int-pw-route select,
-.int-pw-route button {
-  width: 100%;
-}
-
-.int-pw-plans {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-/* Plan buttons carry their own title/price/description, so they opt out of the
-   single-line filled layout a bare `button` otherwise gets. Bordered rather
-   than filled: three saturated blocks stacked read as three warnings, and the
-   price is the only part worth spending colour on. Title and price share the
-   top row, the description runs full width beneath. */
-.int-pw-plan {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: baseline;
-  gap: 2px 12px;
-  width: 100%;
-  text-align: left;
-  padding: 12px 14px;
-  border: 1px solid #334155;
-  background: rgba(15, 23, 42, 0.45);
-  color: #f1f5f9;
-}
-
-.int-pw-plan:hover {
-  border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.int-pw-plan-title { grid-column: 1; font-weight: 700; }
-.int-pw-plan-price {
-  grid-column: 2;
-  grid-row: 1;
-  font-size: 15px;
-  font-weight: 700;
-  color: #60a5fa;
-}
-.int-pw-plan-desc {
-  grid-column: 1 / -1;
-  font-size: 12px;
-  font-weight: 400;
-  color: #94a3b8;
-}
-
-.int-pw-restore, .int-pw-byok { width: 100%; }
-
-.int-pw-status strong {
-  color: #f1f5f9;
-  font-size: 16px;
-}
-
-.int-pw-error {
-  color: #fca5a5;
-  font-size: 13px;
-}
-
-.int-paywall button[disabled] {
-  opacity: 0.6;
-  cursor: default;
-}
 
 #paywall-modal .coach-box { width: min(440px, 100%); }
 
@@ -1086,7 +1022,7 @@ blockquote {
   cursor: pointer;
   font-size: 15px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--ink);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1098,7 +1034,7 @@ blockquote {
 #custom-key-details summary::before {
   content: '▸';
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.2s ease;
 }
 
@@ -1115,7 +1051,7 @@ blockquote {
   cursor: pointer;
   font-size: 18px;
   font-weight: 700;
-  color: #f1f5f9;
+  color: var(--ink);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1129,7 +1065,7 @@ blockquote {
 .advanced-card summary::before {
   content: '▸';
   font-size: 14px;
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.2s ease;
 }
 
@@ -1150,10 +1086,10 @@ blockquote {
 input[type="number"].inline-limit-input {
   width: 58px;
   padding: 5px 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  color: #f1f5f9;
+  background: var(--hover);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-card);
+  color: var(--ink);
   font-size: 13px;
   text-align: center;
   margin: 0;
@@ -1162,7 +1098,7 @@ input[type="number"].inline-limit-input {
 }
 
 input[type="number"].inline-limit-input:focus {
-  border-color: rgba(59, 130, 246, 0.6);
+  border-color: var(--primary);
   outline: none;
 }
 
@@ -1189,7 +1125,7 @@ input[type="number"].inline-limit-input:focus {
 
   .card {
     padding: 16px;
-    border-radius: 14px;
+    border-radius: var(--radius-card);
     margin-bottom: 12px;
   }
 
@@ -1215,10 +1151,8 @@ input[type="number"].inline-limit-input:focus {
     bottom: 0;
     margin: 0 -16px;
     padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-    background: rgba(15, 23, 42, 0.92);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: var(--paper);
+    border-top: 1px solid var(--hover);
   }
 
   .setup-nav button {
@@ -1255,5 +1189,51 @@ input[type="number"].inline-limit-input:focus {
   ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
   ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
     margin-left: auto;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Touch and motion.
+
+   This HTML runs inside the Android and iOS WebViews, not just a desktop
+   browser, and touch sizing used to be inferred entirely from viewport width —
+   so a tablet in landscape or a touch laptop got desktop-density targets. These
+   key off the pointer instead.
+   --------------------------------------------------------------------------- */
+
+@media (pointer: coarse) {
+  /* Grown with an invisible overlay rather than by padding, so the painted
+     control keeps the size it was designed at while the hit area reaches 44px.
+     The row Remove button renders about 26px tall without this. */
+  button, summary, .pill, .recommend-card, .tab-btn, a.link-button {
+    position: relative;
+  }
+
+  button::after, summary::after, .tab-btn::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
+    min-width: 44px;
+  }
+
+  /* A field under 16px makes iOS zoom the page in on focus, and it never zooms
+     back out. */
+  input[type="text"], input[type="password"], input[type="number"], select, textarea {
+    font-size: 16px;
+  }
+}
+
+/* Durations collapse; the animations themselves stay, so nothing that conveys
+   state by moving simply stops conveying it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

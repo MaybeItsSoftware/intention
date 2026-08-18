@@ -589,7 +589,7 @@ function applyServiceMark(el, group) {
     svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', meta.icon);
-    if (meta.color) path.setAttribute('fill', meta.color);
+    path.setAttribute('fill', meta.color || 'currentColor');
     svg.appendChild(path);
     el.appendChild(svg);
     return;
@@ -1026,7 +1026,10 @@ function buildRecommendCard(meta, label, title, onAdd) {
     const svg = document.createElementNS(svgNS, 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');
     svg.setAttribute('class', 'chip-icon');
-    svg.setAttribute('fill', meta.color);
+    // A monochrome mark (color: null) inherits the chip's text colour, so it
+    // flips with the theme instead of staying the near-white it was published
+    // as. See SITE_META.
+    svg.setAttribute('fill', meta.color || 'currentColor');
     svg.setAttribute('aria-hidden', 'true');
     const path = document.createElementNS(svgNS, 'path');
     path.setAttribute('d', meta.icon);

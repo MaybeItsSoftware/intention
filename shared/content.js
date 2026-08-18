@@ -6,6 +6,57 @@ console.log(
 );
 
 const OVERLAY_CSS = `
+/* The gate's own tokens, declared ON #intention-root rather than :root.
+   Two reasons, both load-bearing:
+     - This stylesheet is injected into arbitrary third-party pages. Tokens on
+       :root would restyle the host site.
+     - "all: initial" below does NOT reset custom properties: the "all"
+       shorthand excludes them by spec, so a page that happens to define its
+       own --border would inherit straight into the gate. Declaring them here
+       shadows anything the host page set.
+   (No backticks in this file, ever — it is pasted verbatim into a JS template
+   literal in content.js, and one would end the string.)
+   These are the same roles as shared/tokens.css. Keep the two in step. */
+#intention-root {
+  --paper: #faf8f4;
+  --raised: #ffffff;
+  --hover: #f1eff1;
+  --well: #edebef;
+  --ink: #444054;
+  --text-muted: #6e6b7c;
+  --text-dim: #b6b3bf;
+  --border: #e6e4ea;
+  --border-input: #d8d5dd;
+  --primary: #007fff;
+  --primary-text: #0063c6;
+  --success-text: #1f7a54;
+  --success-fill: rgba(76, 195, 142, 0.12);
+  --success-line: rgba(76, 195, 142, 0.45);
+  --danger-text: #d62246;
+  --scrim: rgba(20, 18, 26, 0.45);
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --radius-pill: 9999px;
+}
+
+@media (prefers-color-scheme: dark) {
+  #intention-root {
+    --paper: #1c1a23;
+    --raised: #25232f;
+    --hover: #2d2b38;
+    --well: #2d2b38;
+    --ink: #f5f4f7;
+    --text-muted: #b6b3bf;
+    --text-dim: #6e6b7c;
+    --border: #34313f;
+    --border-input: #43404f;
+    --primary-text: #66b2ff;
+    --success-text: #4cc38e;
+    --danger-text: #ff6b85;
+    --scrim: rgba(0, 0, 0, 0.6);
+  }
+}
+
 #intention-root {
   all: initial;
   position: fixed;
@@ -14,8 +65,8 @@ const OVERLAY_CSS = `
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #0f1115;
-  color: #e7e7ea;
+  background: var(--paper);
+  color: var(--ink);
   font-family: 'Arvo', Georgia, 'Times New Roman', serif;
 }
 
@@ -30,19 +81,22 @@ const OVERLAY_CSS = `
   flex-direction: column;
 }
 
+/* The gate's eyebrow. Muted, not dim: --text-dim is decorative weight and sits
+   under 2:1 on chalk, which was survivable on the old near-black surface and
+   is not on this one. */
 #intention-root h1 {
   margin: 0 0 4px;
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  font-weight: 700;
+  letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: #6b7280;
+  color: var(--text-muted);
 }
 
 #intention-root .int-subtitle {
   margin: 0 0 30px;
   font-size: 15px;
-  color: #8b8f99;
+  color: var(--text-muted);
 }
 
 #intention-root .int-messages {
@@ -56,8 +110,8 @@ const OVERLAY_CSS = `
 
 #intention-root .int-messages::-webkit-scrollbar { width: 6px; }
 #intention-root .int-messages::-webkit-scrollbar-track { background: transparent; }
-#intention-root .int-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
-#intention-root .int-messages::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+#intention-root .int-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+#intention-root .int-messages::-webkit-scrollbar-thumb:hover { background: var(--border-input); }
 
 #intention-root .int-msg {
   font-size: 19px;
@@ -67,16 +121,16 @@ const OVERLAY_CSS = `
 }
 
 #intention-root .int-msg-assistant {
-  color: #f3f4f6;
+  color: var(--ink);
 }
 
 #intention-root .int-msg-user {
-  color: #7c818c;
+  color: var(--text-muted);
 }
 
 #intention-root .int-msg-user::before {
   content: "You — ";
-  color: #4b5563;
+  color: var(--text-muted);
 }
 
 #intention-root .int-thinking {
@@ -87,7 +141,7 @@ const OVERLAY_CSS = `
   display: flex;
   align-items: center;
   gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  border-bottom: 1px solid var(--border-input);
   padding-bottom: 8px;
 }
 
@@ -95,19 +149,19 @@ const OVERLAY_CSS = `
   flex: 1;
   border: none;
   background: transparent;
-  color: #f3f4f6;
+  color: var(--ink);
   font-size: 18px;
   outline: none;
   font-family: inherit;
   padding: 4px 0;
 }
 
-#intention-root .int-composer input::placeholder { color: #545863; }
+#intention-root .int-composer input::placeholder { color: var(--text-dim); }
 
 #intention-root .int-composer button {
   border: none;
   background: transparent;
-  color: #9aa0ac;
+  color: var(--text-muted);
   font-weight: 600;
   font-size: 15px;
   cursor: pointer;
@@ -115,69 +169,70 @@ const OVERLAY_CSS = `
   padding: 4px 0;
 }
 
-#intention-root .int-composer button:hover { color: #f3f4f6; }
+#intention-root .int-composer button:hover { color: var(--ink); }
 
 #intention-root .int-close-row {
   margin-top: 22px;
 }
 
+/* The setup-needed "Open settings" button reuses plain button styling. */
 #intention-root #int-open-options {
   align-self: flex-start;
   margin-top: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-input);
   background: transparent;
-  color: #e7e7ea;
+  color: var(--ink);
   font-size: 15px;
   padding: 9px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   cursor: pointer;
   font-family: inherit;
 }
 
-#intention-root #int-open-options:hover { background: rgba(255, 255, 255, 0.06); }
+#intention-root #int-open-options:hover { background: var(--hover); }
 
 #intention-root .int-primary-btn {
   align-self: flex-start;
   margin-top: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-input);
   background: transparent;
-  color: #e7e7ea;
+  color: var(--ink);
   font-size: 15px;
   padding: 9px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   cursor: pointer;
   font-family: inherit;
 }
 
-#intention-root .int-primary-btn:hover { background: rgba(255, 255, 255, 0.06); }
+#intention-root .int-primary-btn:hover { background: var(--hover); }
 #intention-root .int-primary-btn:disabled { opacity: 0.6; cursor: default; }
 
 #intention-root .int-retry-row { margin-top: 4px; }
 
 #intention-root .int-retry-btn {
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-input);
   background: transparent;
-  color: #e7e7ea;
+  color: var(--ink);
   font-size: 14px;
   padding: 7px 14px;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   cursor: pointer;
   font-family: inherit;
 }
 
-#intention-root .int-retry-btn:hover { background: rgba(255, 255, 255, 0.06); }
+#intention-root .int-retry-btn:hover { background: var(--hover); }
 
 #intention-root button.int-secondary {
   border: none;
   background: transparent;
-  color: #545863;
+  color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
   font-family: inherit;
   padding: 0;
 }
 
-#intention-root button.int-secondary:hover { color: #9aa0ac; text-decoration: underline; }
+#intention-root button.int-secondary:hover { color: var(--text-muted); text-decoration: underline; }
 
 #intention-root .int-stats-row {
   display: flex;
@@ -188,17 +243,17 @@ const OVERLAY_CSS = `
 }
 
 #intention-root .int-stat { display: flex; gap: 5px; }
-#intention-root .int-stat-value { color: #9aa0ac; font-weight: 600; }
-#intention-root .int-stat-label { color: #545863; }
+#intention-root .int-stat-value { color: var(--text-muted); font-weight: 600; }
+#intention-root .int-stat-label { color: var(--text-dim); }
 
 /* System note: machinery speaking (a clamped grant, a cap hit), not the coach. */
 #intention-root .int-msg.int-system {
   align-self: center;
   text-align: center;
-  background: rgba(34, 197, 94, 0.12);
-  border: 1px solid rgba(34, 197, 94, 0.22);
-  border-radius: 8px;
-  color: #86efac;
+  background: var(--success-fill);
+  border: 1px solid var(--success-line);
+  border-radius: var(--radius-card);
+  color: var(--success-text);
   font-size: 13px;
   padding: 6px 12px;
 }
@@ -214,8 +269,8 @@ const OVERLAY_CSS = `
   padding: 24px;
   text-align: center;
   font-size: 20px;
-  color: #e7e7ea;
-  background: #0f1115;
+  color: var(--ink);
+  background: var(--paper);
   font-family: inherit;
 }
 
@@ -230,15 +285,15 @@ const OVERLAY_CSS = `
   top: 14px;
   right: 14px;
   z-index: 2147483647;
-  background: #11141a;
-  color: #e7e7ea;
+  background: var(--raised);
+  color: var(--ink);
   padding: 7px 13px;
-  border-radius: 8px;
+  border-radius: var(--radius-card);
   font-family: 'Arvo', Georgia, 'Times New Roman', serif;
   font-size: 13px;
   font-weight: 500;
-  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 14px var(--scrim);
+  border: 1px solid var(--border);
   pointer-events: auto;
 }
 
@@ -249,13 +304,20 @@ const OVERLAY_CSS = `
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: #0f1115;
-  background: #e7e7ea;
+  color: var(--paper);
+  background: var(--ink);
   border-radius: 5px;
   cursor: pointer;
 }
 
-#intention-badge-finish:hover { background: #ffffff; }
+#intention-badge-finish:hover { background: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  #intention-root *, #intention-root *::before, #intention-root *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 `;
 
 function injectOverlayStyle() {

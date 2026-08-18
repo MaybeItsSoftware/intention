@@ -1,0 +1,208 @@
+/* The purchase UI that billing.js renderPaywall() emits.
+   
+   It lives in its own file because it renders on two pages that are otherwise
+   unrelated: the settings/wizard page (options.html) and the full-screen
+   coaching page (coaching.html). Those used to carry two hand-maintained
+   skins, and they had drifted — coaching.html styled twelve of the nineteen
+   classes renderPaywall emits, so the browser builds' side-by-side "key or
+   credit" routes rendered as raw browser defaults there. One file, one skin.
+   
+   Everything here is on role tokens, so it works on a card and on the gate's
+   full-bleed surface without either page overriding it. */
+
+.int-paywall {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.int-pw-lede {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.int-pw-sub, .int-pw-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.int-pw-benefits {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.9;
+}
+
+/* The two equal access routes on browser builds (own key / coaching credit).
+   Side by side where there's room, stacked once there isn't — neither is the
+   fallback, so nothing here should read as secondary. */
+.int-pw-routes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.int-pw-route {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+}
+
+.int-pw-route strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.int-pw-route label {
+  margin: 4px 0 -4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.int-pw-route input,
+.int-pw-route select,
+.int-pw-route button {
+  width: 100%;
+}
+
+.int-pw-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Plan buttons carry their own title/price/description, so they opt out of the
+   single-line filled layout a bare `button` otherwise gets. Bordered rather
+   than filled: three saturated blocks stacked read as three warnings, and the
+   price is the only part worth spending colour on. Title and price share the
+   top row, the description runs full width beneath. */
+.int-pw-plan {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--raised);
+  color: var(--ink);
+}
+
+.int-pw-plan:hover {
+  border-color: var(--primary);
+  background: var(--primary-fill-soft);
+}
+
+.int-pw-plan-title { grid-column: 1; font-weight: 700; }
+.int-pw-plan-price {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--primary-text);
+}
+.int-pw-plan-desc {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.int-pw-restore, .int-pw-byok { width: 100%; }
+
+.int-pw-status strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.int-pw-error {
+  color: var(--danger-text);
+  font-size: 13px;
+}
+
+.int-paywall button[disabled] {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- Self-contained form controls and buttons ----
+   
+   On options.html these would inherit the page's global input/select/button
+   rules. coaching.html has no such rules — which is exactly how its access
+   code field ended up as a raw white browser default on a near-black page —
+   so the paywall styles its own, scoped so it never reaches past itself. */
+
+.int-paywall label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+#int-pw-provider,
+#int-pw-key,
+#int-pw-code-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--well);
+  border: 1px solid var(--border-input);
+  color: var(--ink);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#int-pw-provider:focus,
+#int-pw-key:focus,
+#int-pw-code-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-fill);
+}
+
+#int-pw-provider::placeholder,
+#int-pw-key::placeholder,
+#int-pw-code-input::placeholder { color: var(--text-dim); }
+
+.int-paywall button {
+  padding: 10px 16px;
+  border-radius: var(--radius-control);
+  border: none;
+  font-weight: 600;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--primary-solid);
+  color: var(--primary-on);
+}
+
+.int-paywall button.secondary {
+  background: transparent;
+  border: 1px solid var(--border-input);
+  color: var(--ink);
+}
+
+.int-paywall button.secondary:hover { background: var(--hover); }
+.int-paywall button:not(.secondary):hover { background: var(--primary-solid-hover); }
+
+.int-paywall button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .int-paywall button { min-height: 44px; }
+  #int-pw-provider, #int-pw-key, #int-pw-code-input { font-size: 16px; }
+}

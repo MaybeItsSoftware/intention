@@ -221,3 +221,66 @@ at least let a bug report carry it.
   stub. Only *function declarations* are readable off the vm context — `const`
   and `let` stay in the script's lexical scope — so anything that needs testing
   should be a `function`, or be reached via `vm.runInContext`.
+
+---
+
+## 5. Closed by the August 2026 retheme
+
+Recorded here because the reasons in §3 explained why they were left, and
+someone reading this file needs to know they no longer apply.
+
+- **3.5 (overlay CSS duplicated in three places)** — partly closed.
+  `shared/content.css` and the `OVERLAY_CSS` literal in `content.js` are now
+  byte-identical and `tests/parity.test.js` asserts it, so the pair cannot
+  drift again. The duplication itself has to stay: Safari enforces the host
+  page's CSP against extension-origin requests, which is why the overlay
+  injects its own copy at runtime. **Edit `content.css`, then paste it back
+  between the `OVERLAY_CSS` backticks** — and keep backticks out of that file,
+  since it is pasted into a JS template literal.
+
+  What the audit called a "deliberate superset" was in fact drift: the
+  `.int-primary-btn` rule (the simple-mode "Take N minutes" button) existed
+  only in the JS copy and rendered only because the runtime injection wins.
+
+- **The paywall's two skins** — closed. `.int-pw-*` now lives in one file,
+  `shared/paywall.css`, linked by both `options.html` and `coaching.html`.
+  This was worse than "divergent": `coaching.html` styled twelve of the
+  nineteen classes `renderPaywall()` emits, so on browser builds the
+  side-by-side "own key / coaching credit" routes rendered as raw browser
+  defaults on the coaching page. The stylesheet is self-contained (its own
+  inputs and buttons) because `coaching.html` has no global form styling to
+  inherit.
+
+## 6. New follow-ups from the retheme
+
+### 6.1 The Android native gate is still a dark slab
+
+`MainActivity.kt` hardcodes `#0f1115` / `#e7e7ea` for the full-screen
+accessibility-permission gate. Now that the web layer follows the system
+theme, a light-mode Android user meets a near-black screen in front of a chalk
+app. Not fixed here for the reason §2 gives: it is Kotlin that cannot be
+rendered from a dev machine, and §2.2 already wants that screen redesigned
+rather than recoloured. Do both at once, on a device.
+
+### 6.2 The macOS host shell is untouched
+
+`Intention Apple/Shared (App)/Resources/Main.html` and `Style.css` are outside
+`shared/`, have no tokens, and now differ from everything else. Same reason as
+§2.3 — it needs Xcode to look at.
+
+### 6.3 The browser build's "use your own API key" route has no form on the
+coaching page
+
+Visible now that the route cards render at all: on `coaching.html` the key
+route shows its description and nothing to type into, because `coaching.js`
+does not pass `onSaveKey` to `renderPaywall()`. `options.html` passes it and
+shows the provider select and key field. Either wire it up or say plainly that
+the key is entered in settings.
+
+### 6.4 Contrast is now measured, not eyeballed
+
+`npm run test:smoke:contrast` walks every visible text node in the wizard, all
+four settings tabs and the coaching page, in both themes, and fails on
+anything under WCAG AA. It caught white-on-azure at 3.8:1 across every primary
+button — which is why `--primary-solid` exists as a separate token from
+`--primary`. Run it after any colour change; it is much faster than looking.
