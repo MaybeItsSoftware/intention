@@ -14,10 +14,11 @@ body {
 }
 
 /* One section is on screen at a time now, so the page no longer needs the full
-   width of a monitor — but a blocked-site row carries a lot (name, daily limit,
-   quick check, mode, behaviour, remove), so this can't go much below 1100
-   before the domain name starts getting truncated. Prose is held to a readable
-   measure separately, by .subtitle. */
+   width of a monitor. This used to be a floor rather than a choice — a blocked
+   row put its name and five controls on one line, and anything under 1100
+   truncated the name — but the row stacks its controls now and wraps them, so
+   the width is only about how much of a settings strip fits on a line. Prose
+   is held to a readable measure separately, by .subtitle. */
 .container {
   max-width: 1100px;
   margin: 0 auto;
@@ -214,8 +215,6 @@ ul#app-list, ul#setup-apps-list, ul#usage-log-list {
   margin: 10px 0 0;
 }
 
-ul#domain-list li, ul#setup-websites-list li,
-ul#app-list li, ul#setup-apps-list li,
 ul#usage-log-list li,
 ul.app-results li {
   display: flex;
@@ -229,10 +228,159 @@ ul.app-results li {
   font-size: 14px;
 }
 
+/* ---- A blocked row (buildBlockedRow) ----
+
+   A row is a small card, not a line: an identity head, a hairline, a strip of
+   labelled fields, and the prose disclosure last. As one flex line it was
+   seven unlabelled controls competing for the same width, and the domain name
+   — the only shrinkable item — was what gave way. */
+ul#domain-list li, ul#setup-websites-list li,
+ul#app-list li, ul#setup-apps-list li {
+  background: var(--alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+}
+
+/* One word for what the row does, so the list is readable without opening
+   every control beneath it. Only the two that change what happens when you
+   open the site take a status colour; a plain timed pass stays quiet. */
+.row-badge {
+  flex-shrink: 0;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-input);
+  background: var(--well);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.row-badge.is-coach {
+  background: var(--primary-fill);
+  border-color: var(--primary-line);
+  color: var(--primary-text);
+}
+
+.row-badge.is-hard {
+  background: var(--danger-fill);
+  border-color: var(--danger-line);
+  color: var(--danger-text);
+}
+
+/* The settings, one labelled field each, on a line that wraps as the window
+   narrows instead of squeezing the name. Separated by a hairline rather than
+   by a change of tone — borders do the work here. */
+.row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 20px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border-muted);
+}
+
+/* The wizard's variant: one field, folded back onto the head line rather than
+   given a band and a hairline of its own. */
+.row-fields-inline {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.row-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* Beats the global `label` rule's margins, which .micro-label alone doesn't
+   reset, and pins the caption tight to the control it names. */
+.row-field > .micro-label {
+  margin: 0;
+}
+
+.row-field-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row-field-unit {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Switching the quick-check lane off only greyed the digits by a shade, which
+   read as "still editable". The whole control steps back instead. */
+.row-field-control input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.row-field-control:has(input:disabled) .row-field-unit {
+  opacity: 0.5;
+}
+
+/* The row selects fell through to the global field rule — full width, 10/12
+   padding, a 36px gutter for the chevron — which is most of why every row read
+   as heavy. Sized to their own content instead, and to match the number boxes
+   beside them. */
+.row-field select {
+  width: auto;
+  padding: 5px 28px 5px 10px;
+  font-size: 13px;
+  background-position: right 8px center;
+  background-size: 14px;
+}
+
+/* The quick-check toggle is part of its own caption, so the label names the
+   checkbox and the field in one. */
+.row-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.row-toggle-label input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
 ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
 ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
+  flex-shrink: 0;
   padding: 4px 10px;
   font-size: 12px;
+}
+
+/* An empty list used to render as nothing, which reads the same as one that
+   failed to load. A dashed hairline says "a row goes here" without pretending
+   to be one — and it has to out-specify the row rule above, which is why the
+   list ids are repeated rather than the class standing alone. */
+ul#domain-list li.list-empty, ul#setup-websites-list li.list-empty,
+ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
+  padding: 18px 14px;
+  background: none;
+  border: 1px dashed var(--border-input);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
 }
 
 ul#usage-log-list li.log-date-heading {
@@ -248,18 +396,11 @@ ul#usage-log-list li.log-date-heading {
 
 /* ---- Per-row "why you need it" (buildServiceReasonControl) ---- */
 
-/* The row's controls sit on one line and this drops below all of them. `wrap`
-   on the row itself is what allows it: without it the disclosure becomes a
-   third flex sibling and squeezes the domain name. Harmless when nothing needs
-   to wrap, and the mobile block at the foot of this file already depends on
-   the same behaviour. */
-ul#domain-list li, ul#app-list li {
-  flex-wrap: wrap;
-}
-
+/* The last band of the row card, under its own hairline: prose, not another
+   field competing for the settings strip. */
 .row-reason {
-  flex-basis: 100%;
-  margin-top: 2px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border-muted);
   font-size: 13px;
 }
 
@@ -516,9 +657,11 @@ blockquote {
   font-style: italic;
 }
 
+/* The blocked lists build their own head now; what is left on .domain-info is
+   the usage log and the app-search popup, both of which are a name over a
+   second line of detail rather than a row of controls. */
 .domain-info {
   display: flex;
-  flex-direction: row;
   align-items: center;
   gap: 12px;
   flex: 1;
@@ -528,13 +671,21 @@ blockquote {
 .domain-name {
   font-weight: 600;
   color: var(--ink);
-  /* Was flex:1 1 auto with min-width:0, so the controls beside it squeezed the
-     name down to "x…" — the one part of the row you actually need to read. */
   flex: 0 1 auto;
   min-width: 7ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* In a blocked row the name is the title of a card, and the controls that used
+   to squeeze it down to "x…" have moved to the line below — so it takes the
+   width of the head and a size that says so. */
+.row-head .domain-name {
+  flex: 1 1 auto;
+  min-width: 6ch;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .domain-limit-badge {
@@ -709,7 +860,7 @@ blockquote {
 
 /* Brand glyph where the catalogue has one, the service's initial where it
    doesn't — a hand-typed domain still gets a mark rather than a gap. */
-.setup-purpose-mark {
+.setup-purpose-mark, .row-mark {
   flex: 0 0 auto;
   width: 34px;
   height: 34px;
@@ -724,11 +875,16 @@ blockquote {
   color: var(--ink);
 }
 
-.setup-purpose-mark svg {
+.setup-purpose-mark svg, .row-mark svg {
   width: 17px;
   height: 17px;
   fill: var(--ink);
 }
+
+/* A step down from the wizard's: a list of twenty of these is a texture, and
+   the mark is there to be recognised, not counted. */
+.row-mark { width: 28px; height: 28px; font-size: 12px; }
+.row-mark svg { width: 15px; height: 15px; }
 
 /* Skips the whole run, not one screen — deliberately quiet, and deliberately
    not next to Next, so it reads as the way out rather than the way on. */
@@ -1082,13 +1238,15 @@ blockquote {
   margin-top: 14px;
 }
 
-/* Higher specificity than the global input[type="number"]{width:100%} rule */
+/* Higher specificity than the global input[type="number"]{width:100%} rule.
+   A well and a control radius, like every other field on the page — it was on
+   --hover and the 8px card radius, which is the one reserved for cards. */
 input[type="number"].inline-limit-input {
-  width: 58px;
+  width: 54px;
   padding: 5px 6px;
-  background: var(--hover);
+  background: var(--well);
   border: 1px solid var(--border-input);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-control);
   color: var(--ink);
   font-size: 13px;
   text-align: center;
@@ -1164,31 +1322,33 @@ input[type="number"].inline-limit-input:focus {
 
   .settings-header h1 { font-size: 22px; }
 
-  /* The name/limit-badge/remove-button row is too wide to fit on one line at
-     phone widths: the badge (flex-shrink:0) refuses to shrink, so the name
-     (the only shrinkable item) gets squeezed to nothing and the row overflows
-     its card — which is also what makes the WebView zoom the whole page out
-     and render it blurry. Stack it across three lines (name / limit / remove)
-     instead, each given the full row width, so the name always shows and
-     nothing overflows. */
-  ul#domain-list li, ul#setup-websites-list li,
-  ul#app-list li, ul#setup-apps-list li {
+  /* The row stacks by construction now, so the phone case is only about the
+     head, where the badge and the button together can still crowd the name out
+     at 320px. Letting the head wrap drops Remove onto its own line rather than
+     shrinking the name to "x…" — which is also what used to make the WebView
+     zoom the whole page out and render it blurry. */
+  .row-head {
     flex-wrap: wrap;
   }
 
-  .domain-info {
-    flex-basis: 100%;
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
-
-  .domain-limit-badge {
-    flex-basis: 100%;
+  /* A badge and a Remove button beside it leave a phone about eleven
+     characters of domain, so "instagram.com" arrived as "instagram…". The mark
+     and the name take the line — the basis is the row minus the mark and its
+     gap — and everything else wraps under them. */
+  .row-head .domain-name {
+    flex-basis: calc(100% - 46px);
   }
 
   ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
   ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {
     margin-left: auto;
+  }
+
+  /* Fields go 16px under a coarse pointer to stop iOS zooming in, so at most
+     one or two fit across a phone. They wrap on their own; this only tightens
+     the gutter so the ones that do fit still share a line. */
+  .row-fields {
+    gap: 12px 14px;
   }
 }
 

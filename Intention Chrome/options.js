@@ -1254,29 +1254,22 @@ function renderSetupDomains() {
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
-    const li = document.createElement('li');
-    
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-    
-    const span = document.createElement('span');
-    span.textContent = d;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-
     const limitInfo = setupDomainLimits[d] || { maxGrants: 3, maxMinutes: 10 };
-    
-    const limitSpan = document.createElement('span');
-    limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Daily limit: '));
 
-    const inlineInput = document.createElement('input');
-    inlineInput.type = 'number';
-    inlineInput.min = '1';
-    inlineInput.className = 'inline-limit-input';
-    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${d}`);
-    inlineInput.value = limitInfo.maxMinutes;
-    inlineInput.addEventListener('change', (e) => {
+    // No badge: the wizard hasn't asked about blocking mode yet at this step,
+    // so there is nothing true to put there.
+    const { li, fields } = buildBlockedRow({
+      target: d,
+      label: d,
+      inlineFields: true,
+      onRemove: () => {
+        setupBlockedDomains = setupBlockedDomains.filter(x => x !== d);
+        delete setupDomainLimits[d];
+        renderSetupDomains();
+      }
+    });
+
+    fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, d, (e) => {
       const val = parseInt(e.target.value, 10);
       if (!isNaN(val) && val > 0) {
         if (!setupDomainLimits[d]) {
@@ -1284,23 +1277,8 @@ function renderSetupDomains() {
         }
         setupDomainLimits[d].maxMinutes = val;
       }
-    });
+    }));
 
-    limitSpan.appendChild(inlineInput);
-    limitSpan.appendChild(document.createTextNode(' min/day'));
-    infoContainer.appendChild(limitSpan);
-    
-    li.appendChild(infoContainer);
-    
-    const btn = document.createElement('button');
-    btn.textContent = 'Remove';
-    btn.className = 'delete-btn';
-    btn.addEventListener('click', () => {
-      setupBlockedDomains = setupBlockedDomains.filter(x => x !== d);
-      delete setupDomainLimits[d];
-      renderSetupDomains();
-    });
-    li.appendChild(btn);
     list.appendChild(li);
   }
 }
@@ -1320,29 +1298,22 @@ function renderSetupApps() {
   const list = document.getElementById('setup-apps-list');
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
-    const li = document.createElement('li');
-
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-
-    const span = document.createElement('span');
-    span.textContent = setupAppLabels[pkg] || pkg;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-
+    const name = setupAppLabels[pkg] || pkg;
     const limitInfo = setupAppLimits[pkg] || { maxGrants: 3, maxMinutes: 10 };
 
-    const limitSpan = document.createElement('span');
-    limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Daily limit: '));
+    const { li, fields } = buildBlockedRow({
+      target: pkg,
+      label: name,
+      inlineFields: true,
+      onRemove: () => {
+        setupBlockedApps = setupBlockedApps.filter(x => x !== pkg);
+        delete setupAppLimits[pkg];
+        delete setupAppLabels[pkg];
+        renderSetupApps();
+      }
+    });
 
-    const inlineInput = document.createElement('input');
-    inlineInput.type = 'number';
-    inlineInput.min = '1';
-    inlineInput.className = 'inline-limit-input';
-    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${setupAppLabels[pkg] || pkg}`);
-    inlineInput.value = limitInfo.maxMinutes;
-    inlineInput.addEventListener('change', (e) => {
+    fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, name, (e) => {
       const val = parseInt(e.target.value, 10);
       if (!isNaN(val) && val > 0) {
         if (!setupAppLimits[pkg]) {
@@ -1350,24 +1321,8 @@ function renderSetupApps() {
         }
         setupAppLimits[pkg].maxMinutes = val;
       }
-    });
+    }));
 
-    limitSpan.appendChild(inlineInput);
-    limitSpan.appendChild(document.createTextNode(' min/day'));
-    infoContainer.appendChild(limitSpan);
-
-    li.appendChild(infoContainer);
-
-    const btn = document.createElement('button');
-    btn.textContent = 'Remove';
-    btn.className = 'delete-btn';
-    btn.addEventListener('click', () => {
-      setupBlockedApps = setupBlockedApps.filter(x => x !== pkg);
-      delete setupAppLimits[pkg];
-      delete setupAppLabels[pkg];
-      renderSetupApps();
-    });
-    li.appendChild(btn);
     list.appendChild(li);
   }
 }
@@ -2072,36 +2027,157 @@ function removeDomain(d, isSimple) {
   });
 }
 
+// ---- The blocked-site / blocked-app row ------------------------------------
+//
+// One row carries a lot: a name, a daily limit, a quick-check lane, a blocking
+// mode, what happens when you open it, a Remove button and two prose answers.
+// On a single flex line that was seven unlabelled controls competing for the
+// same horizontal space — the domain name, the one part you actually need to
+// read, was the only thing that could shrink.
+//
+// So a row is a small card instead. An identity line (brand mark, name, what
+// the row does in one word), a hairline, then the settings as labelled fields
+// on a wrapping strip, then the prose. Hierarchy comes from surface and
+// position: every field names itself with the 10px micro-label rather than
+// with a bigger font, and the controls all sit at one size.
+
+function microLabel(text) {
+  const el = document.createElement('span');
+  el.className = 'micro-label';
+  el.textContent = text;
+  return el;
+}
+
+// A labelled control in the settings strip. `labelEl` is usually a plain
+// micro-label, but the quick-check lane passes a <label> wrapping its own
+// checkbox, so the toggle is named by the thing above it instead of by a
+// title attribute a screen reader may never announce.
+function buildRowField(labelEl, ...controls) {
+  const field = document.createElement('div');
+  field.className = 'row-field';
+  field.appendChild(labelEl);
+  const control = document.createElement('div');
+  control.className = 'row-field-control';
+  control.append(...controls);
+  field.appendChild(control);
+  return field;
+}
+
+// What the row does, in one word, so the list reads without opening every
+// control under it. Only the two that change what happens when you open the
+// site take a status colour; a plain timed pass is the quiet default.
+function buildRowBadge(limitInfo, globalMode) {
+  const badge = document.createElement('span');
+  badge.className = 'row-badge';
+  if (effectiveModeFor(limitInfo, globalMode) === 'coach') {
+    badge.classList.add('is-coach');
+    badge.textContent = 'Coach';
+  } else if ((limitInfo.behavior || 'pass') === 'hard') {
+    badge.classList.add('is-hard');
+    badge.textContent = 'Hard block';
+  } else {
+    badge.textContent = `${limitInfo.passMinutes || 10} min pass`;
+  }
+  return badge;
+}
+
+// The head and the empty settings strip, shared by all four lists (settings
+// and wizard, sites and apps). Returns both, so the caller fills the strip
+// with whatever its list actually offers.
+//
+// `inlineFields` drops the strip and hands back the head instead: the wizard
+// rows carry a daily limit and nothing else, and a band of its own for one
+// number is a lot of card for very little.
+function buildBlockedRow({ target, label, badge, onRemove, inlineFields = false }) {
+  const li = document.createElement('li');
+
+  const head = document.createElement('div');
+  head.className = 'row-head';
+
+  const mark = document.createElement('span');
+  mark.className = 'row-mark';
+  mark.setAttribute('aria-hidden', 'true');
+  applyServiceMark(mark, { key: serviceKeyFor(target), label });
+  head.appendChild(mark);
+
+  const name = document.createElement('span');
+  name.className = 'domain-name';
+  name.textContent = label;
+  // The name still truncates on a narrow window; the title is the whole of it.
+  name.title = label;
+  head.appendChild(name);
+
+  if (badge) head.appendChild(badge);
+
+  // Placed before the Remove button either way, so the caller can fill it
+  // afterwards and still have Remove come last.
+  const fields = document.createElement('div');
+  fields.className = inlineFields ? 'row-fields-inline' : 'row-fields';
+  if (inlineFields) head.appendChild(fields);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Remove';
+  btn.className = 'delete-btn';
+  // Ten buttons all reading "Remove" is one row of the settings page to a
+  // screen reader. The visible label stays short; the accessible one doesn't.
+  btn.setAttribute('aria-label', `Remove ${label}`);
+  btn.addEventListener('click', onRemove);
+  head.appendChild(btn);
+
+  li.appendChild(head);
+  if (!inlineFields) li.appendChild(fields);
+
+  return { li, fields };
+}
+
+// The daily-limit field. The four lists disagree about what a change means —
+// the wizard writes to a draft, the settings lists gate an increase behind the
+// coach — so the handler is the caller's, and only the markup is shared.
+function buildDailyLimitField(minutes, ariaName, onChange) {
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '1';
+  input.className = 'inline-limit-input';
+  input.setAttribute('aria-label', `Daily limit in minutes for ${ariaName}`);
+  input.value = minutes;
+  input.addEventListener('change', onChange);
+  const unit = document.createElement('span');
+  unit.className = 'row-field-unit';
+  unit.textContent = 'min/day';
+  return buildRowField(microLabel('Daily limit'), input, unit);
+}
+
+// An empty list used to render as nothing at all, which reads the same as a
+// list that failed to load. One line saying so, and where to start.
+function renderEmptyList(list, text) {
+  const li = document.createElement('li');
+  li.className = 'list-empty';
+  li.textContent = text;
+  list.appendChild(li);
+}
+
 function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReasons = {}) {
   renderSiteRecommendations('sites-recommend-grid', 'sites-recommend-more', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
+  if (!domains.length) {
+    renderEmptyList(list, 'No websites blocked yet. Add one above, or tap a suggestion.');
+    return;
+  }
   for (const d of domains) {
-    const li = document.createElement('li');
-    
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-    
-    const span = document.createElement('span');
-    span.textContent = d;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-    
     const limitInfo = limits[d] || { maxGrants: 3, maxMinutes: 10 };
     const mins = limitInfo.maxMinutes !== undefined ? limitInfo.maxMinutes : (limitInfo.max_minutes_per_day || 10);
-    
-    const limitSpan = document.createElement('span');
-    limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Daily limit: '));
-
-    const inlineInput = document.createElement('input');
-    inlineInput.type = 'number';
-    inlineInput.min = '1';
-    inlineInput.className = 'inline-limit-input';
-    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${d}`);
     const currentMins = mins > 0 ? mins : 10;
-    inlineInput.value = currentMins;
-    inlineInput.addEventListener('change', async (e) => {
+
+    const { li, fields } = buildBlockedRow({
+      target: d,
+      label: d,
+      badge: buildRowBadge(limitInfo, globalMode),
+      onRemove: () => removeDomain(d, effectiveModeFor(limitInfo, globalMode) === 'simple')
+    });
+
+    fields.appendChild(buildDailyLimitField(currentMins, d, async (e) => {
       const val = parseInt(e.target.value, 10);
       if (isNaN(val) || val <= 0) {
         e.target.value = currentMins;
@@ -2138,37 +2214,26 @@ function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReason
           renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
         }
       });
-    });
-
-    limitSpan.appendChild(inlineInput);
-    limitSpan.appendChild(document.createTextNode(' min/day'));
-    infoContainer.appendChild(limitSpan);
+    }));
 
     const rerenderDomains = async () => {
       const state = await getConfig();
       renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
     };
-    infoContainer.appendChild(buildQuickCheckControl(d, limitInfo, globalMode, rerenderDomains));
-    infoContainer.appendChild(buildRowModeControl(d, limitInfo, globalMode, rerenderDomains));
+    fields.appendChild(buildQuickCheckControl(d, limitInfo, globalMode, rerenderDomains));
+    fields.appendChild(buildRowModeControl(d, limitInfo, globalMode, rerenderDomains));
 
-    li.appendChild(infoContainer);
-
-    const btn = document.createElement('button');
-    btn.textContent = 'Remove';
-    btn.className = 'delete-btn';
-    btn.addEventListener('click', () => removeDomain(d, effectiveModeFor(limitInfo, globalMode) === 'simple'));
-    li.appendChild(btn);
-    // Last, and full width: it is prose, not another control competing for the
-    // row's horizontal space.
+    // Last, and full width: it is prose, not another field competing for the
+    // settings strip.
     li.appendChild(buildServiceReasonControl(d, d, serviceReasons, allBlockedTargets()));
     list.appendChild(li);
   }
 }
 
 // The two setup questions, per row, so a site added on day two can still be
-// explained to the coach. A disclosure rather than more inline controls: the
-// row already carries a name, a limit, a quick-check and two mode selects, and
-// it is the reason .container has a 1100px floor.
+// explained to the coach. A disclosure rather than two more fields in the
+// settings strip: the row already carries a limit, a quick-check and two mode
+// selects, and these are prose, which wants the full width of the card.
 //
 // Autosaved on blur, matching the coach-context answers rather than adding a
 // fourth explicit Save button to a page that has too many already.
@@ -2232,17 +2297,20 @@ function buildServiceReasonControl(target, label, serviceReasons, allBlocked) {
   return details;
 }
 
-// Builds the "Use default / Coach / Simple" row control shown under each
-// blocked domain/app, letting a single site or app override the global mode.
+// Builds the "Use default / Coach / Simple" control shown under each blocked
+// domain/app, letting a single site or app override the global mode, plus the
+// "what happens when you open it" pair that only a simple-mode row uses.
 // `persistKey` picks domainLimits vs appLimits; `onSaved` re-renders the list.
+//
+// Two fields, returned as a fragment so they land as siblings in the row's
+// settings strip and wrap independently — they share a persist closure but
+// nothing about their layout.
 function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = 'domainLimits') {
-  const row = document.createElement('div');
-  row.className = 'row-mode-control';
+  const frag = document.createDocumentFragment();
 
-  // Every control here is built without a visible label — the row is already
-  // dense, and repeating "Blocking mode" ten times would drown the site names.
-  // So each one names itself and the row it belongs to for a screen reader,
-  // which otherwise met three anonymous controls per site.
+  // Each control is named twice over: by the micro-label above it, and by an
+  // aria-label naming the row it belongs to — "Coach" ten times down the page
+  // means nothing to a screen reader without the site attached.
   const modeSelect = document.createElement('select');
   modeSelect.className = 'row-mode-select';
   modeSelect.setAttribute('aria-label', `How ${key} is blocked`);
@@ -2267,11 +2335,22 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   minutesInput.setAttribute('aria-label', `Minutes per pass on ${key}`);
   minutesInput.value = limitInfo.passMinutes || 10;
 
+  const minutesUnit = document.createElement('span');
+  minutesUnit.className = 'row-field-unit';
+  minutesUnit.textContent = 'min';
+
+  const modeField = buildRowField(microLabel('Blocking mode'), modeSelect);
+  const behaviorField = buildRowField(microLabel('When you open it'), behaviorSelect, minutesInput, minutesUnit);
+
   const updateVisibility = () => {
     const effMode = modeSelect.value || globalMode;
     const show = effMode === 'simple';
-    behaviorSelect.hidden = !show;
-    minutesInput.hidden = !show || behaviorSelect.value !== 'pass';
+    // The whole field goes, label and all: a lone "When you open it" caption
+    // over an empty gap is worse than the gap.
+    behaviorField.hidden = !show;
+    const showMinutes = show && behaviorSelect.value === 'pass';
+    minutesInput.hidden = !showMinutes;
+    minutesUnit.hidden = !showMinutes;
   };
   updateVisibility();
 
@@ -2296,22 +2375,20 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   behaviorSelect.addEventListener('change', () => { updateVisibility(); persist(); });
   minutesInput.addEventListener('change', persist);
 
-  row.appendChild(modeSelect);
-  row.appendChild(behaviorSelect);
-  row.appendChild(minutesInput);
-  return row;
+  frag.append(modeField, behaviorField);
+  return frag;
 }
 
-// The per-row "Quick check: [n] min × [m]/day" control, shared by the domain
-// and app lists. Same rules as every other setting here: tightening or
-// disabling applies instantly and free; enabling or raising anything goes
-// through the coach gate. Coach-only feature — hidden on simple-mode rows.
+// The per-row "Quick check: [n] min × [m]/day" field, shared by the domain and
+// app lists. Same rules as every other setting here: tightening or disabling
+// applies instantly and free; enabling or raising anything goes through the
+// coach gate. Coach-only feature — hidden on simple-mode rows.
 function buildQuickCheckControl(key, limitInfo, globalMode, onSaved, persistKey = 'domainLimits', displayName = key) {
-  const badge = document.createElement('span');
-  badge.className = 'domain-limit-badge quick-check-badge';
+  // Nothing at all rather than a hidden placeholder: the caller appends this
+  // straight into the settings strip, and an empty fragment adds no node to
+  // leave a gap in the flex line.
   if (effectiveModeFor(limitInfo, globalMode) === 'simple') {
-    badge.hidden = true;
-    return badge;
+    return document.createDocumentFragment();
   }
 
   const current = effectiveQuickCheckFor(limitInfo);
@@ -2395,13 +2472,26 @@ function buildQuickCheckControl(key, limitInfo, globalMode, onSaved, persistKey 
   minsInput.addEventListener('change', requestChange);
   usesInput.addEventListener('change', requestChange);
 
-  badge.appendChild(toggle);
-  badge.appendChild(document.createTextNode(' Quick check: '));
-  badge.appendChild(minsInput);
-  badge.appendChild(document.createTextNode(' min × '));
-  badge.appendChild(usesInput);
-  badge.appendChild(document.createTextNode('/day'));
-  return badge;
+  // The toggle lives in the micro-label rather than beside the numbers, so the
+  // thing that switches the lane on is what names it — the checkbox had only a
+  // title attribute before, which a screen reader may never announce.
+  const label = document.createElement('label');
+  label.className = 'micro-label row-toggle-label';
+  label.appendChild(toggle);
+  label.appendChild(document.createTextNode('Quick check'));
+
+  const times = document.createElement('span');
+  times.className = 'row-field-unit';
+  times.textContent = '×';
+  const perDay = document.createElement('span');
+  perDay.className = 'row-field-unit';
+  perDay.textContent = 'a day';
+
+  const mins = document.createElement('span');
+  mins.className = 'row-field-unit';
+  mins.textContent = 'min';
+
+  return buildRowField(label, minsInput, mins, times, usesInput, perDay);
 }
 
 // ---- Blocked apps (settings view, Android only) ----
@@ -2447,32 +2537,24 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
   renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';
+  if (!apps.length) {
+    renderEmptyList(list, 'No apps blocked yet. Add one above, or tap a suggestion.');
+    return;
+  }
   for (const pkg of apps) {
-    const li = document.createElement('li');
-
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-
-    const span = document.createElement('span');
-    span.textContent = labels[pkg] || pkg;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-
+    const name = labels[pkg] || pkg;
     const limitInfo = limits[pkg] || { maxGrants: 3, maxMinutes: 10 };
     const mins = limitInfo.maxMinutes !== undefined ? limitInfo.maxMinutes : 10;
-
-    const limitSpan = document.createElement('span');
-    limitSpan.className = 'domain-limit-badge';
-    limitSpan.appendChild(document.createTextNode('Daily limit: '));
-
-    const inlineInput = document.createElement('input');
-    inlineInput.type = 'number';
-    inlineInput.min = '1';
-    inlineInput.className = 'inline-limit-input';
-    inlineInput.setAttribute('aria-label', `Daily limit in minutes for ${labels[pkg] || pkg}`);
     const currentMins = mins > 0 ? mins : 10;
-    inlineInput.value = currentMins;
-    inlineInput.addEventListener('change', async (e) => {
+
+    const { li, fields } = buildBlockedRow({
+      target: pkg,
+      label: name,
+      badge: buildRowBadge(limitInfo, globalMode),
+      onRemove: () => removeApp(pkg, labels[pkg], effectiveModeFor(limitInfo, globalMode) === 'simple')
+    });
+
+    fields.appendChild(buildDailyLimitField(currentMins, name, async (e) => {
       const val = parseInt(e.target.value, 10);
       if (isNaN(val) || val <= 0) {
         e.target.value = currentMins;
@@ -2491,7 +2573,6 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
         return;
       }
 
-      const name = labels[pkg] || pkg;
       e.target.value = currentMins; // revert until/unless approved
       applyOrGate({
         isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
@@ -2506,27 +2587,16 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
           renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
         }
       });
-    });
-
-    limitSpan.appendChild(inlineInput);
-    limitSpan.appendChild(document.createTextNode(' min/day'));
-    infoContainer.appendChild(limitSpan);
+    }));
 
     const rerenderApps = async () => {
       const state = await getConfig();
       renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
     };
-    infoContainer.appendChild(buildQuickCheckControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits', labels[pkg] || pkg));
-    infoContainer.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits'));
+    fields.appendChild(buildQuickCheckControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits', name));
+    fields.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits'));
 
-    li.appendChild(infoContainer);
-
-    const btn = document.createElement('button');
-    btn.textContent = 'Remove';
-    btn.className = 'delete-btn';
-    btn.addEventListener('click', () => removeApp(pkg, labels[pkg], effectiveModeFor(limitInfo, globalMode) === 'simple'));
-    li.appendChild(btn);
-    li.appendChild(buildServiceReasonControl(pkg, labels[pkg] || pkg, serviceReasons, allBlockedTargets()));
+    li.appendChild(buildServiceReasonControl(pkg, name, serviceReasons, allBlockedTargets()));
     list.appendChild(li);
   }
 }
