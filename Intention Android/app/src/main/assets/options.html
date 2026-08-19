@@ -226,7 +226,7 @@
 
         <section class="card" id="websites-card" data-section="blocking">
           <h2>Blocked sites</h2>
-          <p class="subtitle">Add domains you want to be mindful about — "+ Add website" also suggests the usual suspects. Each row uses the blocking mode above unless you give it one of its own, and "Daily limit" is the most time you can spend there in a day however you ask.</p>
+          <p class="subtitle">Add domains you want to be mindful about — "+ Add website" also suggests the usual suspects. Each row uses the blocking mode above unless you give it one of its own, and the absolute daily max is the most time you can spend there in a day however you ask.</p>
           <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
           <ul id="domain-list"></ul>
         </section>
@@ -374,7 +374,7 @@
         <label for="domain-input">Website address</label>
         <div class="input-group">
           <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
-          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10" aria-label="Daily limit in minutes">
+          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10" aria-label="Absolute daily max in minutes">
           <button id="add-btn" class="primary">Add</button>
         </div>
         <p class="int-pw-error" id="add-site-error" hidden></p>

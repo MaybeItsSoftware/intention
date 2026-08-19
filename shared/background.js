@@ -924,11 +924,30 @@ async function checkPageMatch(host, tabId, pageContext) {
   };
 }
 
+// `looseUntilMinutes`: how many of today's minutes on a target the coach spends
+// in its lenient phase before it turns strict (see renderPhaseLine in
+// prompts.js). Absent is a real answer, not a missing one — it means no split,
+// which is exactly how every entry written before the field existed behaves —
+// so anything that isn't a finite number of minutes normalises to null rather
+// than to a number. In particular `Number(null)` is 0, and 0 would mean
+// "strict from the first minute", which is the opposite of what an unset field
+// should do.
+//
+// Normalised in three other places on purpose: effectiveModeFromStorage() in
+// content.js (which must reach a verdict with this worker dead) and
+// looseUntilFor() in options.js (which cannot import this file). Change one,
+// change all three.
+function normalizeLooseUntil(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
 async function getLimitsForDomain(domain) {
   // Apps and sites can't collide: appLimits is keyed by Android package name,
   // domainLimits by hostname, so a single lookup across both is safe.
   const { domainLimits = {}, appLimits = {} } = await getStorage(['domainLimits', 'appLimits']);
-  const defaults = { maxGrants: 3, maxMinutes: -1 };
+  const defaults = { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: null };
   const entry = domain ? (domainLimits[domain] || appLimits[domain]) : null;
   if (entry) {
     const limits = entry;
@@ -936,7 +955,8 @@ async function getLimitsForDomain(domain) {
     const maxMinutes = Number(limits.maxMinutes);
     return {
       maxGrants: isNaN(maxGrants) ? defaults.maxGrants : maxGrants,
-      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes
+      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes,
+      looseUntilMinutes: normalizeLooseUntil(limits.looseUntilMinutes)
     };
   }
   return { ...defaults };
@@ -1090,7 +1110,11 @@ async function getEffectiveMode(domain) {
   const behavior = entry?.behavior || simpleBehavior || 'pass';
   const globalPassMinutes = Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10;
   const passMinutes = Number(entry?.passMinutes) > 0 ? Number(entry.passMinutes) : globalPassMinutes;
-  return { mode, behavior, passMinutes };
+  // Carried alongside the mode because the three mirrors of this resolution are
+  // only worth anything if they answer the same shape — see normalizeLooseUntil
+  // above and effectiveModeFromStorage() in content.js. It has no global
+  // default: a lenient window is a per-site line, or it is nothing.
+  return { mode, behavior, passMinutes, looseUntilMinutes: normalizeLooseUntil(entry?.looseUntilMinutes) };
 }
 
 // The two setup answers, keyed by service (see serviceKeyFor in sites.js).
@@ -1200,6 +1224,14 @@ async function applyHostedBalance(access, llmResponse) {
   }, null);
 }
 
+// Settings-gate change types whose `domain` is an app target (an Android
+// package name) rather than a hostname. Listed once because three places have
+// to agree about it: page context is meaningless for an app, the display name
+// has to come from appLabels, and the app context block replaces the page one.
+// The reason-box edits are deliberately absent — they exist on site rows and
+// app rows alike, so the options page tells us which with `isApp` instead.
+const APP_CHANGE_TYPES = ['remove_app', 'increase_app_limit', 'increase_app_loose_window'];
+
 async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext }) {
   const { userContext, contextProjects, contextReasons, coachInstructions, coachObservations = [], serviceReasons = {} } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'coachObservations', 'serviceReasons']);
   // What the user said this particular service is for, written during setup
@@ -1214,7 +1246,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   }
 
   // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
-  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit';
+  const isAppTarget = isApp || APP_CHANGE_TYPES.includes(changeType);
   let pageCtx = pageContext || null;
   if (!pageCtx && tabId != null) {
     const nav = await readNavContext(tabId);
@@ -1243,7 +1275,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // page to describe, and saying nothing let the coach invent a screen it
   // cannot see. See renderAppContextBlock.
   let appCtx = null;
-  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit') {
+  if (isApp || APP_CHANGE_TYPES.includes(changeType)) {
     const { appLabels = {} } = await getStorage(['appLabels']);
     const label = appLabel || appLabels[domain];
     displayName = label ? `the ${label} app` : 'a blocked app';
@@ -1274,6 +1306,10 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       grantsCap: limits.maxGrants,
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
+      // The phase is one derived boolean beside the minutes that decide it —
+      // no new tracking, just the split the user set read against today's
+      // total. Renders below the cache break, with the rest of the usage.
+      looseUntilMinutes: limits.looseUntilMinutes,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll,
       minutesWeekSite: stats.minutesWeek,
@@ -1307,6 +1343,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       grantsCap: limits.maxGrants,
       minutesCap: limits.maxMinutes,
       minutesTodaySite: stats.minutesToday,
+      looseUntilMinutes: limits.looseUntilMinutes,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekSite: stats.minutesWeek,
       reasonsToday: stats.reasonsToday,
@@ -1436,11 +1473,25 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           continue;
         }
 
+        // Past their own loose/strict split, the prompt has already told the
+        // coach to hold a higher bar — but a prompt is guidance and this is
+        // arithmetic. The mechanical half is here: a weak decision late in the
+        // day costs less because the pass it buys is shorter. Silent when they
+        // never set a split, like everything else about the phase.
+        const phase = computePhase(limits.looseUntilMinutes, stats.minutesToday);
+
         let minutes = Math.max(1, Math.min(60, requested));
         // Which constraint actually bound matters for the correction below: a
         // no-cap user whose 90-minute ask hits the 60-minute ceiling must not
         // be told about a "daily cap" they never set.
         let clampCause = minutes < requested ? 'the 60-minute ceiling on any single pass' : '';
+        // Between the per-pass ceiling and the daily cap, because it is the
+        // same kind of rule as the first and must still lose to the second:
+        // the cap is a hard stop on the day, this only shortens one pass.
+        if (phase && phase.strict && minutes > STRICT_PHASE_MAX_MINUTES) {
+          minutes = STRICT_PHASE_MAX_MINUTES;
+          clampCause = STRICT_PHASE_CLAMP_CAUSE;
+        }
         if (limits.maxMinutes > 0) {
           const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
           if (minutes > remainingMinutes) {
@@ -1459,7 +1510,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${clampCause}. The pass was granted for ${minutes} minutes.`;
           systemNote = clampCause === "the user's daily minutes cap"
             ? `Only ${minutes} minutes were available under your daily cap — your pass is ${minutes} minutes.`
-            : `Passes top out at 60 minutes — your pass is ${minutes} minutes.`;
+            : clampCause === STRICT_PHASE_CLAMP_CAUSE
+              ? `Your lenient window here is spent for today, so passes are capped at ${STRICT_PHASE_MAX_MINUTES} minutes — your pass is ${minutes} minutes.`
+              : `Passes top out at 60 minutes — your pass is ${minutes} minutes.`;
         }
 
         const reason = String(input.reason || '').slice(0, 240);
@@ -1539,6 +1592,8 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     } else if (settingApproved) {
       if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced — I've removed ${displayName} from your blocklist.`;
       else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${displayName}.`;
+      else if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') acceptanceFallback = `Alright — I've lengthened the easy stretch on ${displayName}. I'll still ask what you're there for.`;
+      else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') acceptanceFallback = `Okay, that's a fair correction — I've saved your new wording for ${displayName}.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
@@ -1628,7 +1683,7 @@ function friendlyLlmErrorMessage(e) {
 // Perform the actual loosening mutation once the coach approves it, then
 // persist and re-sync the blocking rules. Returns the resulting state.
 async function applySettingChange({ domain, changeType, newValue }) {
-  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {} } = await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels']);
+  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {}, serviceReasons = {} } = await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons']);
 
   if (changeType === 'remove') {
     const domains = blockedDomains.filter(x => x !== domain);
@@ -1667,6 +1722,51 @@ async function applySettingChange({ domain, changeType, newValue }) {
     limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
     await setStorage({ appLimits: limits });
     return { changeType, domain, appLimits: limits, maxMinutes: limits[domain].maxMinutes };
+  }
+
+  // Lengthening the lenient window. The direction is the whole reason this is
+  // here at all: SHORTENING it tightens the rule and the settings page saves
+  // that on its own, free, exactly as it does a lowered daily max. Only the
+  // loosening half ever reaches the coach.
+  //
+  // No syncBlockingRules: which domains redirect hasn't changed, only how the
+  // coach judges them once you're there.
+  if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') {
+    const isApp = changeType === 'increase_app_loose_window';
+    const key = isApp ? 'appLimits' : 'domainLimits';
+    const limits = { ...(isApp ? appLimits : domainLimits) };
+    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
+    // A non-number here would silently unset the split rather than widen it,
+    // which is a louder loosening than the one that was approved — so an
+    // unreadable value floors at zero instead.
+    const parsed = normalizeLooseUntil(newValue);
+    limits[domain] = { ...limits[domain], looseUntilMinutes: parsed == null ? 0 : parsed };
+    await setStorage({ [key]: limits });
+    return { changeType, domain, [key]: limits, looseUntilMinutes: limits[domain].looseUntilMinutes };
+  }
+
+  // Rewriting one of the two things the user told the coach this service is
+  // for. Keyed per SERVICE, not per target — serviceKeyFor folds the X app and
+  // x.com onto one answer, which is what the row's "Shared with …" note is
+  // telling you. The first write of a field never comes through here; it is
+  // saved directly, because there is no weak moment to guard against before
+  // anything exists (same reasoning as the coach-context card).
+  if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') {
+    const key = serviceKeyFor(domain);
+    if (!key) return null;
+    const field = changeType === 'edit_site_purpose' ? 'purpose' : 'legitimateUse';
+    const next = { ...serviceReasons };
+    // Through sanitizeServiceReasons like every other write of this key: it is
+    // free text that lands in a system prompt, and coach approval must not be
+    // a way around the trim and the 500-char cap. Blanking both fields drops
+    // the entry, which is what "never answered" already looks like.
+    const sanitized = sanitizeServiceReasons({
+      [key]: { ...(next[key] || {}), [field]: String(newValue == null ? '' : newValue), updatedAt: Date.now() }
+    });
+    if (sanitized[key]) next[key] = sanitized[key];
+    else delete next[key];
+    await setStorage({ serviceReasons: next });
+    return { changeType, domain, serviceReasons: next };
   }
 
   // `increase_quick_check` / `increase_app_quick_check` used to be handled

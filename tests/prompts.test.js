@@ -317,6 +317,51 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
     expect(out).toContain('DISABLE all blocking');
   });
 
+  it('increase_loose_window says what actually changes, since the cap does not', () => {
+    const out = P.buildSettingsGateSystemPrompt({
+      ...base, changeType: 'increase_loose_window', currentValue: 10, newValue: 25
+    });
+    expect(out).toContain('LENGTHEN the lenient window on reddit.com from 10 to 25 minutes');
+    expect(out).toContain('only genuine need does');
+  });
+
+  it('the app variant of the lenient window gets the same wording', () => {
+    const out = P.buildSettingsGateSystemPrompt({
+      ...base, domain: 'the Instagram app', changeType: 'increase_app_loose_window',
+      currentValue: 10, newValue: 25
+    });
+    expect(out).toContain('LENGTHEN the lenient window on the Instagram app');
+  });
+
+  // The judgement is on the new wording, not on the fact of editing — so both
+  // versions have to be in front of the coach.
+  it('a reason-box rewrite shows the coach both versions', () => {
+    const out = P.buildSettingsGateSystemPrompt({
+      ...base, changeType: 'edit_site_legitimate',
+      currentValue: 'Replying to a specific DM.', newValue: 'Keeping up with people.'
+    });
+    expect(out).toContain('REWRITE what they told you counts as a legitimate reason to open reddit.com');
+    expect(out).toContain('> Replying to a specific DM.');
+    expect(out).toContain('> Keeping up with people.');
+    expect(out).toContain('Judge the new wording, not the act of editing');
+  });
+
+  it('names the right field for a purpose rewrite', () => {
+    const out = P.buildSettingsGateSystemPrompt({
+      ...base, changeType: 'edit_site_purpose', currentValue: 'a', newValue: 'b'
+    });
+    expect(out).toContain('REWRITE what they told you they need reddit.com for');
+  });
+
+  it('caps a rewrite at the same length the sanitiser stores', () => {
+    const out = P.buildSettingsGateSystemPrompt({
+      ...base, changeType: 'edit_site_purpose',
+      currentValue: 'a', newValue: 'x'.repeat(900)
+    });
+    expect(out).toContain('x'.repeat(500));
+    expect(out).not.toContain('x'.repeat(501));
+  });
+
   it('unknown changeType falls back to generic loosen wording', () => {
     const out = P.buildSettingsGateSystemPrompt({ ...base, changeType: 'weird' });
     expect(out).toContain('loosen their blocking settings on reddit.com');
@@ -988,6 +1033,98 @@ describe('renderWalkAwayLine', () => {
       reasonsToday: [], walkedAwayToday: 2, walkedAwayWeek: 5
     });
     expect(out).toContain('2 today, 5 in the last 7 days');
+  });
+});
+
+// The loose -> strict split: one stored number (`looseUntilMinutes`) read
+// against minutes already spent on this site today. The whole point of the
+// field being optional is that an entry without one behaves exactly as it did
+// before the field existed, so "silent when absent" is the first thing tested.
+describe('the loose -> strict phase', () => {
+  const at = (looseUntil, minutesToday) => P.buildGateSystemPrompt({
+    domain: 'twitter.com', coachInstructions: '{{usage}}',
+    grantsToday: 0, grantsCap: 3, minutesCap: 45,
+    minutesTodaySite: minutesToday, minutesTodayAll: minutesToday, minutesWeekAll: 0,
+    looseUntilMinutes: looseUntil,
+    reasonsToday: []
+  });
+
+  describe('computePhase', () => {
+    it('is null when no split was ever set', () => {
+      expect(P.computePhase(undefined, 30)).toBeNull();
+      expect(P.computePhase(null, 30)).toBeNull();
+      expect(P.computePhase('', 30)).toBeNull();
+    });
+
+    // Number(null) is 0, and a 0 read as a split means "strict from the first
+    // minute" — the exact opposite of an unset field. Worth its own case.
+    it('does not turn an absent value into a zero split', () => {
+      expect(P.computePhase(null, 0)).toBeNull();
+      expect(P.computePhase(0, 0)).toEqual({ split: 0, strict: true, remaining: 0 });
+    });
+
+    it('is loose below the split and strict at or above it', () => {
+      expect(P.computePhase(15, 14).strict).toBe(false);
+      expect(P.computePhase(15, 15).strict).toBe(true);
+      expect(P.computePhase(15, 16).strict).toBe(true);
+    });
+
+    it('counts down what is left of the window, never past zero', () => {
+      expect(P.computePhase(15, 0).remaining).toBe(15);
+      expect(P.computePhase(15, 9).remaining).toBe(6);
+      expect(P.computePhase(15, 40).remaining).toBe(0);
+    });
+  });
+
+  it('says nothing at all when no split was set', () => {
+    const out = at(undefined, 30);
+    expect(out).not.toContain('lenient window');
+    expect(out).not.toContain('STRICT phase');
+  });
+
+  it('below the split, tells the coach a plausible reason is enough', () => {
+    const out = at(15, 9);
+    expect(out).toContain('LOOSE phase');
+    expect(out).toContain('they set it at 15 minutes on this site and 6 of those are left');
+    expect(out).toContain('plausible, specific reason is enough');
+    expect(out).not.toContain('SPENT');
+  });
+
+  // The boundary is inclusive: the minute you reach the split you are past it.
+  it('at the split exactly, the window is already spent', () => {
+    const out = at(15, 15);
+    expect(out).toContain("Today's lenient window is SPENT");
+    expect(out).not.toContain('LOOSE phase');
+  });
+
+  it('above the split, names the window as spent and the clamp that follows', () => {
+    const out = at(15, 30);
+    expect(out).toContain("Today's lenient window is SPENT");
+    expect(out).toContain('only genuine need is');
+    // The user drew the line; the coach is not to present it as its own rule.
+    expect(out).toContain('they drew that line themselves');
+    expect(out).toContain(`capped at ${P.STRICT_PHASE_MAX_MINUTES} minutes`);
+  });
+
+  it('reaches the check-in prompt too — that is where it usually turns over', () => {
+    const out = P.buildCheckinSystemPrompt({
+      domain: 'twitter.com', coachInstructions: '{{usage}}',
+      originalReason: 'reply to one DM',
+      grantsToday: 1, grantsCap: 3, minutesCap: 45,
+      minutesTodaySite: 20, minutesTodayAll: 20,
+      looseUntilMinutes: 15,
+      reasonsToday: ['reply to one DM']
+    });
+    expect(out).toContain("Today's lenient window is SPENT");
+  });
+
+  // The line changes as the minutes climb, so caching it would serve a stale
+  // phase for the rest of the day.
+  it('sits below the cache break, with the rest of the volatile usage', () => {
+    const out = at(15, 30);
+    const markerAt = out.indexOf(P.CACHE_BREAK_MARKER);
+    expect(markerAt).toBeGreaterThan(-1);
+    expect(out.indexOf("Today's lenient window is SPENT")).toBeGreaterThan(markerAt);
   });
 });
 

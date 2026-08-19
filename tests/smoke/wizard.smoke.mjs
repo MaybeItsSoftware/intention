@@ -190,7 +190,6 @@ async function main() {
       const rows = [...document.querySelectorAll('#domain-list li')];
       return rows.map(li => ({
         name: li.querySelector('.domain-name')?.textContent,
-        summary: li.querySelector('.row-reason summary')?.textContent,
         value: li.querySelector('.row-reason-input')?.value,
         shared: li.querySelector('.row-reason-shared')?.textContent || null
       }));
@@ -222,7 +221,6 @@ async function main() {
       renderApps(s.blockedApps, s.appLimits, s.appLabels, s.blockingMode, s.serviceReasons);
       renderDomains(s.blockedDomains, s.domainLimits, s.blockingMode, s.serviceReasons);
       const read = (sel) => [...document.querySelectorAll(sel)].map(li => ({
-        summary: li.querySelector('.row-reason summary')?.textContent,
         value: li.querySelector('.row-reason-input')?.value,
         shared: li.querySelector('.row-reason-shared')?.textContent || null
       }));
@@ -242,20 +240,47 @@ async function main() {
     record('an unrelated site is not dragged into the pairing',
       blogRow?.shared === null, JSON.stringify(blogRow));
 
-    // ── Editing the app row must move the website's answer too, or the
-    // "shared" line above is a lie.
+    // ── Writing from the app row must land on the website's answer, or the
+    // "shared" line above is a lie. Blank one half first, so the box being
+    // typed into is a FIRST write: those go straight in, exactly as the
+    // coach-context card's first write does — there is no weak moment to
+    // guard against before an answer exists.
+    await page.evaluate(() => new Promise(done => chrome.runtime.sendMessage({
+      action: 'saveSettings',
+      config: { serviceReasons: { 'instagram.com': { purpose: 'DMs from my sister.' } } }
+    }, done)));
     await page.evaluate(async () => {
-      const area = document.querySelector('#app-list li .row-reason-input');
+      const s = await getConfig();
+      renderApps(s.blockedApps, s.appLimits, s.appLabels, s.blockingMode, s.serviceReasons);
+      const area = [...document.querySelectorAll('#app-list li .row-reason-input')][1];
       area.value = 'Only to reply, never to browse.';
       area.dispatchEvent(new Event('change'));
     });
     await page.waitForTimeout(300);
-    const afterEdit = await page.evaluate(() => new Promise(done =>
+    const afterFirst = await page.evaluate(() => new Promise(done =>
       chrome.storage.local.get('serviceReasons', r => done(r.serviceReasons))));
-    record('editing the app row rewrites the shared answer, not a second copy',
-      afterEdit['instagram.com']?.purpose === 'Only to reply, never to browse.'
-        && afterEdit['com.instagram.android'] === undefined,
-      JSON.stringify(afterEdit));
+    record('a first answer typed on the app row lands on the shared key, not a second copy',
+      afterFirst['instagram.com']?.legitimateUse === 'Only to reply, never to browse.'
+        && afterFirst['com.instagram.android'] === undefined,
+      JSON.stringify(afterFirst));
+
+    // ── Every edit AFTER that is a rule the coach already reasons from, so it
+    // costs a conversation. Nothing may reach storage until one is had, and
+    // the box reverts to the stored wording meanwhile.
+    const afterSecond = await page.evaluate(async () => {
+      const area = [...document.querySelectorAll('#app-list li .row-reason-input')][1];
+      area.value = 'Anything I feel like, actually.';
+      area.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 300));
+      const stored = await new Promise(done =>
+        chrome.storage.local.get('serviceReasons', r => done(r.serviceReasons)));
+      return { stored, shown: area.value };
+    });
+    record('editing an answer that already exists does not write silently',
+      afterSecond.stored['instagram.com']?.legitimateUse === 'Only to reply, never to browse.',
+      JSON.stringify(afterSecond.stored));
+    record('and the box reverts until the coach agrees',
+      afterSecond.shown === 'Only to reply, never to browse.', afterSecond.shown);
 
     if (HEADED) await page.waitForTimeout(5000);
   } finally {

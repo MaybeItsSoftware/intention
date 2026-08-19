@@ -1843,6 +1843,112 @@ describe('the honesty turn after a clamped or rejected grant', () => {
     expect(secondBody.messages.at(-1).content).not.toContain('daily');
   });
 
+  // The mechanical half of the loose -> strict split. The prompt tells the
+  // coach to hold a higher bar past the split; this is the part that holds it
+  // whether the coach listened or not — and, because it goes through the same
+  // clampCause channel as the 60-minute ceiling, the coach has to explain the
+  // shorter pass in its own voice rather than quietly hand one over.
+  describe('a grant in the strict phase', () => {
+    // Split at 15 minutes, 20 already spent today, no daily minutes cap in the
+    // way — so the strict ceiling is the only thing that can bind.
+    const strictSeed = () => ({
+      ...CONFIGURED,
+      domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: 15 } },
+      dailyStats: {
+        [today()]: {
+          'instagram.com': { minutes: 20, grants: 1, sessions: [{ reason: 'earlier', grantedMinutes: 20, grantedAt: Date.now() }] }
+        }
+      }
+    });
+
+    it('comes back clamped, and the coach is told why', async () => {
+      const fetch = grantingFetch(30, 'find one thing');
+      const { ctx } = loadBackground({ seed: strictSeed(), fetch });
+      const res = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        tab(1)
+      );
+
+      expect(res.grantedSession.intervalMinutes).toBe(10);
+      expect(res.systemNote).toContain('lenient window here is spent');
+      expect(res.systemNote).toContain('your pass is 10 minutes');
+      // Not the 60-minute ceiling's wording: a 30-minute ask never touched it.
+      expect(res.systemNote).not.toContain('top out at 60');
+
+      const correction = JSON.parse(fetch.calls[1].init.body).messages.at(-1).content;
+      expect(correction).toContain('asked for 30 minutes');
+      expect(correction).toContain('only 10 were available');
+      expect(correction).toContain('strict-phase cap');
+    });
+
+    it('leaves a short ask alone — the clamp is a ceiling, not a target', async () => {
+      const fetch = grantingFetch(5, 'one reply');
+      const { ctx } = loadBackground({ seed: strictSeed(), fetch });
+      const res = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        tab(1)
+      );
+      expect(res.grantedSession.intervalMinutes).toBe(5);
+      expect(res.systemNote).toBeFalsy();
+      expect(fetch.calls.length).toBe(1); // nothing to correct, no honesty turn
+    });
+
+    it('does not apply below the split', async () => {
+      const fetch = grantingFetch(30, 'find one thing');
+      const { ctx } = loadBackground({
+        seed: {
+          ...strictSeed(),
+          dailyStats: { [today()]: { 'instagram.com': { minutes: 4, grants: 1, sessions: [] } } }
+        },
+        fetch
+      });
+      const res = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        tab(1)
+      );
+      expect(res.grantedSession.intervalMinutes).toBe(30);
+      expect(res.systemNote).toBeFalsy();
+    });
+
+    it('does not apply at all to a site with no split set', async () => {
+      const fetch = grantingFetch(30, 'find one thing');
+      const { ctx } = loadBackground({
+        seed: {
+          ...CONFIGURED,
+          domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: -1 } },
+          dailyStats: { [today()]: { 'instagram.com': { minutes: 200, grants: 1, sessions: [] } } }
+        },
+        fetch
+      });
+      const res = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        tab(1)
+      );
+      expect(res.grantedSession.intervalMinutes).toBe(30);
+      expect(res.systemNote).toBeFalsy();
+    });
+
+    // The daily cap is a hard stop on the day; the strict ceiling only
+    // shortens one pass. When both bind, the day has to win.
+    it('loses to the daily minutes cap when both bind', async () => {
+      const fetch = grantingFetch(30, 'find one thing');
+      const { ctx } = loadBackground({
+        seed: {
+          ...CONFIGURED,
+          domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 24, looseUntilMinutes: 15 } },
+          dailyStats: { [today()]: { 'instagram.com': { minutes: 20, grants: 1, sessions: [] } } }
+        },
+        fetch
+      });
+      const res = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        tab(1)
+      );
+      expect(res.grantedSession.intervalMinutes).toBe(4);
+      expect(res.systemNote).toBe('Only 4 minutes were available under your daily cap — your pass is 4 minutes.');
+    });
+  });
+
   it('never loops: tool calls on the correction turn are ignored', async () => {
     // Static mock: the correction turn ALSO answers with a grant_access call.
     const fetch = grantingFetch(10, 'check DMs');
@@ -2274,5 +2380,100 @@ describe('the gate backstop', () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+// The two loosenings the coach gate learned alongside removing a site and
+// raising its cap. Both are reached only through approve_setting_change (or,
+// on a simple-mode row, straight through the message API) — the TIGHTENING
+// half of each never comes here at all, because the settings page saves a
+// shortened window and a narrowed answer on its own, free.
+describe('applySettingChange: the lenient window', () => {
+  const SEED = () => ({
+    ...CONFIGURED,
+    blockedDomains: ['instagram.com'],
+    blockedApps: ['com.instagram.android'],
+    domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 45, looseUntilMinutes: 10 } },
+    appLimits: { 'com.instagram.android': { maxGrants: 3, maxMinutes: 45 } }
+  });
+
+  it('writes the longer window on a site', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    const res = await ctx.applySettingChange({
+      changeType: 'increase_loose_window', domain: 'instagram.com', newValue: 25
+    });
+    expect(res.looseUntilMinutes).toBe(25);
+    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(25);
+    // Nothing else on the entry moves.
+    expect(chrome.storage._store.domainLimits['instagram.com'].maxMinutes).toBe(45);
+  });
+
+  it('writes the app variant into appLimits, not domainLimits', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    await ctx.applySettingChange({
+      changeType: 'increase_app_loose_window', domain: 'com.instagram.android', newValue: 20
+    });
+    expect(chrome.storage._store.appLimits['com.instagram.android'].looseUntilMinutes).toBe(20);
+    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(10);
+  });
+
+  // An unreadable value must not UNSET the split — that would be a bigger
+  // loosening than the one the coach approved.
+  it('floors an unreadable value at zero rather than clearing the split', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    await ctx.applySettingChange({
+      changeType: 'increase_loose_window', domain: 'instagram.com', newValue: 'lots'
+    });
+    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(0);
+  });
+});
+
+describe('applySettingChange: rewriting what a service is for', () => {
+  const SEED = () => ({
+    ...CONFIGURED,
+    blockedDomains: ['instagram.com'],
+    serviceReasons: {
+      'instagram.com': { purpose: 'Replying to my sister', legitimateUse: 'A specific DM', updatedAt: 1 }
+    }
+  });
+
+  it('replaces only the field the change type names', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    await ctx.applySettingChange({
+      changeType: 'edit_site_purpose', domain: 'instagram.com', newValue: 'Coordinating a group trip'
+    });
+    const stored = chrome.storage._store.serviceReasons['instagram.com'];
+    expect(stored.purpose).toBe('Coordinating a group trip');
+    expect(stored.legitimateUse).toBe('A specific DM');
+  });
+
+  it('writes through the same key the app shares, not a per-domain one', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    await ctx.applySettingChange({
+      changeType: 'edit_site_legitimate', domain: 'com.instagram.android', newValue: 'One reply, never the feed'
+    });
+    // serviceKeyFor folds the app onto the same service as the site.
+    expect(chrome.storage._store.serviceReasons['instagram.com'].legitimateUse).toBe('One reply, never the feed');
+    expect(chrome.storage._store.serviceReasons['com.instagram.android']).toBeUndefined();
+  });
+
+  // Coach approval must not be a way round the sanitiser: this text lands in a
+  // system prompt, and saveSettings caps every other route into it.
+  it('trims and caps the approved text like every other write of this key', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED() });
+    await ctx.applySettingChange({
+      changeType: 'edit_site_purpose', domain: 'instagram.com', newValue: '   ' + 'x'.repeat(900) + '   '
+    });
+    expect(chrome.storage._store.serviceReasons['instagram.com'].purpose).toHaveLength(500);
+  });
+
+  it('drops the entry when the last answer is blanked', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...CONFIGURED, serviceReasons: { 'instagram.com': { purpose: 'Only this one', updatedAt: 1 } } }
+    });
+    await ctx.applySettingChange({
+      changeType: 'edit_site_purpose', domain: 'instagram.com', newValue: ''
+    });
+    expect(chrome.storage._store.serviceReasons['instagram.com']).toBeUndefined();
   });
 });
