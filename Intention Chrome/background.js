@@ -99,9 +99,95 @@ if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
     console.warn(INT_LOG, 'webNavigation listener warning:', e);
   }
 }
+
+// Safari gets no declarativeNetRequest safety net: domainsNeedingRedirect()
+// returns nothing there, because WebKit's DNR engine cannot complete a load to
+// the gate page (see the note on it). So on Safari the content script's overlay
+// is the only thing standing between a blocked site and a full page of it, and
+// every way that overlay can fail to appear — the script was never injected,
+// the check errored, storage was unreadable — fails open, silently, for the
+// whole visit, with nothing in the UI to say so.
+//
+// This is the second line. It watches what actually committed in the tab, and
+// if the page hasn't reported an overlay shortly after, navigates the tab to
+// the gate itself. tabs.update is the one route to coaching.html that works
+// here: the DNR engine fails that URL with NSURLErrorFileDoesNotExist (-1100),
+// but a tab navigating to it loads it fine.
+//
+// It runs on onCommitted and never earlier, deliberately. Diverting an
+// in-flight Safari cross-process navigation strands the tab on the previous
+// page with the progress bar stuck — the same failure window.stop() caused in
+// content.js — while a page that has already committed can be navigated away
+// from safely.
+//
+// The grace period is longer than the content script's own retry budget
+// (CHECK_TOTAL_BUDGET_MS, 2.5s), so this only fires once the page has
+// definitively given up, or was never there to try. A background page that
+// gets suspended inside the grace period simply loses the timer; the backstop
+// is a safety net, not a mechanism anything else depends on.
+const GATE_BACKSTOP_GRACE_MS = 3000;
+const gateBackstopTimers = new Map();
+
+function cancelGateBackstop(tabId) {
+  const timer = gateBackstopTimers.get(tabId);
+  if (timer == null) return;
+  clearTimeout(timer);
+  gateBackstopTimers.delete(tabId);
+}
+
+async function enforceGateBackstop(tabId, url) {
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch (e) {
+    return;
+  }
+  const { blockedDomains = [], setupComplete = false, activeSessions = {} } = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions']);
+  // Before setup there is no blocklist to be on, and the gate page has nothing
+  // to coach with. The content script's own setup-needed notice is the right
+  // answer there, not a navigation.
+  if (!setupComplete) return;
+  const matchedDomain = blockedDomains.find(d => hostMatchesDomain(host, d)) || null;
+  if (!matchedDomain) return;
+  if (readSession(activeSessions, tabId, matchedDomain)) return;
+  // The tab may have moved on during the grace period — only act if it is
+  // still sitting on the page this was scheduled for.
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || tab.url !== url) return;
+  } catch (e) {
+    return;
+  }
+  console.warn(INT_LOG, 'gate backstop firing for', matchedDomain, '- the page never reported an overlay');
+  await chrome.tabs.update(tabId, {
+    url: chrome.runtime.getURL(`coaching.html?domain=${encodeURIComponent(matchedDomain)}`)
+  });
+}
+
+if (typeof chrome !== 'undefined' && chrome.webNavigation?.onCommitted) {
+  try {
+    const extensionOrigin = chrome.runtime.getURL('');
+    chrome.webNavigation.onCommitted.addListener((details) => {
+      if (details.frameId !== 0 || !details.url) return;
+      // Whatever was pending for this tab was for the page it just left.
+      cancelGateBackstop(details.tabId);
+      if (details.url.startsWith(extensionOrigin) || details.url.startsWith('chrome-extension://') || details.url.startsWith('about:')) return;
+      const timer = setTimeout(() => {
+        gateBackstopTimers.delete(details.tabId);
+        enforceGateBackstop(details.tabId, details.url)
+          .catch(e => console.warn(INT_LOG, 'gate backstop failed:', e));
+      }, GATE_BACKSTOP_GRACE_MS);
+      gateBackstopTimers.set(details.tabId, timer);
+    });
+  } catch (e) {
+    console.warn(INT_LOG, 'webNavigation onCommitted listener warning:', e);
+  }
+}
+
 if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   try {
     chrome.tabs.onRemoved.addListener((tabId) => {
+      cancelGateBackstop(tabId);
       delete tabNavContext[tabId];
       persistNavContext();
     });
@@ -593,6 +679,12 @@ async function handleMessage(message, sender) {
   const tabId = sender.tab?.id ?? (typeof message.tabId === 'number' ? message.tabId : undefined);
   switch (message.action) {
     case 'checkPageMatch': return checkPageMatch(message.host, tabId, message.pageContext);
+    // The content script has put Intention's own UI on the page — a gate, a
+    // pass badge, or one of the interstitials. Whichever it was, the page is
+    // handled and the backstop above has nothing left to do.
+    case 'gateShown':
+      cancelGateBackstop(tabId);
+      return { ok: true };
     case 'getConfig': {
       const config = await getFullConfig();
       // Only extension pages (options, coaching) may read the API key —

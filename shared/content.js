@@ -362,6 +362,11 @@ let capturedPageCtx = null;
 // Guards against a second check running while the first is still working
 // through its retries (visibilitychange and pageshow can both fire mid-flight).
 let checking = false;
+// ...and remembers that one arrived, instead of dropping it. A trigger that
+// fires mid-flight is usually the more informative one — the page just became
+// visible, or came back from the page cache — so throwing it away lost exactly
+// the second chance it existed to provide.
+let recheckQueued = false;
 
 // Extracts what the page says about itself and folds it into whatever we
 // already had. A field only ever gets overwritten by a NEW non-empty value —
@@ -394,9 +399,27 @@ function samePage(a, b) {
   }
 }
 
+// Everything that puts Intention's own UI on the page goes through here, so
+// the background can tell the difference between "the content script has this
+// page handled" and "nothing happened at all". Only the second needs the
+// backstop in background.js.
+function markHandled() {
+  handled = true;
+  try {
+    chrome.runtime.sendMessage({ action: "gateShown" }, () => {
+      // A suspended background page is the very condition the backstop exists
+      // for, so a dropped message here is not an error — it just means the
+      // backstop keeps watching, and stands down when it re-checks storage.
+      void chrome.runtime.lastError;
+    });
+  } catch (e) {
+    /* background unreachable — the backstop takes it from here */
+  }
+}
+
 function showGate(why) {
   if (handled) return;
-  handled = true;
+  markHandled();
   console.log(INT_LOG, "showGate ->", why);
   try {
     // Last chance: after this the body is gone.
@@ -461,7 +484,11 @@ function askBackground(message, timeoutMs) {
 }
 
 async function runCheck() {
-  if (handled || checking) return;
+  if (handled) return;
+  if (checking) {
+    recheckQueued = true;
+    return;
+  }
   checking = true;
   try {
     const host = window.location.hostname;
@@ -478,6 +505,16 @@ async function runCheck() {
           CHECK_ATTEMPT_TIMEOUT_MS,
         );
         console.log(INT_LOG, "checkPageMatch response", response);
+        // An answer that carries an error — or that never got as far as
+        // saying whether this page is blocked — is a failed attempt, not a
+        // verdict. background.js answers a thrown error with `{ error }`,
+        // which is a perfectly truthy response object, so this used to reach
+        // applyCheckResult and trip its `!response.isBlocked` early return:
+        // no gate, no retry, no storage fallback, for the whole visit. Throw
+        // instead and let the retry budget below do its job.
+        if (response.error || typeof response.isBlocked !== "boolean") {
+          throw new Error(response.error || "no verdict in checkPageMatch reply");
+        }
         applyCheckResult(response);
         return;
       } catch (e) {
@@ -495,6 +532,10 @@ async function runCheck() {
     await checkFromStorage(host);
   } finally {
     checking = false;
+    if (recheckQueued && !handled) {
+      recheckQueued = false;
+      runCheck();
+    }
   }
 }
 
@@ -509,7 +550,7 @@ function applyCheckResult(response) {
 
   if (!response.setupComplete) {
     if (handled) return;
-    handled = true;
+    markHandled();
     try {
       ensureBodyAndHush();
       injectOverlayStyle();
@@ -525,7 +566,7 @@ function applyCheckResult(response) {
 
   if (response.session) {
     if (handled) return;
-    handled = true;
+    markHandled();
     currentSession = response.session;
     runWhenBodyExists(() => {
       try {
@@ -541,7 +582,7 @@ function applyCheckResult(response) {
     // Blocked, with no coach to argue with. The site stays blocked —
     // there's just nothing to say to it from here.
     if (handled) return;
-    handled = true;
+    markHandled();
     try {
       ensureBodyAndHush();
       injectOverlayStyle();
@@ -554,36 +595,53 @@ function applyCheckResult(response) {
   }
 }
 
+const STORAGE_RETRY_DELAYS_MS = [100, 300];
+
+function readGateStorage() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(
+      [
+        "blockedDomains",
+        "setupComplete",
+        "activeSessions",
+        "blockingMode",
+        "simpleBehavior",
+        "simplePassMinutes",
+        "domainLimits",
+      ],
+      (items) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(items || {});
+      },
+    );
+  });
+}
+
 // Last resort, when the background never answered: everything the gate needs
 // to decide is already in extension storage, which a content script may read
 // on its own. An unreachable background then degrades to "gate shown, coach
 // retries" instead of "blocked site wide open".
 async function checkFromStorage(host) {
   let stored;
-  try {
-    stored = await new Promise((resolve, reject) => {
-      chrome.storage.local.get(
-        [
-          "blockedDomains",
-          "setupComplete",
-          "activeSessions",
-          "blockingMode",
-          "simpleBehavior",
-          "simplePassMinutes",
-          "domainLimits",
-        ],
-        (items) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          resolve(items || {});
-        },
-      );
-    });
-  } catch (e) {
-    console.warn(INT_LOG, "storage fallback failed:", e && e.message);
-    return;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      stored = await readGateStorage();
+      break;
+    } catch (e) {
+      const delay = STORAGE_RETRY_DELAYS_MS[attempt];
+      if (delay == null) {
+        // Both the background and storage are unreachable, so there is nothing
+        // left to decide from and the page stays open. This is the one path
+        // that fails open with no gate at all — say so at error level, because
+        // a warning here is the only trace a silently unblocked site leaves.
+        console.error(INT_LOG, "storage fallback failed:", e && e.message);
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
   if (handled) return;
 
@@ -594,7 +652,7 @@ async function checkFromStorage(host) {
   if (!matched) return;
 
   if (!stored.setupComplete) {
-    handled = true;
+    markHandled();
     try {
       ensureBodyAndHush();
       injectOverlayStyle();
@@ -621,7 +679,7 @@ async function checkFromStorage(host) {
       Date.now() < s.startTime + s.intervalMinutes * 60000,
   );
   if (live) {
-    handled = true;
+    markHandled();
     currentSession = live;
     runWhenBodyExists(() => {
       try {
@@ -671,6 +729,19 @@ if (typeof document.visibilityState !== "undefined") {
 // exactly those restores.
 window.addEventListener("pageshow", (event) => {
   if (event.persisted && !handled) runCheck();
+});
+
+// The document_start pass can lose its race outright: Safari runs a cross-site
+// navigation in a fresh web process, and the check can go out before the
+// background page on the other end is listening. These two cost nothing once
+// the page has been decided — runCheck returns on `handled` — and give a lost
+// first check somewhere to be picked up rather than being the whole visit's
+// only attempt.
+document.addEventListener("DOMContentLoaded", () => {
+  if (!handled) runCheck();
+});
+window.addEventListener("load", () => {
+  if (!handled) runCheck();
 });
 
 function ensureBodyAndHush() {
@@ -1427,7 +1498,7 @@ function setupInterruptionListener() {
         // wipes the body, or it reappears on top of the overlay still counting
         // a session that has ended.
         if (badgeTeardown) badgeTeardown();
-        handled = true;
+        markHandled();
         try {
           // The page they actually ended up on is the whole point of a
           // check-in — capture it before the overlay empties the document,

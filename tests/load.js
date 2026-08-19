@@ -234,9 +234,10 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
     chrome.storage._sessionStore = sessionStore;
   }
 
-  const listeners = { alarm: null, tabRemoved: null, message: null, beforeNavigate: null };
+  const listeners = { alarm: null, tabRemoved: null, message: null, beforeNavigate: null, committed: null };
   chrome.webNavigation = {
-    onBeforeNavigate: { addListener: (fn) => { listeners.beforeNavigate = fn; } }
+    onBeforeNavigate: { addListener: (fn) => { listeners.beforeNavigate = fn; } },
+    onCommitted: { addListener: (fn) => { listeners.committed = fn; } }
   };
   const alarms = [];
   chrome.alarms = {
@@ -254,13 +255,24 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
   listeners.tabRemoved = async (tabId) => {
     for (const fn of tabRemovedListeners) await fn(tabId);
   };
+  // Tabs the gate backstop can look up, and the navigations it performs.
+  // `_byId` is what chrome.tabs.get answers from — a tab missing from it reads
+  // as closed, which is one of the cases the backstop has to stand down for.
+  const tabsById = {};
+  const tabUpdates = [];
   chrome.tabs = {
     query: async () => [],
-    update: async () => {},
+    get: async (id) => {
+      if (!(id in tabsById)) throw new Error('No tab with id: ' + id);
+      return tabsById[id];
+    },
+    update: async (id, props) => { tabUpdates.push({ id, props }); },
     create: async () => {},
     remove: () => {},
     sendMessage: async () => { throw new Error('no content script'); },
-    onRemoved: { addListener: (fn) => { tabRemovedListeners.push(fn); } }
+    onRemoved: { addListener: (fn) => { tabRemovedListeners.push(fn); } },
+    _byId: tabsById,
+    _updates: tabUpdates
   };
   chrome.windows = { update: async () => {} };
   chrome.action = { onClicked: { addListener: () => {} } };

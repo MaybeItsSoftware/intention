@@ -6,7 +6,7 @@
 // shape has no test coverage anywhere else — there's no way to run the Android
 // or iOS hosts from here.
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadBackground, makeMockFetch } from './load.js';
 
 const CONFIGURED = { provider: 'anthropic', apiKey: 'test-key', model: 'claude-sonnet-5' };
@@ -2187,5 +2187,114 @@ describe('reporting a coach message', () => {
     const res = await ctx.handleMessage({ action: 'reportMessage', text: 'x' }, EXT_PAGE);
     expect(res.ok).toBe(false);
     expect(res.error).toBeTruthy();
+  });
+});
+
+// The gate backstop — the only second line of defence Safari has.
+//
+// domainsNeedingRedirect() returns nothing where a native host is listening, so
+// on Safari no declarativeNetRequest rule ever fires and the content script's
+// overlay is the whole gate. When that overlay doesn't appear — the script was
+// never injected, the check errored, storage was unreadable — this is what is
+// left between the user and the site.
+describe('the gate backstop', () => {
+  const BLOCKED = { setupComplete: true, blockedDomains: ['instagram.com'] };
+  const PAGE = 'https://www.instagram.com/explore/';
+
+  const withTab = (chrome, id, url) => { chrome.tabs._byId[id] = { id, url }; };
+
+  it('sends a tab that never reported an overlay to the gate', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    withTab(chrome, 4, PAGE);
+    await ctx.enforceGateBackstop(4, PAGE);
+    expect(chrome.tabs._updates).toHaveLength(1);
+    expect(chrome.tabs._updates[0].id).toBe(4);
+    expect(chrome.tabs._updates[0].props.url).toContain('coaching.html?domain=instagram.com');
+  });
+
+  it('leaves a page that is not on the blocklist alone', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    withTab(chrome, 4, 'https://example.com/');
+    await ctx.enforceGateBackstop(4, 'https://example.com/');
+    expect(chrome.tabs._updates).toHaveLength(0);
+  });
+
+  it('stands down while a pass is still running', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...BLOCKED,
+        activeSessions: {
+          'target:instagram.com': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+        }
+      }
+    });
+    withTab(chrome, 4, PAGE);
+    await ctx.enforceGateBackstop(4, PAGE);
+    expect(chrome.tabs._updates).toHaveLength(0);
+  });
+
+  // Before setup there is no blocklist to be on and nothing for the gate page
+  // to coach with — the content script's own setup notice is the right answer.
+  it('does not fire before setup is finished', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { ...BLOCKED, setupComplete: false } });
+    withTab(chrome, 4, PAGE);
+    await ctx.enforceGateBackstop(4, PAGE);
+    expect(chrome.tabs._updates).toHaveLength(0);
+  });
+
+  it('leaves a tab that has moved on since it was scheduled', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    withTab(chrome, 4, 'https://example.com/');
+    await ctx.enforceGateBackstop(4, PAGE);
+    expect(chrome.tabs._updates).toHaveLength(0);
+  });
+
+  it('does nothing for a tab that has since closed', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    await ctx.enforceGateBackstop(4, PAGE);
+    expect(chrome.tabs._updates).toHaveLength(0);
+  });
+
+  describe('scheduling', () => {
+    it('fires once the grace period passes with no word from the page', async () => {
+      vi.useFakeTimers();
+      try {
+        const { chrome, listeners } = loadBackground({ seed: BLOCKED });
+        withTab(chrome, 4, PAGE);
+        listeners.committed({ frameId: 0, tabId: 4, url: PAGE });
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(chrome.tabs._updates).toHaveLength(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stands down once the page reports its overlay', async () => {
+      vi.useFakeTimers();
+      try {
+        const { ctx, chrome, listeners } = loadBackground({ seed: BLOCKED });
+        withTab(chrome, 4, PAGE);
+        listeners.committed({ frameId: 0, tabId: 4, url: PAGE });
+        await ctx.handleMessage({ action: 'gateShown' }, tab(4, 'www.instagram.com'));
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(chrome.tabs._updates).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ignores its own gate page and anything in a subframe', async () => {
+      vi.useFakeTimers();
+      try {
+        const { chrome, listeners } = loadBackground({ seed: BLOCKED });
+        withTab(chrome, 4, PAGE);
+        listeners.committed({ frameId: 0, tabId: 4, url: 'chrome-extension://test/coaching.html?domain=instagram.com' });
+        listeners.committed({ frameId: 1, tabId: 5, url: PAGE });
+        await vi.advanceTimersByTimeAsync(10000);
+        expect(chrome.tabs._updates).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

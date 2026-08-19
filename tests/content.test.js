@@ -134,9 +134,24 @@ function makeMedia({ paused = false, muted = false } = {}) {
 // the gate renders binds its press-and-hold reporting handler.
 // `withPageContext` also loads page_context.js first, as the manifest does —
 // content.js only extracts page context when that file is present.
-function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageContext = false } = {}) {
+function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageContext = false, failStorageReads = 0 } = {}) {
   const chrome = makeMockChrome(storage);
   chrome.runtime.sendMessage = sendMessage || (() => {});
+  // Fail the first `failStorageReads` reads the way the browser reports it —
+  // through runtime.lastError, with the callback still fired.
+  if (failStorageReads) {
+    const real = chrome.storage.local.get.bind(chrome.storage.local);
+    let failed = 0;
+    chrome.storage.local.get = (keys, cb) => {
+      if (failed >= failStorageReads) return real(keys, cb);
+      failed += 1;
+      Promise.resolve().then(() => {
+        chrome.runtime.lastError = { message: 'storage unavailable' };
+        cb({});
+        chrome.runtime.lastError = null;
+      });
+    };
+  }
   const dom = domOptions ? makeDom(domOptions.href, domOptions) : makeDom();
   const observers = [];
   const sandbox = {
@@ -296,6 +311,75 @@ describe('when the background never answers', () => {
     await vi.advanceTimersByTimeAsync(10000);
     expect(attempts).toBeGreaterThanOrEqual(3);
     expect(gated(dom)).toBe(true);
+  });
+
+  // background.js answers a thrown error with `{ error }`, which is a
+  // perfectly truthy response object — so this used to sail into
+  // applyCheckResult, trip its `!response.isBlocked` early return, and leave
+  // the site open for the whole visit with no retry and no fallback.
+  it('treats an errored reply as a failed attempt, not a verdict', async () => {
+    vi.useFakeTimers();
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: (message, cb) => cb({ error: 'Unknown action: checkPageMatch' })
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  it('does not read a reply with no verdict in it as "not blocked"', async () => {
+    vi.useFakeTimers();
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: (message, cb) => cb({ setupComplete: true })
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  it('retries a storage read that fails before giving up on it', async () => {
+    vi.useFakeTimers();
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: () => {},
+      failStorageReads: 1
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  it('tells the background the page is handled, so the backstop stands down', async () => {
+    vi.useFakeTimers();
+    const sent = [];
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: (message) => { sent.push(message); }
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+    expect(sent.some(m => m.action === 'gateShown')).toBe(true);
+  });
+
+  // A re-check firing mid-retry used to be dropped by the `checking` guard —
+  // and the triggers that fire mid-retry (the tab became visible, the page came
+  // back from the cache) are the ones most likely to catch a missed gate.
+  it('does not drop a re-check that arrives while one is in flight', async () => {
+    const attemptsWith = async (fireRecheck) => {
+      vi.useFakeTimers();
+      let attempts = 0;
+      // Not on the blocklist, so nothing gates and `handled` stays false —
+      // the state a dropped re-check used to strand.
+      const dom = loadContent({
+        storage: { setupComplete: true, blockedDomains: ['reddit.com'] },
+        sendMessage: () => { attempts += 1; }
+      });
+      await vi.advanceTimersByTimeAsync(500);
+      if (fireRecheck) dom.fire('visibilitychange');
+      await vi.advanceTimersByTimeAsync(10000);
+      vi.useRealTimers();
+      return attempts;
+    };
+    expect(await attemptsWith(true)).toBeGreaterThan(await attemptsWith(false));
   });
 });
 
