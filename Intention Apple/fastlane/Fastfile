@@ -38,7 +38,7 @@ error do
 end
 
 # target name -> bundle identifier, split by platform since macOS only
-# embeds one extension while iOS embeds five.
+# embeds one extension while iOS embeds six.
 IOS_TARGETS = {
   "Intention Safari (iOS)"            => "uk.co.maybeitssoftware.intention",
   "Intention Safari Extension (iOS)"  => "uk.co.maybeitssoftware.intention.Extension",
@@ -46,6 +46,10 @@ IOS_TARGETS = {
   "Intention Shield Extension"        => "uk.co.maybeitssoftware.intention.Shield",
   "Intention Shield Action Extension" => "uk.co.maybeitssoftware.intention.ShieldAction",
   "Intention Report Extension"        => "uk.co.maybeitssoftware.intention.Report",
+  # Draws the pass Live Activity. New bundle ID, so the first run that signs it
+  # has to be a local (writable) match run — CI is readonly and cannot create
+  # the profile for it.
+  "Intention Widget Extension"        => "uk.co.maybeitssoftware.intention.Widget",
 }
 MACOS_TARGETS = {
   "Intention Safari (macOS)"           => "uk.co.maybeitssoftware.intention",
