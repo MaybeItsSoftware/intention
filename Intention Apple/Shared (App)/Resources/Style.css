@@ -1,3 +1,26 @@
+/* The container app's window (Base.lproj/Main.html).
+
+   This is a different surface from the extension's own preferences page, and
+   it lives in a different bundle. The app bundle ships exactly four web
+   resources — Main.html, Style.css, Script.js, Icon.png — so nothing here may
+   reach for shared/tokens.css, shared/paywall.css or shared/fonts/*.woff2:
+   those are inside the *extension* bundle, and `default-src 'self'` would
+   block them even if a relative path could climb out. Everything this window
+   needs is therefore restated in this one file, on purpose.
+
+   Two consequences worth knowing before editing:
+
+   1. The design tokens below are a copy of the role layer in shared/tokens.css.
+      Keep them in step with that file — it remains the source of truth, this
+      is a transcription for a bundle that cannot link it.
+   2. There is no Arvo here. The slab serif ships with the extension, not the
+      app, and adding four woff2 files to this target means four more entries
+      in project.pbxproj for a window most users see once. So the display face
+      is the system serif (New York on macOS 11+), which carries the editorial
+      character without a font file, and the ticker face is the system mono
+      standing in for Geist Mono. If Arvo is ever added to this target, the
+      only change needed is --font-display. */
+
 * {
     -webkit-user-select: none;
     -webkit-user-drag: none;
@@ -7,11 +30,67 @@
 :root {
     color-scheme: light dark;
 
+    /* ---- Role tokens — transcribed from shared/tokens.css ---- */
+    --paper: #faf8f4;
+    --raised: #ffffff;
+    --hover: #f1eff1;
+
+    --ink: #444054;
+    --text-muted: #6e6b7c;
+    --text-dim: #b6b3bf;
+
+    --border: #e6e4ea;
+    --border-input: #d8d5dd;
+
+    --primary: #007fff;
+    --primary-text: #0063c6;       /* #007fff is 3.6:1 on chalk — too thin to read a price in */
+    --primary-fill: rgba(0, 127, 255, 0.10);
+    --primary-fill-soft: rgba(0, 127, 255, 0.06);
+    --primary-line: rgba(0, 127, 255, 0.45);
+
+    --danger-text: #d62246;
+    --danger-fill: rgba(214, 34, 70, 0.10);
+    --danger-line: rgba(214, 34, 70, 0.40);
+
+    /* One radius scale, and nothing between. */
+    --radius-card: 8px;
+    --radius-control: 6px;
+    --radius-pill: 9999px;
+
     --spacing: 20px;
+
+    --font-body: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    --font-display: ui-serif, "New York", Georgia, serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+/* Dark is the same grape hue pulled down, never a neutral grey. Accents keep
+   their hex and are used at low alpha for fills. */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --paper: #1c1a23;
+        --raised: #25232f;
+        --hover: #2d2b38;
+
+        --ink: #f5f4f7;
+        --text-muted: #b6b3bf;
+        --text-dim: #6e6b7c;
+
+        --border: #34313f;
+        --border-input: #43404f;
+
+        --primary-text: #66b2ff;
+        --primary-fill: rgba(0, 127, 255, 0.18);
+        --primary-fill-soft: rgba(0, 127, 255, 0.10);
+        --primary-line: rgba(0, 127, 255, 0.55);
+
+        --danger-text: #ff6b85;
+    }
 }
 
 html {
     height: 100%;
+    background: var(--paper);
 }
 
 /* This window used to hold only the icon and one "turn on the extension" line,
@@ -23,17 +102,23 @@ html {
    while still centring whenever the content does fit. */
 body {
     display: flex;
-    align-items: center;
+    /* `stretch`, not `center`: the credit card is a panel and wants the full
+       measure. The hero centres its own contents, so it looks unchanged. */
+    align-items: stretch;
     justify-content: center;
     flex-direction: column;
 
     box-sizing: border-box;
-    gap: var(--spacing);
+    gap: 16px;
     margin: 0;
-    padding: var(--spacing) calc(var(--spacing) * 2);
+    padding: var(--spacing) 24px calc(var(--spacing) + env(safe-area-inset-bottom));
     min-height: 100%;
 
-    font: -apple-system-short-body;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.5;
     text-align: center;
 }
 
@@ -49,10 +134,6 @@ body.platform-mac .platform-ios {
     display: none;
 }
 
-body.platform-ios .platform-mac {
-    display: none;
-}
-
 body:not(.state-on, .state-off) :is(.state-on, .state-off) {
     display: none;
 }
@@ -65,6 +146,291 @@ body.state-off :is(.state-on, .state-unknown) {
     display: none;
 }
 
+/* The signature micro-label: 10px, bold, uppercase, wide tracking, muted.
+   Hierarchy is carried by surface and position, so the small labels get
+   *smaller* rather than bigger — section eyebrows, chip captions, the credit
+   count under a price. */
+.eyebrow,
+.billing-plan-credits,
+.billing-plan-tag {
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+}
+
+/* ---- Hero: the icon and where the extension stands ---- */
+
+.hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.hero img {
+    /* Overrides the width/height attributes in the markup. 128px was fine when
+       the icon was most of the window; with the credit section below it, it is
+       simply eating the budget the purchase rows need, and the storyboard
+       window is a fixed 425x620pt. */
+    width: 72px;
+    height: 72px;
+}
+
+.hero .eyebrow {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+}
+
+.hero p:not(.eyebrow) {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+/* ---- Buttons ----
+
+   Three tiers of loudness, and this window uses all three: bordered secondary
+   for the extension-preferences action, the plan rows below for the offers,
+   and a bare text button for recovery. Nothing here is filled — a solid azure
+   block on a 425pt window would out-shout the thing it sits next to, and the
+   quit-and-open action is not something to hurry anyone into. */
+
 button {
-    font-size: 1em;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--ink);
+    background: var(--raised);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-control);
+    padding: 8px 14px;
+    margin: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+button:hover {
+    background: var(--hover);
+}
+
+/* Separation is a ring, never elevation. */
+button:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+button[disabled] {
+    opacity: 0.55;
+}
+
+.open-preferences {
+    align-self: center;
+    max-width: 100%;
+}
+
+/* ---- Coaching credit ---- */
+
+/* Raised half a step above the paper and fenced with a hairline: that is the
+   whole of the depth here, per the no-shadows rule. It is also what separates
+   "here is the extension" from "here is something to buy" without a heading
+   having to say so. */
+.billing {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    box-sizing: border-box;
+    width: 100%;
+    padding: 16px;
+    text-align: left;
+
+    background: var(--raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+}
+
+.billing .eyebrow {
+    margin: 0;
+    color: var(--text-muted);
+}
+
+#billing-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+}
+
+#billing-status {
+    margin: 0 0 2px;
+    color: var(--text-muted);
+    font-family: var(--font-display);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+#billing-plans {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#billing-plans:empty {
+    display: none;
+}
+
+/* A purchase option is a row, not a push button: price on the left in the
+   brand azure because that is what the decision is actually made on, the
+   credit count beneath it as a micro-label because it is the footnote to the
+   price. Stacking them this way means three options scan straight down one
+   column, instead of the eye crossing a "title — price" three times.
+
+   Bordered rather than filled, matching the extension's own paywall
+   (shared/paywall.css): three saturated blocks in a stack read as three
+   warnings. */
+.billing-plan {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 2px 10px;
+
+    width: 100%;
+    padding: 10px 14px;
+    text-align: left;
+
+    background: var(--raised);
+    /* --border-input, not --border: this is an interactive edge, and on a
+       white card a #e6e4ea hairline round a white row all but disappears. */
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-control);
+}
+
+.billing-plan:hover {
+    background: var(--primary-fill-soft);
+    border-color: var(--primary);
+}
+
+.billing-plan-price {
+    grid-column: 1;
+    grid-row: 1;
+    font-family: var(--font-mono);
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    color: var(--primary-text);
+    font-variant-numeric: tabular-nums;
+}
+
+.billing-plan-credits {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+}
+
+/* The one marked-out option. Which one that is, is decided upstream:
+   IntentionStore.products() sorts cheapest first "per the show the lowest
+   amount first decision", so the lead row is the smallest top-up. All three
+   tiers carry the same credit-per-pound rate, so there is no better-value tier
+   to point at — the emphasis exists to lower the bar to a first purchase, not
+   to steer anyone toward the biggest one.
+
+   Primary-ness is a border colour and a tinted fill, which is what rule 1 asks
+   for, and it leaves the price in azure rather than reversing it out of a
+   solid block. */
+.billing-plan-lead {
+    background: var(--primary-fill-soft);
+    border-color: var(--primary-line);
+}
+
+.billing-plan-lead:hover {
+    background: var(--primary-fill);
+}
+
+.billing-plan-tag {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    padding: 3px 9px;
+    color: var(--primary-text);
+    background: var(--primary-fill);
+    border: 1px solid var(--primary-line);
+    border-radius: var(--radius-pill);
+}
+
+/* Recovery is not an offer. It is the path for someone whose purchase was
+   taken and never landed, which is rare and which nobody is browsing for — so
+   it drops out of the bordered set entirely and reads as a line of text, found
+   when looked for and ignored otherwise. */
+#billing-restore {
+    align-self: flex-start;
+    padding: 6px 0;
+    margin-top: 2px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 400;
+    text-decoration: underline;
+    text-decoration-color: var(--border-input);
+    text-underline-offset: 3px;
+}
+
+#billing-restore:hover {
+    background: none;
+    color: var(--ink);
+    text-decoration-color: currentColor;
+}
+
+.billing-error {
+    margin: 0;
+    padding: 8px 10px;
+    color: var(--danger-text);
+    background: var(--danger-fill);
+    border: 1px solid var(--danger-line);
+    border-radius: var(--radius-control);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+/* An explicit `display` beats the `hidden` attribute's UA `display: none`, and
+   both #billing-restore and #billing-error are shown and hidden by Script.js
+   through that attribute. */
+[hidden] {
+    display: none !important;
+}
+
+/* iOS hosts this same window, where 44px is the floor and a control under 16px
+   makes Safari zoom the page in and never back out. */
+@media (pointer: coarse) {
+    button {
+        min-height: 44px;
+    }
+
+    .billing-plan {
+        padding: 12px 14px;
+    }
+
+    .hero p:not(.eyebrow),
+    #billing-status {
+        font-size: 16px;
+    }
+}
+
+/* Collapse the durations rather than dropping the transitions, so a state
+   change still lands somewhere rather than teleporting. */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
 }

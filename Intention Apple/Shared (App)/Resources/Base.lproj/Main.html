@@ -10,22 +10,35 @@
     <script src="../Script.js" defer></script>
 </head>
 <body>
-    <img src="../Icon.png" width="128" height="128" alt="Intention Safari Icon">
-    <p class="platform-ios">You can turn on Intention Safari’s Safari extension in Settings.</p>
-    <p class="platform-mac state-unknown">You can turn on Intention Safari’s extension in Safari Extensions preferences.</p>
-    <p class="platform-mac state-on">Intention Safari’s extension is currently on. You can turn it off in Safari Extensions preferences.</p>
-    <p class="platform-mac state-off">Intention Safari’s extension is currently off. You can turn it on in Safari Extensions preferences.</p>
-    <button class="platform-mac open-preferences">Quit and Open Safari Extensions Preferences…</button>
+    <!-- Grouped so the icon, the state line and the action read as one block
+         against the paper, with the credit card below sitting on its own
+         raised surface. Script.js still finds every hook it needs by class
+         (`platform-mac state-on`, `.open-preferences`) — those are
+         class lookups, not child-of-body lookups, so the wrapper is free. -->
+    <header class="hero">
+        <img src="../Icon.png" width="128" height="128" alt="Intention Safari Icon">
+        <p class="eyebrow">Safari extension</p>
+        <p class="platform-ios">You can turn on Intention Safari’s Safari extension in Settings.</p>
+        <p class="platform-mac state-unknown">You can turn on Intention Safari’s extension in Safari Extensions preferences.</p>
+        <p class="platform-mac state-on">Intention Safari’s extension is currently on. You can turn it off in Safari Extensions preferences.</p>
+        <p class="platform-mac state-off">Intention Safari’s extension is currently off. You can turn it on in Safari Extensions preferences.</p>
+        <button type="button" class="platform-mac open-preferences">Quit and Open Safari Extensions Preferences…</button>
+    </header>
 
     <!-- Coaching credit, sold through StoreKit (IntentionStore.swift). The Mac
          App Store build has to offer it in-app just as the iOS one does; this
          section is the only place it is sold from this window (the extension's
-         own preferences page shows the full paywall, including balance). -->
+         own preferences page shows the full paywall, including balance).
+
+         The eyebrow answers the first question a purchase button raises, and
+         answers it before the buttons rather than after: these are consumables,
+         so there is genuinely nothing recurring to cancel. -->
     <section class="platform-mac billing" id="billing">
+        <p class="eyebrow">No subscription</p>
         <h2 id="billing-title">Coaching Credit</h2>
         <p id="billing-status">Loading top-ups…</p>
         <div id="billing-plans"></div>
-        <button id="billing-restore" hidden>Recover an interrupted purchase</button>
+        <button type="button" id="billing-restore" hidden>Recover an interrupted purchase</button>
         <p class="billing-error" id="billing-error" hidden></p>
     </section>
 </body>

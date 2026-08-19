@@ -99,16 +99,56 @@ async function refreshBilling() {
         setBillingError("Top-ups are unavailable right now. Please try again in a moment.");
         return;
     }
-    for (const product of list) {
-        const button = document.createElement("button");
-        button.textContent = product.price ? `${product.title} — ${product.price}` : product.title;
-        button.addEventListener("click", () => purchase(product.id, button));
-        plansEl.appendChild(button);
+    list.forEach((product, index) => plansEl.appendChild(planButton(product, index === 0)));
+}
+
+// One purchase option, as a row rather than a push button: the price leads and
+// the credit count follows it as a caption, because the price is what the
+// choice is actually made on and three of these should scan straight down one
+// column. Style.css does the rest.
+//
+// `lead` marks the one emphasised option. It is the first product, and which
+// product that is has already been decided upstream — IntentionStore.products()
+// sorts cheapest first. The tiers all price credit at the same rate, so there
+// is no better-value one to recommend; the point of the emphasis is to make
+// the smallest, least-committing purchase the obvious place to start.
+function planButton(product, lead) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = lead ? "billing-plan billing-plan-lead" : "billing-plan";
+
+    // A product with no displayPrice shouldn't happen — StoreKit always
+    // formats one — but falling back to the title keeps the row meaning
+    // something rather than rendering an empty box you can still tap.
+    const price = document.createElement("span");
+    price.className = "billing-plan-price";
+    price.textContent = product.price || product.title || "";
+    button.appendChild(price);
+
+    if (lead) {
+        const tag = document.createElement("span");
+        tag.className = "billing-plan-tag";
+        tag.textContent = "Start here";
+        button.appendChild(tag);
     }
+
+    if (product.price && product.title) {
+        const credits = document.createElement("span");
+        credits.className = "billing-plan-credits";
+        credits.textContent = product.title;
+        button.appendChild(credits);
+    }
+
+    button.addEventListener("click", () => purchase(product.id, button));
+    return button;
 }
 
 async function purchase(productId, button) {
     setBillingError("");
+    // Disabling is the whole busy state here, and deliberately so: a plan row
+    // stacks its price and credit count in child elements, so swapping its
+    // label for "Opening store…" would flatten it. The dimmed row plus
+    // StoreKit's own sheet arriving over the window is enough signal.
     button.disabled = true;
     const result = await billingCall("purchase", { productId });
     button.disabled = false;
@@ -124,9 +164,20 @@ async function purchase(productId, button) {
     await refreshBilling();
 }
 
-document.getElementById("billing-restore").addEventListener("click", async () => {
+document.getElementById("billing-restore").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
     setBillingError("");
+    // restore() runs AppStore.sync() and then sweeps Transaction.unfinished,
+    // both of which hit the network — several seconds, during which this used
+    // to look like nothing had happened at all. That reads as a dead button
+    // and invites a second click, and a second sync. It has no child elements,
+    // so unlike a plan row it can just say what it is doing.
+    const idleLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Checking…";
     const result = await billingCall("restore");
+    button.textContent = idleLabel;
+    button.disabled = false;
     if (!result || result.status !== "purchased") {
         setBillingError(result?.error || "No pending purchase found.");
         return;
