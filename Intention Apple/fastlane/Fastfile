@@ -143,6 +143,38 @@ platform :ios do
     )
   end
 
+  desc "Create or fetch the App Store signing profiles for every iOS bundle ID"
+  # Split out of :beta so a new bundle ID can be provisioned without building or
+  # uploading anything. Must be run locally — readonly is forced on CI, which
+  # cannot create the App ID or profile a new target needs.
+  lane :certs do
+    api_key = asc_api_key
+
+    # match generates profiles but will not register an App ID that doesn't
+    # exist yet — it just fails with "Couldn't find bundle identifier". Adding a
+    # target means creating the identifier first; produce can't do it with an
+    # API key, so go through Spaceship directly.
+    require "spaceship"
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from(hash: api_key)
+    IOS_TARGETS.each do |target, bundle_id|
+      next if Spaceship::ConnectAPI::BundleId.find(bundle_id)
+      UI.important("Registering new App ID #{bundle_id}")
+      Spaceship::ConnectAPI::BundleId.create(
+        name:       target,
+        identifier: bundle_id,
+        platform:   Spaceship::ConnectAPI::BundleIdPlatform::IOS,
+      )
+    end
+
+    match(
+      type:           "appstore",
+      platform:       "ios",
+      app_identifier: IOS_TARGETS.values,
+      api_key:        api_key,
+      readonly:       is_ci,
+    )
+  end
+
   desc "Build a development IPA and install it on a connected/paired device (DEVICE_UDID, DEVICE_NAME env vars)"
   lane :install do
     setup_ci

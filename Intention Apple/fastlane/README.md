@@ -23,6 +23,14 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 Build a signed release IPA and upload it to App Store Connect
 
+### ios certs
+
+```sh
+[bundle exec] fastlane ios certs
+```
+
+Create or fetch the App Store signing profiles for every iOS bundle ID
+
 ### ios install
 
 ```sh
