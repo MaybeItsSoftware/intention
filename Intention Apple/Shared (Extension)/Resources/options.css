@@ -250,33 +250,94 @@ ul#app-list li, ul#setup-apps-list li {
   padding: 11px 14px;
 }
 
-/* One word for what the row does, so the list is readable without opening
-   every control beneath it. Only the two that change what happens when you
-   open the site take a status colour; a plain timed pass stays quiet. */
-.row-badge {
+/* Coach / Simple, in the head, where the badge that only REPORTED it used to
+   sit. A segmented pair sharing one hairline: two buttons, one border between
+   them, no shadow and no fill on the unselected half — the selected one is
+   marked by the brand tint and nothing else moves. */
+.row-mode-toggle {
   flex-shrink: 0;
-  padding: 3px 9px;
-  border-radius: var(--radius-pill);
+  display: flex;
   border: 1px solid var(--border-input);
-  background: var(--well);
+  border-radius: var(--radius-pill);
+}
+
+/* Deliberately NOT `overflow: hidden` on the group with square children: the
+   coarse-pointer rules grow every button's hit area with an invisible 44px
+   overlay, and clipping the group clips that overlay straight off. The two
+   halves round their own outer corners instead. */
+.row-mode-btn:first-child { border-radius: var(--radius-pill) 0 0 var(--radius-pill); }
+.row-mode-btn:last-child { border-radius: 0 var(--radius-pill) var(--radius-pill) 0; }
+
+.row-mode-btn {
+  margin: 0;
+  padding: 4px 11px;
+  border: 0;
+  background: transparent;
   color: var(--text-muted);
+  font-family: inherit;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.row-badge.is-coach {
+/* The hairline between the halves, not around them: the group already owns
+   the outer border. */
+.row-mode-btn + .row-mode-btn {
+  border-left: 1px solid var(--border-input);
+}
+
+.row-mode-btn:hover { background: var(--hover); }
+
+.row-mode-btn.selected {
+  background: var(--primary-fill);
+  color: var(--primary-text);
+}
+
+/* The ⓘ beside the absolute daily max. A circle the size of the text it sits
+   next to, so it reads as punctuation on the label rather than as a third
+   control on the line. */
+.row-info-btn {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.row-info-btn:hover { background: var(--hover); }
+
+.row-info-btn[aria-expanded="true"] {
   background: var(--primary-fill);
   border-color: var(--primary-line);
   color: var(--primary-text);
 }
 
-.row-badge.is-hard {
-  background: var(--danger-fill);
-  border-color: var(--danger-line);
-  color: var(--danger-text);
+/* Ordinary text in the flow, not a floating layer: it pushes the row open,
+   which on a phone is the only behaviour that can't land off-screen. */
+.row-info-note {
+  flex-basis: 100%;
+  max-width: 34em;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-control);
+  background: var(--well);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* The settings, one labelled field each, on a line that wraps as the window
@@ -368,57 +429,201 @@ ul#usage-log-list li.log-date-heading {
   color: var(--text-dim);
 }
 
-/* ---- Per-row "why you need it" (buildServiceReasonControl) ---- */
+/* ---- The loose -> strict timeline (buildLooseTimelineField) ---------------
 
-/* The last band of the row card, under its own hairline: prose, not another
-   field competing for the settings strip. */
-.row-reason {
-  padding: 8px 14px 10px;
+   The one genuinely new component here, and it stays inside the same rules as
+   everything else: a hairline track, a labelled split, no gradient, no shadow,
+   no thumb pretending to be a physical object. The band says which stretch is
+   which in the micro-label voice the rest of the row uses; the split is a
+   1px rule, the same weight as every other divider on the page.
+
+   The band is decoration (aria-hidden in the markup) — the real control is the
+   <input type="range"> sitting on top of it with a transparent track, so the
+   whole component is keyboard-operable and screen-reader-announced for free. */
+.row-timeline-field {
+  padding: 12px 14px;
   border-top: 1px solid var(--border-muted);
-  font-size: 13px;
+  gap: 8px;
 }
 
-.row-reason summary {
-  cursor: pointer;
-  list-style: none;
-  padding: 4px 0;
-  color: var(--ink);
-  font-size: 12px;
+.row-timeline {
+  max-width: 34em;
 }
 
-.row-reason summary::-webkit-details-marker { display: none; }
+/* The band and the range are one control in two layers, so they get a
+   positioned box to themselves — the scale below has to stay out of it. */
+.row-timeline-track {
+  position: relative;
+}
 
-.row-reason summary::before {
-  content: '▸';
-  display: inline-block;
+.row-timeline-band {
+  display: flex;
+  height: 22px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+}
+
+/* The two stretches. Their flex-basis is set from JS — it IS the value — so
+   nothing here fixes a width. Text centres and clips: at 320px with the split
+   near an end, one of the two captions has almost no room, and a clipped word
+   reads better than a band that refuses to shrink. */
+.row-timeline-phase {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  white-space: nowrap;
+}
+
+.row-timeline-phase.is-loose {
+  background: var(--primary-fill-soft);
+  color: var(--primary-text);
+}
+
+/* The split itself: one hairline between the stretches, in the colour of the
+   half it starts. */
+.row-timeline-phase.is-strict {
+  border-left: 1px solid var(--warning-line);
+  background: var(--warning-fill);
+  color: var(--warning-text);
+}
+
+/* Laid over the band, not beside it: the handle you drag is the split you see.
+   The track is transparent because the band already drew it. */
+.row-timeline-range {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: ew-resize;
+}
+
+.row-timeline-range::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+  border: 0;
+}
+
+.row-timeline-range::-moz-range-track {
+  height: 22px;
+  background: transparent;
+  border: 0;
+}
+
+/* A bar, not a bead: it is standing in for the split line, so it looks like
+   one — the same 8px radius family, a hairline border, and the paper colour so
+   the rule reads through the middle of it. */
+.row-timeline-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
   width: 14px;
-  transition: transform 0.2s ease;
-  color: var(--text-muted);
+  height: 26px;
+  margin-top: -2px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  cursor: ew-resize;
 }
 
-.row-reason[open] summary::before { transform: rotate(90deg); }
+.row-timeline-range::-moz-range-thumb {
+  width: 14px;
+  height: 26px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  cursor: ew-resize;
+}
 
-/* Muted, not a warning colour. These answers are optional, and painting a
-   blank one red would claim the product needs something it doesn't. */
-.row-reason-empty { color: var(--text-muted); }
+/* An outline on the whole control rather than a ring around the thumb: a
+   box-shadow ring is the only way to reach a pseudo-element thumb, and this
+   page has no shadows in it — including the ones that are only pretending to
+   be rings. Outlining the band is also the honest answer to "what has focus",
+   since arrow keys move the split anywhere along it. */
+.row-timeline-range:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-radius: var(--radius-control);
+}
+
+/* The second way in. The ends are the bounds the range announces; the box
+   between them is the same number, typed. */
+.row-timeline-scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* --text-muted, not --text-dim: these are the bounds of the control, so they
+   carry meaning on their own and have to clear AA. */
+.row-timeline-end {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* Both classes named, because the shared .inline-limit-input rule that sets
+   54px is declared further down this file and would otherwise win the tie. */
+input[type="number"].inline-limit-input.row-timeline-number {
+  width: 62px;
+}
+
+.row-timeline-note {
+  max-width: 34em;
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ---- The two site-specific answers (buildRowReasonFields) ----------------
+
+   The last band of the row card, under its own hairline. Out of the collapsed
+   disclosure they used to live in: they are what the coach argues from, not a
+   footnote. Full width, because they are prose — one per line, each under its
+   own micro-label, so the pair reads as two questions and not as two more
+   fields on the settings strip. */
+.row-reasons {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.row-reason + .row-reason {
+  margin-top: 10px;
+}
 
 .row-reason-shared {
-  margin: 2px 0 8px 14px;
+  margin: 0 0 10px;
   color: var(--text-muted);
   font-size: 12px;
 }
 
+/* Beats the global `label` rule's margins, which .micro-label alone doesn't
+   reset. */
 .row-reason-label {
   display: block;
-  margin: 8px 0 4px 14px;
-  color: var(--text-muted);
-  font-size: 12px;
+  margin: 0 0 5px;
 }
 
 .row-reason-input {
-  width: calc(100% - 14px);
-  margin-left: 14px;
+  width: 100%;
+  margin: 0;
   resize: vertical;
+  font-size: 13px;
 }
 
 /* Search-results dropdown: a popup detached to <body> and fixed-positioned
@@ -1275,8 +1480,8 @@ input[type="number"].inline-limit-input:focus {
 }
 
 /* An explicit `display` beats the `hidden` attribute's UA `display: none`, so
-   buildRowModeControl's minutesInput.hidden = true did nothing and every row
-   in coach mode carried a stray "minutes per pass" box that controls nothing.
+   buildSimpleBehaviorField's minutesInput.hidden = true did nothing and every
+   hard-block row carried a stray "minutes per pass" box that controls nothing.
    Applies to any hidden element with a display of its own. */
 [hidden] { display: none !important; }
 
@@ -1345,12 +1550,19 @@ input[type="number"].inline-limit-input:focus {
     flex-wrap: wrap;
   }
 
-  /* A badge and a Remove button beside it leave a phone about eleven
+  /* A mode toggle and a Remove button beside it leave a phone about eleven
      characters of domain, so "instagram.com" arrived as "instagram…". The mark
      and the name take the line — the basis is the row minus the mark and its
      gap — and everything else wraps under them. */
   .row-head .domain-name {
     flex-basis: calc(100% - 46px);
+  }
+
+  /* At 320px the scale's two ends and the number between them stop fitting on
+     one line, and the number is the one that must not shrink. The ends drop
+     under it and keep the bounds readable. */
+  .row-timeline-scale {
+    flex-wrap: wrap;
   }
 
   ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
@@ -1399,6 +1611,40 @@ input[type="number"].inline-limit-input:focus {
   input[type="text"], input[type="password"], input[type="number"], select, textarea {
     font-size: 16px;
   }
+
+  /* The row's own fields size themselves down to sit on a line with their
+     labels, and those rules are more specific than the blanket one above — so
+     they beat it, and the two smallest controls on the page were the two that
+     zoomed. Named here at their own specificity to put them back. */
+  input[type="number"].inline-limit-input,
+  .row-field select,
+  .row-reason-input {
+    font-size: 16px;
+  }
+
+  /* The split is dragged with a finger, and a 22px band is half a target. The
+     painted band keeps its size; the track it sits in grows 11px of padding
+     top and bottom, and the range fills that padded box at 44. Same trick as
+     the ::after overlays above — the control looks the size it was designed at
+     and hits the size a thumb needs — except that the room is made INSIDE the
+     component, so the grown target can't land on the number box below it. */
+  .row-timeline-track {
+    padding: 11px 0;
+  }
+
+  .row-timeline-range {
+    height: 44px;
+  }
+
+  .row-timeline-range::-webkit-slider-runnable-track { height: 44px; }
+  .row-timeline-range::-moz-range-track { height: 44px; }
+
+  .row-timeline-range::-webkit-slider-thumb {
+    height: 30px;
+    margin-top: 7px;
+  }
+
+  .row-timeline-range::-moz-range-thumb { height: 30px; }
 }
 
 /* Durations collapse; the animations themselves stay, so nothing that conveys

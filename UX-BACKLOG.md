@@ -121,17 +121,17 @@ project change rather than a copy change.
 
 ## 3. Follow-ups created or left by the audit work
 
-### 3.1 "Absolute max" vs "Daily limit" vocabulary split
+### 3.1 "Absolute max" vs "Daily limit" vocabulary split — RESOLVED
 
-The UI now says **"Daily limit"**; the coach still says **"absolute max"**,
-because that vocabulary lives in `shared/prompts.js` and is asserted by
-`tests/prompts.test.js` (`'12 of 30m absolute max'`, `'RAISE the absolute max
-time limit on reddit.com'`). It was also being actively edited by concurrent
-work at the time.
+The UI said **"Daily limit"** while the coach said **"absolute max"**, so a user
+could read "Daily limit: 10 min/day" on screen and then be told by their coach
+that they had hit their "absolute max".
 
-So a user can read "Daily limit: 10 min/day" on screen and then be told by their
-coach that they have hit their "absolute max". Pick one and change prompts.js
-plus its tests.
+Settled on the coach's word, since that vocabulary is also asserted throughout
+`tests/prompts.test.js`: the row field, the Blocked sites subtitle and the
+add-dialog field are all "absolute daily max" now, and the row's ⓘ says what it
+means — the most time you could genuinely need in one day, a ceiling rather
+than a target.
 
 ### 3.2 The save model is still mixed
 
@@ -169,7 +169,7 @@ depending on how it was reached. Worth collapsing.
 
 `npm run lint:firefox` reports 0 errors and 4 `UNSAFE_VAR_ASSIGNMENT` warnings,
 all pre-existing. `renderStats` interpolates numbers into `innerHTML`; the
-per-row mode/behaviour selects build their `<option>` lists the same way. The
+per-row behaviour select builds its `<option>` list the same way. The
 values are all internal, so this is hygiene rather than a live hole — but it
 sits awkwardly next to the file's own stated "model-authored text: `textContent`
 only" discipline.

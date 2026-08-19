@@ -59,7 +59,9 @@ async function main() {
         config: {
           blockedDomains: ['instagram.com', 'reddit.com', 'example.com'],
           domainLimits: {
-            'instagram.com': { maxGrants: 3, maxMinutes: 10 },
+            // One row with a loose -> strict split set and one without, so the
+            // timeline is shown in both of its states.
+            'instagram.com': { maxGrants: 3, maxMinutes: 45, looseUntilMinutes: 15 },
             'reddit.com': { maxGrants: 3, maxMinutes: 15 }
           },
           contextProjects: 'Finish the quarterly report',
@@ -75,7 +77,8 @@ async function main() {
       // localStorage remembers the last section across the two theme passes.
       await page.click('[data-section-tab="blocking"]');
       await page.waitForTimeout(150);
-      await page.evaluate(() => document.querySelector('.row-reason')?.setAttribute('open', ''));
+      // Nothing to open any more: the two answers used to sit inside a
+      // collapsed <details> and are now part of the row.
       await page.screenshot({ path: join(OUT, `settings-blocking-${scheme}.png`) });
 
       await page.click('[data-section-tab="settings"]');
