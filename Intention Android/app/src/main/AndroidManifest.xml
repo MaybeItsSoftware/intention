@@ -16,6 +16,14 @@
     <!-- AlarmManager drops every pending alarm on reboot, so BootReceiver has to
          re-arm the check-ins for any session that is still running. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Draws the pass timer over whatever app the user is in (SessionOverlay).
+         Special access, granted from Settings rather than a runtime dialog, and
+         entirely optional: without it the timer degrades to the ongoing
+         notification below, and blocking is unaffected either way. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Only ever used for that fallback timer, so it is asked for at the point
+         the overlay is declined rather than on first launch. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Backup stays on, but scoped: the blocklist and active sessions are
          never backed up, so a restore cannot be used to undo blocking, while
@@ -52,6 +60,13 @@
 
         <receiver
             android:name=".AlarmReceiver"
+            android:exported="false" />
+
+        <!-- "Finished" on the ongoing-pass notification. In the manifest rather
+             than registered at runtime because a posted notification outlives
+             the process that posted it. -->
+        <receiver
+            android:name=".SessionFinishReceiver"
             android:exported="false" />
 
         <!-- BOOT_COMPLETED and MY_PACKAGE_REPLACED are protected broadcasts only

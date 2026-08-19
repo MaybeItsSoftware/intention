@@ -2,7 +2,9 @@ package uk.co.maybeitssoftware.intention
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
@@ -15,13 +17,35 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        // House palette, dark mode — used only by the overlay prompt below.
+        // The accessibility gate above it predates these tokens and is left
+        // on its own older hex rather than half-restyled.
+        private const val COLOR_SURFACE = "#25232f"
+        private const val COLOR_BORDER = "#34313f"
+        private const val COLOR_TEXT = "#f5f4f7"
+        private const val COLOR_MUTED = "#b6b3bf"
+        private const val COLOR_AZURE = "#007fff"
+        private const val COLOR_AZURE_FILL = "#1a007fff"
+        private const val COLOR_AZURE_BORDER = "#66007fff"
+        private const val REQUEST_POST_NOTIFICATIONS = 0x1973
+    }
+
     private lateinit var webView: WebView
     private lateinit var accessibilityGate: View
+    // The pass timer's permission prompt. Unlike the accessibility gate this
+    // blocks nothing: it is an offer, dismissible for the session, and gone for
+    // good once the permission is granted.
+    private lateinit var overlayPrompt: View
+    private var overlayPromptDismissed = false
+    private var notificationPermissionAsked = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,6 +134,8 @@ class MainActivity : AppCompatActivity() {
         (accessibilityGate as android.widget.LinearLayout).addView(enableServiceBtn)
         (accessibilityGate as android.widget.LinearLayout).addView(recheckBtn)
 
+        overlayPrompt = buildOverlayPrompt()
+
         // Options WebView — the rest of the app, hidden until accessibility is enabled
         webView = WebView(this).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -136,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         rootLayout.addView(accessibilityGate)
+        rootLayout.addView(overlayPrompt)
         rootLayout.addView(webView)
         setContentView(rootLayout)
 
@@ -200,16 +227,171 @@ class MainActivity : AppCompatActivity() {
         return true
     }
 
+    // The offer to draw the pass timer over other apps. Same shape as the
+    // accessibility gate above — a title, what it buys the user, a button into
+    // the right Settings screen — but deliberately not a gate: SYSTEM_ALERT_WINDOW
+    // adds a timer to a pass and nothing else, so refusing it has to leave a
+    // working app rather than a dead end.
+    private fun buildOverlayPrompt(): View {
+        val card = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(dp(16f), dp(16f), dp(16f), 0)
+            }
+            setPadding(dp(16f), dp(14f), dp(16f), dp(14f))
+            // Flat and bordered: a hairline and half a step of tone, no shadow.
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(android.graphics.Color.parseColor(COLOR_SURFACE))
+                cornerRadius = dp(8f).toFloat()
+                setStroke(dp(1f).coerceAtLeast(1), android.graphics.Color.parseColor(COLOR_BORDER))
+            }
+            visibility = View.GONE
+        }
+
+        // The micro-label: 10sp, bold, uppercase, wide tracking, muted.
+        card.addView(TextView(this).apply {
+            text = "OPTIONAL"
+            setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
+            textSize = 10f
+            typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            letterSpacing = 0.15f
+        })
+
+        card.addView(TextView(this).apply {
+            text = "Show a timer while a pass is running"
+            setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
+            textSize = 16f
+            setPadding(0, dp(6f), 0, 0)
+        })
+
+        card.addView(TextView(this).apply {
+            text = "Intention can float the time you asked for over the app you're in, " +
+                "with a Finished button for when you're done early. Blocking works the " +
+                "same either way."
+            setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
+            textSize = 13f
+            setPadding(0, dp(6f), 0, dp(12f))
+        })
+
+        val actions = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+        }
+
+        actions.addView(Button(this).apply {
+            text = "Allow"
+            setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
+            // Accents keep their hex in dark mode and are used as a low-alpha
+            // fill behind a stronger border, never as a solid block.
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(android.graphics.Color.parseColor(COLOR_AZURE_FILL))
+                cornerRadius = dp(6f).toFloat()
+                setStroke(dp(1f).coerceAtLeast(1), android.graphics.Color.parseColor(COLOR_AZURE_BORDER))
+            }
+            minHeight = dp(44f)
+            setOnClickListener { openOverlaySettings() }
+        })
+
+        actions.addView(Button(this).apply {
+            text = "Not now"
+            setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(android.graphics.Color.TRANSPARENT)
+                cornerRadius = dp(6f).toFloat()
+                setStroke(dp(1f).coerceAtLeast(1), android.graphics.Color.parseColor(COLOR_BORDER))
+            }
+            minHeight = dp(44f)
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8f) }
+            setOnClickListener {
+                overlayPromptDismissed = true
+                overlayPrompt.visibility = View.GONE
+                // They have turned the overlay down, so the notification is now
+                // the only way a running pass can show itself — which makes this
+                // the honest moment to ask for POST_NOTIFICATIONS, rather than
+                // on first launch when we don't yet need it.
+                requestNotificationFallback()
+            }
+        })
+
+        card.addView(actions)
+        return card
+    }
+
     override fun onResume() {
         super.onResume()
         if (!isAccessibilityServiceEnabled()) {
             accessibilityGate.visibility = View.VISIBLE
             webView.visibility = View.GONE
+            overlayPrompt.visibility = View.GONE
         } else {
             accessibilityGate.visibility = View.GONE
             webView.visibility = View.VISIBLE
+            // Only once the app actually works, and only while there is
+            // something to ask for — coming back from Settings with the
+            // permission granted takes the card away for good.
+            overlayPrompt.visibility =
+                if (!overlayPromptDismissed && !Settings.canDrawOverlays(this)) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
         }
     }
+
+    // Deep-links to Intention's own row in "Display over other apps". The
+    // package Uri is honoured by AOSP and most skins; a device that rejects it
+    // still gets the plain list rather than a crash, as with the accessibility
+    // deep link above.
+    private fun openOverlaySettings() {
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+            } catch (e2: Exception) {
+                android.widget.Toast.makeText(
+                    this,
+                    "Couldn't open the overlay settings on this device",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    // Nothing here reacts to the answer: a granted permission lets
+    // SessionOverlay post its fallback notification, and a refused one leaves
+    // the pass invisible — which is exactly how Android behaved before the
+    // timer existed. Asked at most once per visit to this screen.
+    private fun requestNotificationFallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (notificationPermissionAsked) return
+        notificationPermissionAsked = true
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) return
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+            REQUEST_POST_NOTIFICATIONS
+        )
+    }
+
+    private fun dp(value: Float): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     // Deep-links to Intention's own toggle where supported; some OEM skins
     // (MIUI, One UI, etc.) reject the fragment-args extras and throw, so fall

@@ -43,6 +43,13 @@ class CoachingActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Nothing may sit on top of the block, least of all a pass timer: this
+        // screen goes up when a pass has run out, or for a second blocked
+        // target while another one's pass is still running. The accessibility
+        // service hides it for our own package anyway; this is the guarantee,
+        // not the mechanism.
+        SessionOverlay.hide(applicationContext)
+
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(
