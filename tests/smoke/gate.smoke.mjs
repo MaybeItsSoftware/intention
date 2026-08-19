@@ -254,12 +254,16 @@ async function main() {
     record('grant_access is offered as a tool, not free text',
       (opener.body.tools || []).some(t => t.name === 'grant_access'));
 
-    record('the prompt offers the default quick-check lane',
-      system.includes('Quick check'),
-      system.split('\n').find(l => l.includes('Quick check')) || '(absent)');
+    // The quick check is retired. These two used to assert the lane was
+    // offered and that the tool carried its flag; inverted, they are the
+    // end-to-end proof that the removal reached the real prompt and the real
+    // tool schema, not just the unit tests.
+    record('the prompt no longer offers a quick-check lane',
+      !system.includes('Quick check') && !system.includes('quick_check'),
+      system.split('\n').find(l => l.toLowerCase().includes('quick check')) || '(absent)');
 
-    record('the grant tool carries the quick_check flag',
-      (opener.body.tools || []).some(t => t.name === 'grant_access' && JSON.stringify(t).includes('quick_check')));
+    record('the grant tool no longer carries a quick_check flag',
+      (opener.body.tools || []).every(t => t.name !== 'grant_access' || !JSON.stringify(t).includes('quick_check')));
 
     record('the opener reply is fully rendered within 1s of the stub answering',
       openerRenderedAt != null && (openerRenderedAt - opener.respondedAt) < 1000,

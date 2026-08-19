@@ -225,3 +225,40 @@ describe('collectServiceReasons', () => {
     expect(Object.keys(out)).toEqual(['instagram.com']);
   });
 });
+
+// The brand suggestion chips used to sit permanently in the Blocked sites
+// card, with no minutes field anywhere near them, so every chip added at a
+// hard-coded 10 min/day. They now live in the Add-website dialog, beside the
+// field the Add button already reads — so a chip and the button have to agree
+// on the number that was just typed.
+describe('currentAddSiteLimit', () => {
+  const withField = (value) => {
+    const previous = ctx.document.getElementById;
+    ctx.document.getElementById = (id) => (id === 'domain-limit-input' ? { value } : null);
+    try {
+      return ctx.currentAddSiteLimit();
+    } finally {
+      ctx.document.getElementById = previous;
+    }
+  };
+
+  it("takes the dialog's minutes field at its word", () => {
+    expect(withField('25')).toBe(25);
+    expect(withField('1')).toBe(1);
+  });
+
+  // The same fallback addDomain() applies on the typed path, so the two routes
+  // into the blocklist can't disagree about what an empty box means.
+  it('falls back to 10 on anything blank, junk or non-positive', () => {
+    for (const value of ['', '   ', 'abc', '0', '-5']) {
+      expect(withField(value), value).toBe(10);
+    }
+  });
+
+  // The setup wizard renders its own chip grid inline, and the dialog's field
+  // is not always in the document the wizard is looking at; reading a missing
+  // field must not throw there.
+  it('falls back to 10 when the field is not on the page at all', () => {
+    expect(ctx.currentAddSiteLimit()).toBe(10);
+  });
+});

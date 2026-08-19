@@ -324,17 +324,6 @@ ul#app-list li, ul#setup-apps-list li {
   white-space: nowrap;
 }
 
-/* Switching the quick-check lane off only greyed the digits by a shade, which
-   read as "still editable". The whole control steps back instead. */
-.row-field-control input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.row-field-control:has(input:disabled) .row-field-unit {
-  opacity: 0.5;
-}
-
 /* The row selects fell through to the global field rule — full width, 10/12
    padding, a 36px gutter for the chevron — which is most of why every row read
    as heavy. Sized to their own content instead, and to match the number boxes
@@ -345,21 +334,6 @@ ul#app-list li, ul#setup-apps-list li {
   font-size: 13px;
   background-position: right 8px center;
   background-size: 14px;
-}
-
-/* The quick-check toggle is part of its own caption, so the label names the
-   checkbox and the field in one. */
-.row-toggle-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
-.row-toggle-label input[type="checkbox"] {
-  width: auto;
-  margin: 0;
-  accent-color: var(--primary);
 }
 
 ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
@@ -534,11 +508,34 @@ blockquote {
   display: none;
 }
 
-.add-modal-box { width: min(420px, 100%); max-height: none; }
-/* Full width, but not a saturated band. This sits directly above the
-   suggestion chips, which are the easier path for most people — a solid azure
-   bar across the card made the harder route look like the intended one, and
-   colour here is meant to be reserved for meaning. */
+/* max-height is NOT reset to none any more: the dialog now carries the whole
+   suggestion catalogue, so it inherits .coach-box's 82vh and lets the
+   suggestions scroll inside it. Without that, "Show N more" grew the box past
+   the bottom of a phone screen with no way back to the Add button. */
+.add-modal-box { width: min(420px, 100%); }
+
+/* A hairline separates the chips from the form above them — the same device
+   the rest of the page uses for structure, rather than a card inside a card.
+   min-height: 0 is what lets this shrink inside .coach-box's flex column, so
+   the catalogue scrolls here instead of pushing the Add button off screen. */
+.add-modal-suggestions {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* renderRecommendGrid hides an empty grid; the eyebrow above it would
+   otherwise announce a section with nothing in it (an iOS build has no app
+   suggestions at all, and a well-used blocklist eventually exhausts them). */
+.add-modal-suggestions:has(> .recommend-grid[hidden]) { display: none; }
+
+.add-modal-suggestions .recommend-more { margin-bottom: 0; }
+
+/* Full width, but not a saturated band. Colour here is meant to be reserved
+   for meaning, and this is one of two ways into the same dialog — the card's
+   own heading and list are the content, so the button stays chrome. */
 .add-row-btn { width: 100%; margin-bottom: 14px; }
 
 .add-row-btn.primary {
@@ -1090,12 +1087,27 @@ blockquote {
 
 /* Single column at every width. The two-column split used to cut across the
    section grouping — a section's cards could land in either column, so showing
-   one section at a time left half the page empty. */
+   one section at a time left half the page empty.
+
+   And now a FLAT list of cards, with no wrapper per column. The wrappers were
+   the last of that split: whichever one held none of the visible section's
+   cards still collapsed to a zero-height grid item, and a zero-height item
+   still takes its share of the 16px gutter — so the space under the tab strip
+   grew by exactly one gap on Blocking and Settings and not on Activity or
+   Coach. A card hidden with `display: none` is not a grid item at all, so a
+   flat list gives every tab the same gap by construction. Keep it flat. */
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
   align-items: start;
+}
+
+/* A grid item's default min-width is `auto`, so one long unbroken string (a
+   package name in a row, a pasted URL) used to push the whole track wider than
+   the page. The column wrappers carried this; the cards inherit it. */
+.settings-grid > * {
+  min-width: 0;
 }
 
 .settings-tabs { display: none; gap: 8px; margin-bottom: 4px; }
@@ -1114,7 +1126,7 @@ blockquote {
   color: var(--ink);
 }
 #settings-tabs:not([hidden]) { display: flex; }
-.settings-column .card.tab-hidden { display: none; }
+.settings-grid .card.tab-hidden { display: none; }
 
 /* ---- Section tabs (Blocking / Activity / Coach / Unlock (iOS) / Settings) ----
    These used to be mobile-only, which left desktop rendering all twelve cards
@@ -1129,6 +1141,13 @@ blockquote {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+  /* Tracking is painted AFTER the last glyph too, so the label's advance width
+     carries 0.12em of dead space on its right and the glyphs sit left of true
+     centre — measurably 0.61px at this size, on every tab. text-align: center
+     centres what is left after the indent, so an indent of exactly the
+     tracking cancels it (measured: -0.61px → -0.01px) without touching the
+     tracking itself. */
+  text-indent: 0.12em;
 }
 .section-tabs { display: flex; flex-wrap: wrap; }
 #settings-view .section-hidden { display: none; }
@@ -1136,14 +1155,9 @@ blockquote {
   .advanced-card { margin-top: 0; }
 }
 
-.settings-column {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
-.settings-column .card {
+/* The grid gutter is the only spacing between cards; .card's own margin would
+   add a second one on top of it. */
+.settings-grid .card {
   margin-bottom: 0;
 }
 

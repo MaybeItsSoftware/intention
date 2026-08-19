@@ -5,8 +5,7 @@ const GRANT_TOOL = {
     type: 'object',
     properties: {
       minutes: { type: 'number', description: 'Minutes to grant (1 to 60). Match to the task, do not inflate.' },
-      reason: { type: 'string', description: 'One-line statement of what the user is going to do in that time.' },
-      quick_check: { type: 'boolean', description: "Set true ONLY when granting the user's daily quick check: their very first message named one small, specific thing to check, and the minutes fit the quick-check budget stated in your instructions. Never set it to extend a pass or stack extra time." }
+      reason: { type: 'string', description: 'One-line statement of what the user is going to do in that time.' }
     },
     required: ['minutes', 'reason']
   }
@@ -170,7 +169,6 @@ Granting:
 - Criteria for calling grant_access (ALL must hold): (1) the reason is concrete and specific — a named task, not a mood; (2) it is genuinely time-bounded — they can say when they'll be done; (3) this site is actually the right tool for it; (4) it does not contradict the reasons they told you they want to cut back.
 - Set minutes to fit the task, never inflated, and let their track record adjust the number. ALWAYS pair the grant_access call with a short spoken sentence in the same reply. Never call grant_access silently.
 - Skepticism scales with grants already given today: grant 1 needs specificity, grant 2 needs a strong time-bounded case plus a reference to the earlier grant, grant 3+ should essentially never happen — the repetition itself is the signal; name it.
-- The quick check is a separate, small daily lane: when your live instructions below say one is available and the user's FIRST message names one specific small thing to check, grant immediately with quick_check set to true and fitted minutes — no probing. It does not consume a normal grant. Once it is spent it is spent: never set quick_check to extend a pass, stack time, or dress a scroll up as a check.
 - If no grant tool is offered in this conversation, granting is not on the table at all — coach only.
 
 Using what you know:
@@ -338,6 +336,10 @@ function renderSessionsToday(sessionsToday) {
   const lines = list.map((session, i) => {
     const at = formatClock(session.grantedAt);
     const reason = String(session.reason || '(no reason given)').trim();
+    // Nothing sets session.quickCheck any more — the lane is retired — but
+    // sessions banked before that still carry the flag, and a pass that WAS a
+    // quick check should keep reading as one rather than being relabelled a
+    // normal grant in the coach's own history.
     const parts = session.quickCheck ? ['quick check'] : [];
     if (Number(session.grantedMinutes) > 0) parts.push(`${Math.round(session.grantedMinutes)}m granted`);
     if (session.outcome) {
@@ -472,39 +474,19 @@ function renderWalkAwayLine(walkedAwayToday, walkedAwayWeek) {
   return `\n- Times they came to this gate and walked away without taking any time: ${walkedAwayToday || 0} today, ${walkedAwayWeek} in the last 7 days. Walking away is the exact habit they are building — treat that count as a streak worth protecting and name it as the win it is.`;
 }
 
-// The quick check is on by default: an entry with no quickCheck field gets the
-// default lane, so nobody needs a migration and every blocked site starts with
-// a small sanctioned glance. Disabling is therefore an explicit zero, stored.
-// This is the single source of truth for that shape — background.js resolves
-// limits through it and options.js keeps a hand-written mirror
-// (effectiveQuickCheckFor), because the options page doesn't load this file.
-function normalizeQuickCheck(raw) {
-  const src = (raw && typeof raw === 'object') ? raw : {};
-  let minutes = Math.round(Number(src.minutes));
-  let usesPerDay = Math.round(Number(src.usesPerDay));
-  if (isNaN(minutes)) minutes = 3;
-  if (isNaN(usesPerDay)) usesPerDay = 1;
-  if (minutes <= 0 || usesPerDay <= 0) return { minutes: 0, usesPerDay: 0, enabled: false };
-  return { minutes: Math.min(minutes, 60), usesPerDay, enabled: true };
-}
-
-// The policy half of the quick-check lane; the grant executor in background.js
-// enforces the same budget mechanically, so nothing here is load-bearing for
-// safety — it exists so the coach OFFERS the lane instead of interrogating a
-// two-minute errand. Silent when the lane is off, and silent when the daily
-// minutes cap is spent: that cap is absolute and the cap override already
-// says so.
-function renderQuickCheckLine(qc, quickChecksToday, minutesCapExhausted, opts) {
-  if (!qc || !qc.enabled || minutesCapExhausted) return '';
-  const used = Number(quickChecksToday) || 0;
-  const spent = used >= qc.usesPerDay;
-  if (opts && opts.spentOnly && !spent) return '';
-  if (spent) {
-    return `\n- Quick check: already used today (${used} of ${qc.usesPerDay}). Any further access goes through your normal standards — do not set quick_check again.`;
-  }
-  const left = qc.usesPerDay - used;
-  return `\n- Quick check (a separate small lane): still available today — ${left} of ${qc.usesPerDay} left, up to ${qc.minutes} minutes. If their FIRST message names one small, specific thing to check (a message, an address, a delivery, one search), grant it IMMEDIATELY: call grant_access with quick_check set to true and minutes fitted to the errand (never more than ${qc.minutes}), and say you're using their quick check. No probing first. It does not use up one of their normal grants, but its minutes do count toward any daily minutes cap. Never use it to extend a pass or stack time.`;
-}
+// The quick check — a small daily lane that granted a few no-questions minutes
+// outside the grants cap — has been retired. It was ON by default (an entry
+// with no quickCheck field got the lane), so it was not enough to drop the
+// settings control: the lane had to leave the decision path as well, or every
+// gate would have kept offering a cap-bypassing grant with no way to switch it
+// off. Removed here at the source — no tool flag for the model to set, no line
+// in any prompt, no carve-out in the grants-cap override — which is what makes
+// it inert rather than merely invisible. Stored `quickCheck` fields on limit
+// entries are now ignored data; nothing reads them, so no migration is owed.
+//
+// The TRACKING lane stays (tracking.js `quickChecks` / `session.quickCheck`):
+// it is lazily-added and additive, and leaving it means historical days keep
+// their separate tally instead of retroactively reading as normal grants.
 
 // Notes the coach wrote to itself in earlier conversations (note_observation).
 // Framed as the coach's own memory — and flagged as readable by the user in
@@ -698,21 +680,19 @@ Instructions for using app context:
 - A concrete, finishable errand in an app is a real thing ("reply to one message", "check the delivery date") and deserves a small, specific grant. An open-ended visit does not.`;
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
   const minsCapStr = minutesCap && minutesCap > 0
     ? `${minutesTodaySite} of ${minutesCap}m absolute max`
     : `${minutesTodaySite} (no daily cap set)`;
-  // The two caps diverge once the quick check exists: the grants cap leaves
-  // the lane open (it is a separate budget), the minutes cap closes everything
-  // (it is absolute). The override text below has to say which one bound.
+  // Both caps now close the door outright. They used to diverge — the grants
+  // cap left the quick-check lane open because it was a separate budget — and
+  // the override text below had to say which one bound. With the lane retired
+  // there is no exception left to carve out of either.
   const grantsCapReached = grantsToday >= grantsCap;
   const minutesCapReached = !!(minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
-  const qc = normalizeQuickCheck(quickCheck);
-  const qcUsed = Number(quickChecksToday) || 0;
-  const quickCheckLeft = qc.enabled && qcUsed < qc.usesPerDay && !minutesCapReached;
   const reasonsStr = renderReasonsToday(reasonsToday);
   // An app and a web page are mutually exclusive targets; only one block can
   // apply, and the app one wins because there is no page to describe.
@@ -736,15 +716,13 @@ Today's usage:
 - Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Minutes across all blocked sites this week: ${minutesWeekAll}
-- Reasons they already gave for visiting ${domain} today: ${reasonsStr}${renderQuickCheckLine(qc, qcUsed, minutesCapReached)}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
+- Reasons they already gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
 
 ${reasonsStr === '(none yet today)'
     ? `This is their first visit here today, so don't recite the zeros — just ask what brings them here.`
     : `They have already been here today: say so ("Earlier today you came here for ${reasonsStr}…") and ask whether this is the same pull or genuinely new.`}${minutesCapReached ? `
 
-- YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${minutesCap} minutes on this site). DO NOT call grant_access — it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : grantsCapReached && quickCheckLeft ? `
-
-- THEY HAVE REACHED TODAY'S GRANT CAP (${grantsCap} grants). DO NOT call grant_access for a normal pass — it will be rejected. ONE exception remains: their quick check (up to ${qc.minutes} minutes, ${qc.usesPerDay - qcUsed} left today). If — and only if — their first message names one small, specific thing to check, grant it with quick_check set to true. Otherwise your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative.` : grantsCapReached ? `
+- YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${minutesCap} minutes on this site). DO NOT call grant_access — it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : grantsCapReached ? `
 
 - YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${grantsCap} grants allowed today). DO NOT call grant_access — it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : ''}`;
   return composeSystemPrompt(coachInstructions, {
@@ -759,14 +737,12 @@ ${reasonsStr === '(none yet today)'
     reasons_today: reasonsStr,
     site_purpose: (siteReason && siteReason.purpose) || '',
     site_legitimate: (siteReason && siteReason.legitimateUse) || '',
-    quick_check_minutes: qc.enabled ? qc.minutes : 0,
-    quick_checks_left: qc.enabled ? Math.max(0, qc.usesPerDay - qcUsed) : 0,
     time: coarseClock().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
     day: coarseClock().toLocaleDateString([], {weekday: 'long'})
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations, quickCheck, quickChecksToday }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
@@ -776,12 +752,6 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
   const grantsCapReached = grantsToday >= grantsCap;
   const minutesCapReached = !!(minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
   const capReached = grantsCapReached || minutesCapReached;
-  // Deliberately asymmetric with the gate: a check-in grant is an extension by
-  // definition, and the quick check must never extend — so this prompt never
-  // renders the "available" offer, only the spent line (so the coach can
-  // explain why the lane is gone if the user brings it up).
-  const qc = normalizeQuickCheck(quickCheck);
-  const qcUsed = Number(quickChecksToday) || 0;
   const reasonsStr = renderReasonsToday(reasonsToday);
   const pageCtxStr = appContext ? renderAppContextBlock(appContext) : renderPageContextBlock(pageContext);
   const sessionsStr = renderSessionsToday(sessionsToday);
@@ -800,7 +770,7 @@ Today's usage:
 - Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
 - Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
-- Reasons they gave for visiting ${domain} today: ${reasonsStr}${renderQuickCheckLine(qc, qcUsed, minutesCapReached, { spentOnly: true })}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
+- Reasons they gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
 
 Reference their earlier reasons and today's logged time directly (e.g. "Earlier today you came here for ${reasonsStr === '(none yet today)' ? 'this' : reasonsStr}, and you're now at ${minutesTodaySite} minutes…").
 
@@ -808,7 +778,7 @@ Open with: asking warmly whether they finished what they came for. Then:
 - If the page context above describes something different from what they came for, that drift is the most useful thing you can name — gently. "You came for X and you're on Y now" is a real observation, not an accusation.
 - If yes, or they're ready to close: affirm warmly, suggest one short good-feeling transition (stretch, water, deep breath, one small task).
 - If they want more time: this is the exponential-difficulty moment. Push back gently. Ask what specifically remains that the site is the answer to. Name the pattern if it's there: "This would be the Nth time today — is there something else going on?"
-- Only grant more time if there is a genuinely concrete, remaining, bounded task. Subtract from your normal willingness as grants today rises. Never set quick_check here — the quick check is for arriving, not extending.${capReached ? `
+- Only grant more time if there is a genuinely concrete, remaining, bounded task. Subtract from your normal willingness as grants today rises.${capReached ? `
 - ABSOLUTE MAX REACHED (${minutesCapReached ? `${minutesCap} minutes on this site` : `${grantsCap} grants allowed today`}). DO NOT call grant_access — it will be rejected. This is the moment the user most needs kindness, not scolding. Help them feel OK about closing. Acknowledge what they're doing right by talking to you at all.` : ''}
 - Keep messages short (2-4 sentences). Warm, not preachy.`;
   return composeSystemPrompt(coachInstructions, {
@@ -823,8 +793,6 @@ Open with: asking warmly whether they finished what they came for. Then:
     reasons_today: reasonsStr,
     site_purpose: (siteReason && siteReason.purpose) || '',
     site_legitimate: (siteReason && siteReason.legitimateUse) || '',
-    quick_check_minutes: qc.enabled ? qc.minutes : 0,
-    quick_checks_left: qc.enabled ? Math.max(0, qc.usesPerDay - qcUsed) : 0,
     time: coarseClock().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
     day: coarseClock().toLocaleDateString([], {weekday: 'long'})
   });
@@ -860,7 +828,7 @@ Guidance for the conversation:
 - Keep your replies short (2-3 sentences). Warm, curious, and welcoming.
 - Always go after more detail. Vague answers ("social media distracts me", "I waste time") are starting points, not answers. Follow up until you have specifics: which site, in what situations, what it feels like, what they'd rather be doing instead.
 - Ask about their goals first, and gently explore what drives their distractions.
-- Then ask which sites they want to block, and suggest standard limits (e.g. 3 grants per day, 10 mins absolute max). Mention that every blocked site also comes with a small daily quick check — a few minutes, once a day — so a genuinely tiny errand never needs a debate.
+- Then ask which sites they want to block, and suggest standard limits (e.g. 3 grants per day, 10 mins absolute max).
 - After agreeing on the blocklist, ask when they might genuinely need to pop onto those sites briefly, and get concrete examples. Capture these legitimate quick uses in the user_context so the coach can recognize them later.
 - Once you have agreed on their context (goals/alternatives/distractions), their blocked sites, and their absolute max limits, call 'save_onboarding' to finalize the setup. Explain to the user that you are saving their settings.
 - Write plain conversational prose only — no markdown, asterisks, bullets or headers; your words are shown as raw text.`;
@@ -878,12 +846,6 @@ function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newVa
     const toStr = (newValue && Number(newValue) > 0) ? `${newValue} minutes/day` : 'unlimited (no limit)';
     const kind = changeType === 'increase_app_limit' ? 'an app' : 'a site';
     changeDesc = `RAISE the absolute max time limit on ${domain} from ${fromStr} to ${toStr} — giving themselves more time on ${kind} they chose to limit.`;
-  } else if (changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check') {
-    const fmtQc = (v) => (v && Number(v.minutes) > 0 && Number(v.usesPerDay) > 0)
-      ? `${Math.round(Number(v.minutes))} min × ${Math.round(Number(v.usesPerDay))}/day`
-      : 'off';
-    const kind = changeType === 'increase_app_quick_check' ? 'an app' : 'a site';
-    changeDesc = `LOOSEN the daily quick check on ${domain} from ${fmtQc(currentValue)} to ${fmtQc(newValue)} — a bigger no-questions lane every single day on ${kind} they chose to limit.`;
   } else if (changeType === 'disable_all') {
     changeDesc = `DISABLE all blocking — clearing their entire blocklist so NONE of their chosen sites or apps are blocked anymore.`;
   } else {

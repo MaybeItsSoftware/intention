@@ -1112,6 +1112,18 @@ function renderRecommendGrid(container, more, ordered, seenCount, buildCard, rer
   };
 }
 
+// The daily limit a tapped suggestion should use. The chips lived in the
+// Blocked sites card until they moved into the Add-website dialog, where there
+// was no minutes field within reach and 10 was hard-coded; now they sit beside
+// one, so a chip and the Add button agree on the number that was just typed.
+// The wizard's own chip grid is still inline in its step and reads the same
+// (untouched, so 10) field — one number for both, wherever you tap.
+function currentAddSiteLimit() {
+  const el = document.getElementById('domain-limit-input');
+  const val = parseInt(el ? el.value : '', 10);
+  return !isNaN(val) && val > 0 ? val : 10;
+}
+
 async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
   const container = document.getElementById(containerId);
   const more = document.getElementById(moreId);
@@ -1128,7 +1140,7 @@ async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
     container, more, ordered, seen.length,
     (site) => {
       const meta = SITE_META[site];
-      return buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, 10));
+      return buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, currentAddSiteLimit()));
     },
     () => renderSiteRecommendations(containerId, moreId, blockedDomains)
   );
@@ -1482,13 +1494,86 @@ function applySettingsSection() {
 
 // ---- Add-item popup modals ----
 
+// What had focus when the dialog opened, per modal, so closing hands it back
+// to the button that opened it instead of dropping the caret onto <body> —
+// which on a phone leaves the next Tab starting from the top of the page.
+const addModalReturnFocus = {};
+
 function openAddModal(modalId, focusInputId) {
+  addModalReturnFocus[modalId] = document.activeElement;
   document.getElementById(modalId).hidden = false;
   document.getElementById(focusInputId)?.focus();
 }
 
 function closeAddModal(modalId) {
   document.getElementById(modalId).hidden = true;
+  const opener = addModalReturnFocus[modalId];
+  delete addModalReturnFocus[modalId];
+  // The opener can have been re-rendered away underneath us (adding a site
+  // rebuilds the list), so only restore focus to something still on the page.
+  if (opener && typeof opener.focus === 'function' && document.contains(opener)) opener.focus();
+}
+
+// Anything a Tab can land on. Kept in one place because the trap below has to
+// agree with the browser about what "focusable" means, or it wraps early and
+// makes controls unreachable.
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// These dialogs are plain divs toggled with the `hidden` attribute rather than
+// <dialog>, because they're shared singletons driven from both the wizard and
+// the settings view and they have to behave the same inside the Android
+// WebView. Nothing <dialog> gives you for free comes for free here, so the
+// three things a modal owes you are spelled out: a scrim you can click, an
+// Escape that closes, and a Tab that can't walk out into the page behind.
+//
+// `extraIds` names containers that belong to the dialog but live elsewhere in
+// the DOM — wireAppSearch detaches its results popup to <body> so it can
+// escape the stacking context of .card — and would otherwise be trapped out.
+function wireModalDismissal(modalId, onClose, extraIds = []) {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+
+  // Only a press that both starts and ends on the scrim dismisses. A drag that
+  // begins inside the box and releases outside it is a text selection, and
+  // closing on it would throw away whatever had been typed.
+  let pressedScrim = false;
+  modal.addEventListener('mousedown', (e) => { pressedScrim = e.target === modal; });
+  modal.addEventListener('click', (e) => {
+    const dismiss = e.target === modal && pressedScrim;
+    pressedScrim = false;
+    if (dismiss) onClose();
+  });
+
+  // Bound to the document, not the dialog: a click on the scrim leaves focus
+  // on <body>, and the results popup lives outside the dialog's subtree, so a
+  // listener on the modal itself would miss both.
+  document.addEventListener('keydown', (e) => {
+    if (modal.hidden) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const roots = [modal, ...extraIds.map(id => document.getElementById(id))];
+    const items = roots
+      .filter(root => root && !root.hidden)
+      .flatMap(root => [...root.querySelectorAll(FOCUSABLE_SELECTOR)])
+      // offsetParent is null for anything display:none'd by an ancestor, which
+      // is how the folded-away suggestion chips and the empty results list
+      // hide — a wrap onto one of those would look like focus vanishing.
+      .filter(el => el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
 }
 
 // The "+ Add website"/"+ Add app" modals are shared singletons used by both
@@ -1501,10 +1586,14 @@ function wireAddModals() {
 
   document.getElementById('open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
   document.getElementById('setup-open-add-site-btn')?.addEventListener('click', () => openAddModal('add-site-modal', 'domain-input'));
-  document.getElementById('close-add-site-btn').addEventListener('click', () => {
+  // Every route out of the dialog runs the same teardown — the error line has
+  // to go with it, or it is still sitting there the next time it opens.
+  const dismissSiteModal = () => {
     setAddSiteError('');
     closeAddModal('add-site-modal');
-  });
+  };
+  document.getElementById('close-add-site-btn').addEventListener('click', dismissSiteModal);
+  wireModalDismissal('add-site-modal', dismissSiteModal);
   // The modal only closes on a successful add now — closing it on a rejected
   // one would take the error message away with it.
   const submitDomain = async () => {
@@ -1521,7 +1610,11 @@ function wireAddModals() {
   if (HAS_APP_BLOCKING) {
     document.getElementById('open-add-app-btn')?.addEventListener('click', () => openAddModal('add-app-modal', 'app-search-input'));
     document.getElementById('setup-open-add-app-btn')?.addEventListener('click', () => openAddModal('add-app-modal', 'app-search-input'));
-    document.getElementById('close-add-app-btn').addEventListener('click', () => closeAddModal('add-app-modal'));
+    const dismissAppModal = () => closeAddModal('add-app-modal');
+    document.getElementById('close-add-app-btn').addEventListener('click', dismissAppModal);
+    // The search results are detached to <body>, so they have to be named here
+    // to stay inside the trap. See wireAppSearch.
+    wireModalDismissal('add-app-modal', dismissAppModal, ['app-search-results']);
     wireAppSearch(
       'app-search-input',
       'app-search-results',
@@ -1987,20 +2080,6 @@ function effectiveModeFor(entry, globalMode) {
   return (entry && entry.mode) || globalMode || 'coach';
 }
 
-// The lane a site actually has right now, defaults included. Mirrors
-// normalizeQuickCheck() in prompts.js (the options page doesn't load that
-// file) — keep the two in sync. Needed so tighten-vs-loosen compares against
-// the effective value: a missing field IS the default lane, not "off".
-function effectiveQuickCheckFor(entry) {
-  const src = (entry && typeof entry.quickCheck === 'object' && entry.quickCheck) || {};
-  let minutes = Math.round(Number(src.minutes));
-  let usesPerDay = Math.round(Number(src.usesPerDay));
-  if (isNaN(minutes)) minutes = 3;
-  if (isNaN(usesPerDay)) usesPerDay = 1;
-  if (minutes <= 0 || usesPerDay <= 0) return { minutes: 0, usesPerDay: 0, enabled: false };
-  return { minutes: Math.min(minutes, 60), usesPerDay, enabled: true };
-}
-
 // Loosening a rule (removing a block, raising a limit, disabling everything)
 // normally requires convincing the AI coach via openGateModal. In simple mode
 // there's no AI, so the change just applies immediately instead.
@@ -2162,7 +2241,7 @@ function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReason
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   if (!domains.length) {
-    renderEmptyList(list, 'No websites blocked yet. Add one above, or tap a suggestion.');
+    renderEmptyList(list, 'No websites blocked yet. Tap "+ Add website" — it suggests a few.');
     return;
   }
   for (const d of domains) {
@@ -2220,7 +2299,6 @@ function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReason
       const state = await getConfig();
       renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
     };
-    fields.appendChild(buildQuickCheckControl(d, limitInfo, globalMode, rerenderDomains));
     fields.appendChild(buildRowModeControl(d, limitInfo, globalMode, rerenderDomains));
 
     // Last, and full width: it is prose, not another field competing for the
@@ -2379,120 +2457,6 @@ function buildRowModeControl(key, limitInfo, globalMode, onSaved, persistKey = '
   return frag;
 }
 
-// The per-row "Quick check: [n] min × [m]/day" field, shared by the domain and
-// app lists. Same rules as every other setting here: tightening or disabling
-// applies instantly and free; enabling or raising anything goes through the
-// coach gate. Coach-only feature — hidden on simple-mode rows.
-function buildQuickCheckControl(key, limitInfo, globalMode, onSaved, persistKey = 'domainLimits', displayName = key) {
-  // Nothing at all rather than a hidden placeholder: the caller appends this
-  // straight into the settings strip, and an empty fragment adds no node to
-  // leave a gap in the flex line.
-  if (effectiveModeFor(limitInfo, globalMode) === 'simple') {
-    return document.createDocumentFragment();
-  }
-
-  const current = effectiveQuickCheckFor(limitInfo);
-
-  const toggle = document.createElement('input');
-  toggle.type = 'checkbox';
-  toggle.checked = current.enabled;
-  toggle.title = 'Allow one lenient daily quick check on this site';
-
-  const minsInput = document.createElement('input');
-  minsInput.type = 'number';
-  minsInput.min = '1';
-  minsInput.max = '60';
-  minsInput.className = 'inline-limit-input';
-  minsInput.value = current.enabled ? current.minutes : 3;
-
-  const usesInput = document.createElement('input');
-  usesInput.type = 'number';
-  usesInput.min = '1';
-  usesInput.max = '5';
-  usesInput.className = 'inline-limit-input';
-  usesInput.value = current.enabled ? current.usesPerDay : 1;
-
-  const reflect = () => {
-    minsInput.disabled = !toggle.checked;
-    usesInput.disabled = !toggle.checked;
-  };
-  reflect();
-
-  const revert = () => {
-    toggle.checked = current.enabled;
-    minsInput.value = current.enabled ? current.minutes : 3;
-    usesInput.value = current.enabled ? current.usesPerDay : 1;
-    reflect();
-  };
-
-  const save = async (qc) => {
-    const state = await getConfig();
-    const currentLimits = state[persistKey] || {};
-    if (!currentLimits[key]) currentLimits[key] = { maxGrants: 3 };
-    currentLimits[key].quickCheck = qc;
-    await sendBg({ action: 'saveSettings', config: { [persistKey]: currentLimits } });
-    await onSaved();
-  };
-
-  const requestChange = async () => {
-    const m = parseInt(minsInput.value, 10);
-    const u = parseInt(usesInput.value, 10);
-    if (toggle.checked && (isNaN(m) || m <= 0 || isNaN(u) || u <= 0)) {
-      revert();
-      return;
-    }
-    const next = toggle.checked
-      ? { minutes: Math.min(m, 60), usesPerDay: Math.min(u, 5) }
-      : { minutes: 0, usesPerDay: 0 };
-    // The effective value is the comparison point: with the lane on by
-    // default, a missing field is the default lane, not "off" — so enabling
-    // from off, or raising either number, is a loosening.
-    const loosens = next.minutes > 0 &&
-      (!current.enabled || next.minutes > current.minutes || next.usesPerDay > current.usesPerDay);
-    if (!loosens) {
-      await save(next);
-      return;
-    }
-    revert(); // until/unless approved
-    const curStr = current.enabled ? `${current.minutes} min × ${current.usesPerDay}/day` : 'off';
-    const newStr = `${next.minutes} min × ${next.usesPerDay}/day`;
-    applyOrGate({
-      isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
-      changeType: persistKey === 'appLimits' ? 'increase_app_quick_check' : 'increase_quick_check',
-      domain: key,
-      currentValue: current.enabled ? { minutes: current.minutes, usesPerDay: current.usesPerDay } : { minutes: 0, usesPerDay: 0 },
-      newValue: next,
-      title: `Loosen the quick check on ${displayName}?`,
-      subtitle: `Going from ${curStr} to ${newStr} of no-questions time every day. Convince your coach.`,
-      onApproved: onSaved
-    });
-  };
-
-  toggle.addEventListener('change', () => { reflect(); requestChange(); });
-  minsInput.addEventListener('change', requestChange);
-  usesInput.addEventListener('change', requestChange);
-
-  // The toggle lives in the micro-label rather than beside the numbers, so the
-  // thing that switches the lane on is what names it — the checkbox had only a
-  // title attribute before, which a screen reader may never announce.
-  const label = document.createElement('label');
-  label.className = 'micro-label row-toggle-label';
-  label.appendChild(toggle);
-  label.appendChild(document.createTextNode('Quick check'));
-
-  const times = document.createElement('span');
-  times.className = 'row-field-unit';
-  times.textContent = '×';
-  const perDay = document.createElement('span');
-  perDay.className = 'row-field-unit';
-  perDay.textContent = 'a day';
-
-  const mins = document.createElement('span');
-  mins.className = 'row-field-unit';
-  mins.textContent = 'min';
-
-  return buildRowField(label, minsInput, mins, times, usesInput, perDay);
-}
 
 // ---- Blocked apps (settings view, Android only) ----
 // Mirrors the domain list above: adding/tightening is free, any loosening
@@ -2538,7 +2502,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   if (!apps.length) {
-    renderEmptyList(list, 'No apps blocked yet. Add one above, or tap a suggestion.');
+    renderEmptyList(list, 'No apps blocked yet. Tap "+ Add app" — it suggests a few.');
     return;
   }
   for (const pkg of apps) {
@@ -2593,7 +2557,6 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
       const state = await getConfig();
       renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
     };
-    fields.appendChild(buildQuickCheckControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits', name));
     fields.appendChild(buildRowModeControl(pkg, limitInfo, globalMode, rerenderApps, 'appLimits'));
 
     li.appendChild(buildServiceReasonControl(pkg, name, serviceReasons, allBlockedTargets()));
@@ -2962,9 +2925,7 @@ function gateOpenerFallback(changeType, domain) {
     ? `You want to remove ${domain} from your blocklist. You set this rule for a reason. Tell me what's changed.`
     : changeType === 'increase_limit'
       ? `You want more time on ${domain}. Why? What's driving this right now?`
-      : changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check'
-        ? `You want a bigger daily quick check here. That's extra no-questions time every single day — what's driving it?`
-        : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
+      : `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`;
 }
 
 // attemptGateSend minus the user bubble: the coach speaks first. No

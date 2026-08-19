@@ -61,8 +61,9 @@ describe('prompts.js parity across variants', () => {
     observations: [
       { text: 'They tend to reach for Twitter mid-afternoon.', domain: 'twitter.com', at: 1754838000000 }
     ],
-    // A non-default lane with one use spent, so the rendered quick-check line
-    // (counts and budget) is exercised by the parity check too.
+    // Kept after the quick check was retired, deliberately: a stored lane is
+    // exactly what a pre-removal install still has on disk, and every variant
+    // must ignore it identically rather than one of them rendering a line.
     quickCheck: { minutes: 5, usesPerDay: 2 },
     quickChecksToday: 1
   };

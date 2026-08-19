@@ -213,32 +213,32 @@ describe('buildGateSystemPrompt', () => {
     expect(out).toContain('DO NOT call grant_access');
   });
 
-  // The quick check is a separate lane: hitting the grants cap leaves it open,
-  // hitting the minutes cap closes everything. The override text must say
-  // which cap actually bound, or the coach promises a lane that gets rejected.
-  it('carves the quick check out of the grants-cap override while it is unspent', () => {
+  // The grants cap used to have exactly one hole in it: while the quick-check
+  // lane was unspent, the override told the coach "ONE exception remains" and
+  // invited a cap-bypassing grant. The lane is retired, so the grants cap is
+  // now as absolute as the minutes cap — and this is the assertion that would
+  // catch it coming back.
+  it('the grants cap is absolute: no carve-out left to bypass it', () => {
     const out = P.buildGateSystemPrompt({ ...base, grantsToday: 3 });
-    expect(out).toContain("THEY HAVE REACHED TODAY'S GRANT CAP");
-    expect(out).toContain('DO NOT call grant_access for a normal pass');
-    expect(out).toContain('ONE exception remains');
-    expect(out).toContain('quick_check set to true');
-  });
-
-  it('drops the carve-out once the quick check is spent', () => {
-    const out = P.buildGateSystemPrompt({ ...base, grantsToday: 3, quickChecksToday: 1 });
     expect(out).toContain("YOU HAVE REACHED TODAY'S ABSOLUTE MAX (3 grants allowed today)");
+    expect(out).toContain('DO NOT call grant_access');
     expect(out).not.toContain('ONE exception');
-  });
-
-  it('drops the carve-out when the quick check is disabled for this site', () => {
-    const out = P.buildGateSystemPrompt({
-      ...base, grantsToday: 3, quickCheck: { minutes: 0, usesPerDay: 0 }
-    });
-    expect(out).not.toContain('ONE exception');
+    expect(out).not.toContain('for a normal pass');
+    expect(out).not.toContain('quick_check');
     expect(out).not.toContain('Quick check');
   });
 
-  it('the minutes cap is absolute: no carve-out, no quick-check line', () => {
+  // A stored quickCheck field is ignored data now: an entry that still carries
+  // one from before the removal must not change a single character of the
+  // prompt, in either direction.
+  it('ignores a leftover stored quickCheck entry entirely', () => {
+    const withLane = P.buildGateSystemPrompt({
+      ...base, grantsToday: 3, quickCheck: { minutes: 5, usesPerDay: 2 }, quickChecksToday: 0
+    });
+    expect(withLane).toBe(P.buildGateSystemPrompt({ ...base, grantsToday: 3 }));
+  });
+
+  it('the minutes cap is absolute too', () => {
     const out = P.buildGateSystemPrompt({ ...base, minutesTodaySite: 30 });
     expect(out).toContain("ABSOLUTE MAX (30 minutes on this site)");
     expect(out).not.toContain('ONE exception');
@@ -251,12 +251,15 @@ describe('buildGateSystemPrompt', () => {
     expect(out).not.toContain('GRANT CAP');
   });
 
-  it('exposes the quick-check extraVars to custom templates', () => {
+  // The two quick-check placeholders went with the lane. An instruction
+  // template that still names them gets the same treatment as any other
+  // unknown placeholder rather than a stale number.
+  it('no longer exposes quick-check extraVars to custom templates', () => {
     const out = P.buildGateSystemPrompt({
       ...base,
       coachInstructions: 'QC {{quick_check_minutes}}m x{{quick_checks_left}} {{usage}}'
     });
-    expect(out).toContain('QC 3m x1');
+    expect(out).not.toContain('QC 3m x1');
   });
 
   it('shows (none yet today) when no reasons given', () => {
@@ -319,22 +322,19 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
     expect(out).toContain('loosen their blocking settings on reddit.com');
   });
 
-  it('increase_quick_check shows from/to in lane terms', () => {
-    const out = P.buildSettingsGateSystemPrompt({
-      ...base, changeType: 'increase_quick_check',
-      currentValue: { minutes: 3, usesPerDay: 1 }, newValue: { minutes: 5, usesPerDay: 2 }
-    });
-    expect(out).toContain('LOOSEN the daily quick check on reddit.com');
-    expect(out).toContain('from 3 min × 1/day to 5 min × 2/day');
-  });
-
-  it('increase_quick_check renders a disabled current value as off', () => {
-    const out = P.buildSettingsGateSystemPrompt({
-      ...base, changeType: 'increase_app_quick_check',
-      currentValue: { minutes: 0, usesPerDay: 0 }, newValue: { minutes: 3, usesPerDay: 1 }
-    });
-    expect(out).toContain('from off to 3 min × 1/day');
-    expect(out).toContain('an app');
+  // Both quick-check change types are gone. Nothing in the UI can request one
+  // any more, but a change type that arrives from an old queued transcript
+  // must not describe a feature that no longer exists — it falls through to
+  // the generic wording, and applySettingChange returns null for it.
+  it('the retired quick-check change types get no wording of their own', () => {
+    for (const changeType of ['increase_quick_check', 'increase_app_quick_check']) {
+      const out = P.buildSettingsGateSystemPrompt({
+        ...base, changeType,
+        currentValue: { minutes: 3, usesPerDay: 1 }, newValue: { minutes: 5, usesPerDay: 2 }
+      });
+      expect(out).toContain('loosen their blocking settings on reddit.com');
+      expect(out).not.toContain('quick check');
+    }
   });
 });
 
@@ -531,9 +531,10 @@ describe('tool schemas', () => {
     expect(P.GRANT_TOOL.schema.required).toEqual(['minutes', 'reason']);
     expect(P.GRANT_TOOL.schema.properties.minutes.type).toBe('number');
     expect(P.GRANT_TOOL.schema.properties.reason.type).toBe('string');
-    // Optional by design: old transcripts and BYOK models that never send it
-    // must keep working.
-    expect(P.GRANT_TOOL.schema.properties.quick_check.type).toBe('boolean');
+    // The quick_check flag is gone with the lane. Minutes and reason are the
+    // whole schema: there is no longer any way for the model to ask for a
+    // grant that sidesteps the daily cap.
+    expect(Object.keys(P.GRANT_TOOL.schema.properties)).toEqual(['minutes', 'reason']);
   });
 
   it('APPROVE_CHANGE_TOOL has the approve_setting_change name and required reason', () => {
@@ -725,7 +726,9 @@ describe('DEFAULT_COACH_INSTRUCTIONS is a decision procedure', () => {
     expect(t).toContain('Plain text only');
     expect(t).toContain('grant IMMEDIATELY');
     expect(t).toContain('Never reuse an opener');
-    expect(t).toContain('quick_check set to true');
+    // The quick-check bullet has been struck from the granting rules: the
+    // persona must not describe a lane the tool schema can no longer express.
+    expect(t).not.toContain('quick_check');
   });
 
   it('fences the examples, in order, with the invented-history disclaimer', () => {
@@ -931,7 +934,9 @@ describe('prompt cache split', () => {
     const out = P.buildGateSystemPrompt(fullFixture);
     const markerAt = out.indexOf(P.CACHE_BREAK_MARKER);
     expect(markerAt).toBeGreaterThan(-1);
-    for (const volatile of ['Right now it is', "Today's usage", 'Quick check', '<untrusted_page_data>']) {
+    // 'Quick check' used to be in this list; the retired lane no longer
+    // renders a line, so 'Minutes on' stands in as another per-request fact.
+    for (const volatile of ['Right now it is', "Today's usage", 'Minutes on', '<untrusted_page_data>']) {
       expect(out.indexOf(volatile), volatile).toBeGreaterThan(markerAt);
     }
     for (const stable of ['You are Intention', 'What they told you about themselves', 'END EXAMPLES.']) {
@@ -986,82 +991,60 @@ describe('renderWalkAwayLine', () => {
   });
 });
 
-// The quick check is on by default (a missing field means the default lane),
-// so nobody needs a migration — and an explicit zero is the only way to turn
-// it off.
-describe('normalizeQuickCheck', () => {
-  it('defaults a missing field to the standard lane', () => {
-    expect(P.normalizeQuickCheck(undefined)).toEqual({ minutes: 3, usesPerDay: 1, enabled: true });
-    expect(P.normalizeQuickCheck(null)).toEqual({ minutes: 3, usesPerDay: 1, enabled: true });
+// The quick check is retired: no normalizeQuickCheck, no renderQuickCheckLine,
+// and no prompt anywhere that mentions the lane. Those three had their own
+// describe blocks here; what replaces them is the assertion that matters now —
+// that neither gate nor check-in can be talked into the lane, whatever a
+// stored entry or an old transcript still carries.
+describe('the retired quick-check lane leaves no trace in any prompt', () => {
+  it('the helpers are gone, not just unused', () => {
+    expect(P.normalizeQuickCheck).toBeUndefined();
+    expect(P.renderQuickCheckLine).toBeUndefined();
   });
 
-  it('falls back per-field on garbage, matching getLimitsForDomain style', () => {
-    expect(P.normalizeQuickCheck({ minutes: 'lots' })).toEqual({ minutes: 3, usesPerDay: 1, enabled: true });
-    expect(P.normalizeQuickCheck({ minutes: 5 })).toEqual({ minutes: 5, usesPerDay: 1, enabled: true });
-    expect(P.normalizeQuickCheck({ usesPerDay: 2 })).toEqual({ minutes: 3, usesPerDay: 2, enabled: true });
-  });
+  const gateBase = {
+    domain: 'twitter.com', coachInstructions: '{{usage}}',
+    grantsToday: 0, grantsCap: 3, minutesCap: 30,
+    minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0, reasonsToday: []
+  };
 
-  it('treats an explicit zero on either field as disabled', () => {
-    expect(P.normalizeQuickCheck({ minutes: 0, usesPerDay: 0 })).toEqual({ minutes: 0, usesPerDay: 0, enabled: false });
-    expect(P.normalizeQuickCheck({ minutes: 5, usesPerDay: 0 })).toEqual({ minutes: 0, usesPerDay: 0, enabled: false });
-    expect(P.normalizeQuickCheck({ minutes: -1 })).toEqual({ minutes: 0, usesPerDay: 0, enabled: false });
-  });
-
-  it('clamps the per-use budget to the 60-minute pass ceiling', () => {
-    expect(P.normalizeQuickCheck({ minutes: 90, usesPerDay: 1 })).toEqual({ minutes: 60, usesPerDay: 1, enabled: true });
-  });
-});
-
-describe('renderQuickCheckLine', () => {
-  const on = { minutes: 3, usesPerDay: 1, enabled: true };
-  const off = { minutes: 0, usesPerDay: 0, enabled: false };
-
-  it('offers the lane while it is unspent', () => {
-    const out = P.renderQuickCheckLine(on, 0, false);
-    expect(out).toContain('still available today — 1 of 1 left, up to 3 minutes');
-    expect(out).toContain('quick_check set to true');
-    expect(out).toContain('does not use up one of their normal grants');
-  });
-
-  it('states the lane is spent and forbids reuse', () => {
-    const out = P.renderQuickCheckLine(on, 1, false);
-    expect(out).toContain('already used today (1 of 1)');
-    expect(out).toContain('do not set quick_check again');
-    expect(out).not.toContain('still available');
-  });
-
-  it('is silent when disabled or when the minutes cap is exhausted', () => {
-    expect(P.renderQuickCheckLine(off, 0, false)).toBe('');
-    expect(P.renderQuickCheckLine(on, 0, true)).toBe('');
-  });
-
-  it('spentOnly mode renders nothing while the lane is still open', () => {
-    expect(P.renderQuickCheckLine(on, 0, false, { spentOnly: true })).toBe('');
-    expect(P.renderQuickCheckLine(on, 1, false, { spentOnly: true })).toContain('already used today');
-  });
-});
-
-// A check-in grant is an extension by definition, and the quick check must
-// never extend — the check-in prompt may explain a spent lane but never offer
-// an open one.
-describe('check-in prompt never offers the quick check', () => {
-  const base = {
+  const checkinBase = {
     domain: 'youtube.com', coachInstructions: 'X {{usage}}',
     originalReason: 'watch one tutorial',
     grantsToday: 1, grantsCap: 3, minutesCap: 0,
     minutesTodaySite: 20, minutesTodayAll: 20, reasonsToday: ['watch one tutorial']
   };
 
-  it('renders nothing while the lane is open', () => {
-    const out = P.buildCheckinSystemPrompt(base);
-    expect(out).not.toContain('still available today');
-    expect(out).toContain('the quick check is for arriving, not extending');
+  // Every state the lane used to have a line for: unspent, spent, explicitly
+  // disabled, and cap-bound. None of them says anything now.
+  for (const [label, extra] of [
+    ['a fresh gate', {}],
+    ['a gate at the grants cap', { grantsToday: 3 }],
+    ['a gate with an unspent stored lane', { quickCheck: { minutes: 3, usesPerDay: 1 }, quickChecksToday: 0 }],
+    ['a gate with a spent stored lane', { quickCheck: { minutes: 3, usesPerDay: 1 }, quickChecksToday: 1 }],
+    ['a gate with an explicitly disabled lane', { quickCheck: { minutes: 0, usesPerDay: 0 } }]
+  ]) {
+    it(`${label} never mentions it`, () => {
+      const out = P.buildGateSystemPrompt({ ...gateBase, ...extra });
+      expect(out).not.toContain('Quick check');
+      expect(out).not.toContain('quick check');
+      expect(out).not.toContain('quick_check');
+    });
+  }
+
+  it('the check-in prompt never mentions it either', () => {
+    for (const extra of [{}, { quickChecksToday: 1 }, { quickCheck: { minutes: 5, usesPerDay: 2 } }]) {
+      const out = P.buildCheckinSystemPrompt({ ...checkinBase, ...extra });
+      expect(out).not.toContain('quick check');
+      expect(out).not.toContain('quick_check');
+      expect(out).not.toContain('still available today');
+    }
   });
 
-  it('renders only the spent line once the lane is used', () => {
-    const out = P.buildCheckinSystemPrompt({ ...base, quickChecksToday: 1 });
-    expect(out).toContain('already used today (1 of 1)');
-    expect(out).not.toContain('still available today');
+  // Onboarding used to promise the lane out loud, which would have been the
+  // one place a retired feature could still be sold to a new user.
+  it('onboarding no longer promises a daily quick check', () => {
+    expect(P.buildSetupSystemPrompt()).not.toContain('quick check');
   });
 });
 

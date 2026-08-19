@@ -164,174 +164,166 @@
       </div>
 
       <div class="settings-grid">
-        <div class="settings-column">
-          <section class="card" data-section="coach">
-            <h2>Your coach's context</h2>
-            <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
-            <blockquote id="context-display"></blockquote>
-            <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
-            <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
-            <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
-          </section>
+        <section class="card" data-section="coach">
+          <h2>Your coach's context</h2>
+          <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
+          <blockquote id="context-display"></blockquote>
+          <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
+          <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
+          <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
+        </section>
 
-          <section class="card" data-section="activity">
-            <h2>Today</h2>
-            <div id="stats-display"></div>
-          </section>
+        <section class="card" data-section="activity">
+          <h2>Today</h2>
+          <div id="stats-display"></div>
+        </section>
 
-          <section class="card" id="usage-log-card" data-section="activity">
-            <h2>Usage log</h2>
-            <p class="subtitle">Time spent on blocked sites and apps, by day.</p>
-            <div id="usage-log-access" hidden></div>
-            <ul id="usage-log-list"></ul>
-          </section>
-        </div>
+        <section class="card" id="usage-log-card" data-section="activity">
+          <h2>Usage log</h2>
+          <p class="subtitle">Time spent on blocked sites and apps, by day.</p>
+          <div id="usage-log-access" hidden></div>
+          <ul id="usage-log-list"></ul>
+        </section>
 
-        <div class="settings-column">
-          <section class="card" id="blocking-mode-card" data-section="blocking">
-            <h2>Blocking mode</h2>
-            <p class="subtitle">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
+        <section class="card" id="blocking-mode-card" data-section="blocking">
+          <h2>Blocking mode</h2>
+          <p class="subtitle">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
+          <div class="mode-choice-grid">
+            <button type="button" class="mode-choice-card" id="settings-mode-coach-btn" data-mode="coach">
+              <strong>Coach (AI-guided)</strong>
+              <span>Talk to your coach to get through a block or change rules.</span>
+            </button>
+            <button type="button" class="mode-choice-card" id="settings-mode-simple-btn" data-mode="simple">
+              <strong>Simple (no AI)</strong>
+              <span>No API key needed.</span>
+            </button>
+          </div>
+          <div id="settings-simple-options" hidden>
+            <label>Default behavior when you hit a block</label>
             <div class="mode-choice-grid">
-              <button type="button" class="mode-choice-card" id="settings-mode-coach-btn" data-mode="coach">
-                <strong>Coach (AI-guided)</strong>
-                <span>Talk to your coach to get through a block or change rules.</span>
+              <button type="button" class="mode-choice-card" id="settings-simple-hard-btn" data-behavior="hard">
+                <strong>Hard block</strong>
+                <span>No self-serve unlock.</span>
               </button>
-              <button type="button" class="mode-choice-card" id="settings-mode-simple-btn" data-mode="simple">
-                <strong>Simple (no AI)</strong>
-                <span>No API key needed.</span>
+              <button type="button" class="mode-choice-card" id="settings-simple-pass-btn" data-behavior="pass">
+                <strong>Timed pass</strong>
+                <span>"Take N minutes" self-serve button.</span>
               </button>
             </div>
-            <div id="settings-simple-options" hidden>
-              <label>Default behavior when you hit a block</label>
-              <div class="mode-choice-grid">
-                <button type="button" class="mode-choice-card" id="settings-simple-hard-btn" data-behavior="hard">
-                  <strong>Hard block</strong>
-                  <span>No self-serve unlock.</span>
-                </button>
-                <button type="button" class="mode-choice-card" id="settings-simple-pass-btn" data-behavior="pass">
-                  <strong>Timed pass</strong>
-                  <span>"Take N minutes" self-serve button.</span>
-                </button>
-              </div>
-              <div id="settings-simple-minutes-group" class="input-group" hidden>
-                <label for="settings-simple-minutes-input">Minutes per pass</label>
-                <input type="number" id="settings-simple-minutes-input" min="1" max="180" value="10">
-              </div>
+            <div id="settings-simple-minutes-group" class="input-group" hidden>
+              <label for="settings-simple-minutes-input">Minutes per pass</label>
+              <input type="number" id="settings-simple-minutes-input" min="1" max="180" value="10">
             </div>
-            <button id="save-blocking-mode-btn" class="secondary" style="width: 100%; margin-top: 10px;">Save</button>
-            <div id="blocking-mode-status" class="status"></div>
-          </section>
-
-          <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
-            <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
-            <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
           </div>
+          <button id="save-blocking-mode-btn" class="secondary" style="width: 100%; margin-top: 10px;">Save</button>
+          <div id="blocking-mode-status" class="status"></div>
+        </section>
 
-          <section class="card" id="websites-card" data-section="blocking">
-            <h2>Blocked sites</h2>
-            <p class="subtitle">Add domains you want to be mindful about, or tap a suggestion below. Each row uses the blocking mode above unless you give it one of its own, and "Daily limit" is the most time you can spend there in a day however you ask.</p>
-            <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
-            <div id="sites-recommend-grid" class="recommend-grid"></div>
-            <button type="button" id="sites-recommend-more" class="recommend-more" hidden></button>
-            <ul id="domain-list"></ul>
-          </section>
+        <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
+          <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
+          <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
+        </div>
 
-          <section class="card" id="apps-card" data-section="blocking" hidden>
-            <h2>Blocked apps</h2>
-            <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device, or tap a suggestion below.</p>
-            <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
-            <div id="apps-recommend-grid" class="recommend-grid"></div>
-            <button type="button" id="apps-recommend-more" class="recommend-more" hidden></button>
-            <ul id="app-list"></ul>
-            <div id="ios-apps-controls" hidden>
-              <p class="subtitle" id="ios-apps-status"></p>
-              <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
-            </div>
-          </section>
+        <section class="card" id="websites-card" data-section="blocking">
+          <h2>Blocked sites</h2>
+          <p class="subtitle">Add domains you want to be mindful about — "+ Add website" also suggests the usual suspects. Each row uses the blocking mode above unless you give it one of its own, and "Daily limit" is the most time you can spend there in a day however you ask.</p>
+          <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+          <ul id="domain-list"></ul>
+        </section>
 
-          <section class="card danger-card" id="danger-card" data-section="blocking">
-            <h2>Turn everything off</h2>
-            <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
-            <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
-            <div id="disable-all-status" class="status"></div>
-          </section>
+        <section class="card" id="apps-card" data-section="blocking" hidden>
+          <h2>Blocked apps</h2>
+          <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device — "+ Add app" also suggests the usual suspects.</p>
+          <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+          <ul id="app-list"></ul>
+          <div id="ios-apps-controls" hidden>
+            <p class="subtitle" id="ios-apps-status"></p>
+            <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
+          </div>
+        </section>
 
-          <section class="card" id="unlock-card" data-section="unlock" hidden>
-            <h2>Ask for time</h2>
-            <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
-            <p class="subtitle" id="unlock-status"></p>
-            <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
-          </section>
+        <section class="card danger-card" id="danger-card" data-section="blocking">
+          <h2>Turn everything off</h2>
+          <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
+          <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
+          <div id="disable-all-status" class="status"></div>
+        </section>
 
-          <section class="card" data-section="settings">
-            <h2>AI access</h2>
-            <div id="access-paywall"></div>
-            <div id="access-status" class="status"></div>
-          </section>
+        <section class="card" id="unlock-card" data-section="unlock" hidden>
+          <h2>Ask for time</h2>
+          <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
+          <p class="subtitle" id="unlock-status"></p>
+          <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
+        </section>
 
-          <section class="card" data-section="settings">
-            <h2>Privacy</h2>
-            <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
-            <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
-          </section>
+        <section class="card" data-section="settings">
+          <h2>AI access</h2>
+          <div id="access-paywall"></div>
+          <div id="access-status" class="status"></div>
+        </section>
 
-          <details class="card advanced-card" data-section="settings" id="advanced-card">
-            <summary>Advanced <span class="muted">(developer options)</span></summary>
-            <div class="advanced-card-body">
-              <details id="custom-key-details">
-                <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
-                <div class="advanced-card-body">
-                  <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
-                  <label for="provider-select-2">Provider</label>
-                  <div class="input-group">
-                    <select id="provider-select-2"></select>
-                  </div>
-                  <label for="model-input-2">Model</label>
-                  <div class="input-group">
-                    <input type="text" id="model-input-2">
-                  </div>
-                  <label for="api-key-input-2">API key</label>
-                  <div class="input-group">
-                    <input type="password" id="api-key-input-2">
-                  </div>
-                  <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
-                  <button id="clear-provider-btn" class="secondary" style="margin-top: 8px; width: 100%;">Clear custom key</button>
-                  <div id="provider-status" class="status"></div>
+        <section class="card" data-section="settings">
+          <h2>Privacy</h2>
+          <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
+          <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
+        </section>
+
+        <details class="card advanced-card" data-section="settings" id="advanced-card">
+          <summary>Advanced <span class="muted">(developer options)</span></summary>
+          <div class="advanced-card-body">
+            <details id="custom-key-details">
+              <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
+              <div class="advanced-card-body">
+                <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
+                <label for="provider-select-2">Provider</label>
+                <div class="input-group">
+                  <select id="provider-select-2"></select>
                 </div>
-              </details>
+                <label for="model-input-2">Model</label>
+                <div class="input-group">
+                  <input type="text" id="model-input-2">
+                </div>
+                <label for="api-key-input-2">API key</label>
+                <div class="input-group">
+                  <input type="password" id="api-key-input-2">
+                </div>
+                <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
+                <button id="clear-provider-btn" class="secondary" style="margin-top: 8px; width: 100%;">Clear custom key</button>
+                <div id="provider-status" class="status"></div>
+              </div>
+            </details>
+          </div>
+        </details>
+
+        <details class="card advanced-card" data-section="coach">
+          <summary>Coach instructions <span class="muted">(advanced)</span></summary>
+          <div class="advanced-card-body">
+            <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
+            <div class="input-group">
+              <textarea id="coach-instructions-input" rows="8"></textarea>
             </div>
-          </details>
-        </div>
+            <label for="settings-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
+            <div class="input-group">
+              <textarea id="settings-projects-input" rows="3"></textarea>
+            </div>
+            <label for="settings-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
+            <div class="input-group">
+              <textarea id="settings-reasons-input" rows="3"></textarea>
+            </div>
+            <button id="save-prompt-btn" class="secondary" style="width: 100%;">Save coach instructions</button>
+            <button id="reset-prompt-btn" class="secondary" style="width: 100%; margin-top: 8px;">Reset to default</button>
+            <div id="prompt-status" class="status"></div>
+          </div>
+        </details>
+
+        <section class="card" data-section="coach">
+          <h2>What your coach has noticed</h2>
+          <p class="subtitle">Private notes your coach keeps between conversations. Nothing here is hidden from you.</p>
+          <ul id="coach-observations-list"></ul>
+          <button id="clear-observations-btn" class="secondary" style="width: 100%;">Clear notes</button>
+          <div id="observations-status" class="status"></div>
+        </section>
       </div>
-
-      <details class="card advanced-card" data-section="coach">
-        <summary>Coach instructions <span class="muted">(advanced)</span></summary>
-        <div class="advanced-card-body">
-          <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
-          <div class="input-group">
-            <textarea id="coach-instructions-input" rows="8"></textarea>
-          </div>
-          <label for="settings-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
-          <div class="input-group">
-            <textarea id="settings-projects-input" rows="3"></textarea>
-          </div>
-          <label for="settings-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
-          <div class="input-group">
-            <textarea id="settings-reasons-input" rows="3"></textarea>
-          </div>
-          <button id="save-prompt-btn" class="secondary" style="width: 100%;">Save coach instructions</button>
-          <button id="reset-prompt-btn" class="secondary" style="width: 100%; margin-top: 8px;">Reset to default</button>
-          <div id="prompt-status" class="status"></div>
-        </div>
-      </details>
-
-      <section class="card" data-section="coach">
-        <h2>What your coach has noticed</h2>
-        <p class="subtitle">Private notes your coach keeps between conversations. Nothing here is hidden from you.</p>
-        <ul id="coach-observations-list"></ul>
-        <button id="clear-observations-btn" class="secondary" style="width: 100%;">Clear notes</button>
-        <div id="observations-status" class="status"></div>
-      </section>
     </main>
 
     <div id="coach-modal" hidden>
@@ -374,9 +366,9 @@
     </div>
 
     <div id="add-site-modal" class="add-modal" hidden>
-      <div class="coach-box add-modal-box">
+      <div class="coach-box add-modal-box" role="dialog" aria-modal="true" aria-labelledby="add-site-title">
         <div class="coach-header">
-          <h2>Add a website</h2>
+          <h2 id="add-site-title">Add a website</h2>
           <button type="button" id="close-add-site-btn" class="secondary">Close</button>
         </div>
         <label for="domain-input">Website address</label>
@@ -386,19 +378,34 @@
           <button id="add-btn" class="primary">Add</button>
         </div>
         <p class="int-pw-error" id="add-site-error" hidden></p>
+        <!-- The suggestion chips used to live in the Blocked sites card, above
+             the list they pushed off the screen, and they added at a hard-coded
+             10 min/day because there was no field near them to read. They
+             belong to the act of adding, so they now sit where you go to add —
+             next to the minutes box, which is the number a tapped chip uses. -->
+        <div class="add-modal-suggestions">
+          <p class="micro-label">Suggestions</p>
+          <div id="sites-recommend-grid" class="recommend-grid" hidden></div>
+          <button type="button" id="sites-recommend-more" class="recommend-more" hidden></button>
+        </div>
       </div>
     </div>
 
     <div id="add-app-modal" class="add-modal" hidden>
-      <div class="coach-box add-modal-box">
+      <div class="coach-box add-modal-box" role="dialog" aria-modal="true" aria-labelledby="add-app-title">
         <div class="coach-header">
-          <h2>Add an app</h2>
+          <h2 id="add-app-title">Add an app</h2>
           <button type="button" id="close-add-app-btn" class="secondary">Close</button>
         </div>
         <div class="input-group" id="app-search-group">
           <input type="text" id="app-search-input" placeholder="Search installed apps">
         </div>
         <ul id="app-search-results" class="app-results" hidden></ul>
+        <div class="add-modal-suggestions">
+          <p class="micro-label">Suggestions</p>
+          <div id="apps-recommend-grid" class="recommend-grid" hidden></div>
+          <button type="button" id="apps-recommend-more" class="recommend-more" hidden></button>
+        </div>
       </div>
     </div>
   </div>

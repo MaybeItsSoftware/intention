@@ -190,8 +190,17 @@ async function withDailyStats(mutator) {
 }
 
 async function recordGrant(domain, minutes, reason, options) {
-  // A quick check is a separate lane: it must never count against the day's
-  // grants cap, so it gets its own counter (lazily added, like walkedAway).
+  // A quick check was a separate lane: it never counted against the day's
+  // grants cap, so it got its own counter (lazily added, like walkedAway).
+  //
+  // The FEATURE is retired — nothing calls this with { quickCheck: true } any
+  // more, and background.js no longer has a path that could. This tally is
+  // DELIBERATELY LEFT IN PLACE, not overlooked: `quickChecks` and
+  // `session.quickCheck` are lazily-added additive fields, so keeping them
+  // means every day already banked keeps its two lanes exactly as recorded.
+  // Deleting them would either need a migration or silently reread historical
+  // quick checks as normal grants, which would rewrite the usage log and the
+  // history the coach reasons from. Please don't "tidy" them away.
   const quickCheck = !!(options && options.quickCheck);
   await withDailyStats((stats, today) => {
     if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };

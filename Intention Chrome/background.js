@@ -936,11 +936,10 @@ async function getLimitsForDomain(domain) {
     const maxMinutes = Number(limits.maxMinutes);
     return {
       maxGrants: isNaN(maxGrants) ? defaults.maxGrants : maxGrants,
-      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes,
-      quickCheck: normalizeQuickCheck(limits.quickCheck)
+      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes
     };
   }
-  return { ...defaults, quickCheck: normalizeQuickCheck(undefined) };
+  return { ...defaults };
 }
 
 // ---------------------------------------------------------------------------
@@ -1215,7 +1214,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   }
 
   // Resolve and enrich page context (video title, duration, Reddit thread, etc.)
-  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit' || changeType === 'increase_app_quick_check';
+  const isAppTarget = isApp || changeType === 'remove_app' || changeType === 'increase_app_limit';
   let pageCtx = pageContext || null;
   if (!pageCtx && tabId != null) {
     const nav = await readNavContext(tabId);
@@ -1244,7 +1243,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // page to describe, and saying nothing let the coach invent a screen it
   // cannot see. See renderAppContextBlock.
   let appCtx = null;
-  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit' || changeType === 'increase_app_quick_check') {
+  if (isApp || changeType === 'remove_app' || changeType === 'increase_app_limit') {
     const { appLabels = {} } = await getStorage(['appLabels']);
     const label = appLabel || appLabels[domain];
     displayName = label ? `the ${label} app` : 'a blocked app';
@@ -1285,9 +1284,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       walkedAwayWeek: stats.walkedAwayWeek,
       observations: coachObservations,
       pageContext: pageCtx,
-      appContext: appCtx,
-      quickCheck: limits.quickCheck,
-      quickChecksToday: stats.quickChecksToday
+      appContext: appCtx
     });
     tools = [GRANT_TOOL, NOTE_OBSERVATION_TOOL];
   } else if (mode === 'checkin') {
@@ -1319,9 +1316,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       walkedAwayWeek: stats.walkedAwayWeek,
       observations: coachObservations,
       pageContext: pageCtx,
-      appContext: appCtx,
-      quickCheck: limits.quickCheck,
-      quickChecksToday: stats.quickChecksToday
+      appContext: appCtx
     });
     tools = [GRANT_TOOL, NOTE_OBSERVATION_TOOL];
   } else if (mode === 'settings_gate') {
@@ -1417,80 +1412,27 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
         const stats = await getStatsForDomain(domain);
         const limits = await getLimitsForDomain(domain);
-        const qc = limits.quickCheck;
 
         const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
         const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
-
-        // The quick check bypasses the grants cap, never the minutes cap —
-        // and it only exists at the gate: a check-in grant is an extension by
-        // definition, and the lane must never extend. The flag is the model's
-        // attestation that the first message named one small specific check;
-        // when the lane can't honour it, the call is DOWNGRADED to a normal
-        // grant attempt rather than dropped — the user gave a real reason —
-        // and the correction turn makes the coach say which lane it came from.
-        const qcRequested = input.quick_check === true;
-        const qcUsable = qcRequested && qc.enabled && stats.quickChecksToday < qc.usesPerDay && mode === 'gate';
-        let downgradeNote = '';
-        if (qcRequested && !qcUsable) {
-          downgradeNote = mode !== 'gate' ? 'the quick check cannot be used to extend a session'
-            : !qc.enabled ? 'quick checks are turned off for this site'
-            : "today's quick check is already used";
-        }
 
         // The number the model actually asked for, kept before clamping so the
         // correction below can name the gap instead of pretending it granted
         // what was requested.
         const requested = Math.round(Number(input.minutes) || 0);
 
-        if (qcUsable) {
-          if (minutesLimitReached) {
-            systemNote = `Absolute max of ${limits.maxMinutes} minutes reached — no more time can be granted today.`;
-            correction = `Your grant_access call was NOT applied: absolute max of ${limits.maxMinutes} minutes reached. Not even a quick check fits — no time can be granted today.`;
-            continue;
-          }
-          let minutes = Math.max(1, Math.min(qc.minutes, requested));
-          let clampCause = minutes < requested ? `the ${qc.minutes}-minute quick-check budget` : '';
-          if (limits.maxMinutes > 0) {
-            const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
-            if (minutes > remainingMinutes) {
-              minutes = remainingMinutes;
-              clampCause = "the user's daily minutes cap";
-            }
-          }
-          if (minutes <= 0) {
-            systemNote = `Absolute max of ${limits.maxMinutes} minutes reached — no more time can be granted today.`;
-            correction = `Your grant_access call was NOT applied: the user's daily minutes cap is already used up. No time can be granted today.`;
-            continue;
-          }
-          if (minutes < requested) {
-            correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${clampCause}. The quick check was granted for ${minutes} minutes.`;
-            systemNote = clampCause === "the user's daily minutes cap"
-              ? `Only ${minutes} minutes were available under your daily cap — your quick check is ${minutes} minutes.`
-              : `Quick checks top out at ${qc.minutes} minutes — your pass is ${minutes} minutes.`;
-          }
-          const reason = String(input.reason || '').slice(0, 240);
-          grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, quickCheck: true });
-          continue;
-        }
-
+        // Both caps are now absolute. Until the quick check was retired, a
+        // model-attested "quick check" ran ahead of this check and was granted
+        // straight past the grants cap on its own budget — so this is the one
+        // place where removing the feature had to make blocking STRONGER, not
+        // just quieter. There is no lane left to fall through to, and no
+        // "still available today" invitation to dangle.
         if (grantsLimitReached || minutesLimitReached) {
-          // Told to the model but never auto-taken: spending the once-a-day
-          // lane on a grant the model did NOT attest as a quick check would
-          // let sweet-talk drain it. The honesty turn carries no tools, so
-          // the invitation is honestly framed as a later turn.
-          const qcStillOpen = mode === 'gate' && qc.enabled && stats.quickChecksToday < qc.usesPerDay && !minutesLimitReached;
           const reasonStr = grantsLimitReached ? 'daily grant cap reached' : `absolute max of ${limits.maxMinutes} minutes reached`;
           systemNote = grantsLimitReached
-            ? (qcStillOpen
-                ? `Daily grant cap reached — only the ${qc.minutes}-minute quick check is still available today.`
-                : 'Daily grant cap reached — no more time can be granted today.')
+            ? 'Daily grant cap reached — no more time can be granted today.'
             : `Absolute max of ${limits.maxMinutes} minutes reached — no more time can be granted today.`;
-          correction = downgradeNote
-            ? `Your grant_access call was NOT applied: ${downgradeNote}, and the ${reasonStr}. No time can be granted today.`
-            : `Your grant_access call was NOT applied: ${reasonStr}.` + (qcStillOpen
-                ? ` Their quick check (up to ${qc.minutes} minutes) is still available: if they name one small, specific thing to check, call grant_access with quick_check set to true on a later turn.`
-                : ' No time can be granted today.');
+          correction = `Your grant_access call was NOT applied: ${reasonStr}. No time can be granted today.`;
           continue;
         }
 
@@ -1518,13 +1460,6 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           systemNote = clampCause === "the user's daily minutes cap"
             ? `Only ${minutes} minutes were available under your daily cap — your pass is ${minutes} minutes.`
             : `Passes top out at 60 minutes — your pass is ${minutes} minutes.`;
-        }
-
-        if (downgradeNote) {
-          // Fires the honesty turn even when the grant lands unclamped: the
-          // coach's spoken words likely promised "your quick check", and the
-          // pass actually spent one of the normal grants.
-          correction = `You marked this grant as a quick check, but ${downgradeNote} — it was granted as one of their ${limits.maxGrants} normal daily grants instead.` + (correction ? ` ${correction}` : '');
         }
 
         const reason = String(input.reason || '').slice(0, 240);
@@ -1604,7 +1539,6 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     } else if (settingApproved) {
       if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced — I've removed ${displayName} from your blocklist.`;
       else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case — I've raised your absolute max on ${displayName}.`;
-      else if (changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check') acceptanceFallback = `Okay, you've made your case — I've loosened the daily quick check on ${displayName}.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood — I've turned off blocking for now. Be intentional with it.`;
       else acceptanceFallback = `Okay, I'm convinced — I've made that change.`;
     }
@@ -1735,22 +1669,10 @@ async function applySettingChange({ domain, changeType, newValue }) {
     return { changeType, domain, appLimits: limits, maxMinutes: limits[domain].maxMinutes };
   }
 
-  if (changeType === 'increase_quick_check' || changeType === 'increase_app_quick_check') {
-    const forApp = changeType === 'increase_app_quick_check';
-    const limits = { ...(forApp ? appLimits : domainLimits) };
-    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
-    const m = Math.round(Number(newValue && newValue.minutes));
-    const u = Math.round(Number(newValue && newValue.usesPerDay));
-    // Anything not a positive pair is stored as the explicit off shape — with
-    // the lane on by default, only an explicit zero means disabled.
-    const quickCheck = (Number.isFinite(m) && m > 0 && Number.isFinite(u) && u > 0)
-      ? { minutes: Math.min(m, 60), usesPerDay: u }
-      : { minutes: 0, usesPerDay: 0 };
-    limits[domain] = { ...limits[domain], quickCheck };
-    await setStorage(forApp ? { appLimits: limits } : { domainLimits: limits });
-    if (!forApp) await syncBlockingRules();
-    return { changeType, domain, ...(forApp ? { appLimits: limits } : { domainLimits: limits }), quickCheck };
-  }
+  // `increase_quick_check` / `increase_app_quick_check` used to be handled
+  // here. The quick check is retired, nothing can request either change type
+  // any more, and an unrecognised changeType falls through to the null below
+  // — which applySettingChange's callers already treat as "not approved".
 
   if (changeType === 'disable_all') {
     await setStorage({ blockedDomains: [], blockedApps: [], appLimits: {}, appLabels: {} });
@@ -1764,8 +1686,11 @@ async function applySettingChange({ domain, changeType, newValue }) {
 // Shared by the LLM's grant_access tool call and the no-AI simpleGrant path:
 // records the grant, banks whatever session previously held this key, opens
 // the new session, and arms the check-in alarm / DNR rule.
-async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, quickCheck }) {
-  await recordGrant(domain, minutes, reason, { quickCheck });
+// recordGrant still accepts a { quickCheck } option and tracking.js still
+// keeps that tally — see the note there. Nothing passes it any more: every
+// grant is a normal grant now, so every grant counts against the daily cap.
+async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason }) {
+  await recordGrant(domain, minutes, reason);
 
   // Granting replaces whatever session held this key (a check-in extending
   // time, or a native port reusing the target's slot), so bank the old
@@ -1777,9 +1702,7 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
     await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes), 'extended');
   }
 
-  // Present (false) on non-quick sessions too: coach-path and simple-path
-  // session objects must keep identical key sets.
-  const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now(), quickCheck: !!quickCheck };
+  const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
   await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
   chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
   // Apps have no network rules to allow — the Android accessibility
