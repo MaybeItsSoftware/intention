@@ -465,6 +465,60 @@ function computeEscalationLine(recentDays, grantsCap) {
   return `Cross-day pattern (computed for you): ${findings.join(', and ')}. Treat today as a continuation of that streak, not a fresh start — raise the bar for granting and say plainly what you see.`;
 }
 
+// ---- The loose -> strict split --------------------------------------------
+//
+// `looseUntilMinutes` on a domain/app limit entry is how many of today's
+// minutes on THAT site the coach spends being lenient. Up to it, a plausible
+// specific reason earns time; past it, only genuine need does. The field is
+// optional, and absent means no split at all — which is not an oversight but
+// the point: an entry that never got one behaves exactly as it did before the
+// field existed, so nothing is owed a migration.
+//
+// Computed here, in code, and rendered as instruction, like the trust tally
+// and the escalation line above it. "Compare today's minutes against the split
+// and decide how strict to be" is precisely the arithmetic weak BYOK models
+// get wrong, and the answer changes how many minutes someone gets. And like
+// every other modifier in this file it is silent when it doesn't apply — a
+// coach reciting "you are 0 minutes into a window you never set" is noise.
+//
+// The line is volatile: it turns over mid-day as the minutes climb, so it is
+// composed into the usage block BELOW CACHE_BREAK_MARKER, never into the
+// questions block above it.
+
+// The ceiling on a single pass once the lenient window is spent. It lives here
+// beside the text that promises it, and background.js reads it from here to do
+// the clamping — two numbers that have to agree is one number in the wrong
+// place.
+const STRICT_PHASE_MAX_MINUTES = 10;
+
+// Named for background.js's clampCause channel, which renders as "...only N
+// were available under ${clampCause}", so this has to be a noun phrase that
+// finishes that sentence.
+const STRICT_PHASE_CLAMP_CAUSE = "the strict-phase cap on a single pass — today's lenient window on this site is spent";
+
+// null when there is no split to speak of. Everything else derives from the
+// one stored number and today's minutes, both of which the caller already has.
+function computePhase(looseUntilMinutes, minutesTodaySite) {
+  if (looseUntilMinutes === undefined || looseUntilMinutes === null || looseUntilMinutes === '') return null;
+  const split = Number(looseUntilMinutes);
+  if (!Number.isFinite(split) || split < 0) return null;
+  const used = Math.max(0, Number(minutesTodaySite) || 0);
+  return {
+    split: Math.round(split),
+    strict: used >= split,
+    remaining: Math.max(0, Math.round(split - used))
+  };
+}
+
+function renderPhaseLine(looseUntilMinutes, minutesTodaySite) {
+  const phase = computePhase(looseUntilMinutes, minutesTodaySite);
+  if (!phase) return '';
+  if (!phase.strict) {
+    return `\n\nToday's lenient window (computed for you): they set it at ${phase.split} minutes on this site and ${phase.remaining} of those are left. You are in the LOOSE phase — still ask what they came for, and still refuse a mood dressed up as an errand, but a plausible, specific reason is enough to earn time here. Do not read the window out as a budget waiting to be spent; it is a line they drew, not an offer you are making.`;
+  }
+  return `\n\nToday's lenient window is SPENT (computed for you): they set it at ${phase.split} minutes on this site and they are past it. You are in the STRICT phase — plausible is no longer enough, only genuine need is. Say plainly that the easy part of their day here is over, and say it as their decision: they drew that line themselves, in a calmer moment, precisely for this one. Any pass you do grant is capped at ${STRICT_PHASE_MAX_MINUTES} minutes, so ask what actually has to happen now and fit the minutes to that.`;
+}
+
 // The walk-away count is the product this whole tool exists to produce, and
 // it renders as instruction rather than bare statistic because a bare number
 // invites the coach to ignore it. Silent at zero, like every other line here:
@@ -680,7 +734,7 @@ Instructions for using app context:
 - A concrete, finishable errand in an app is a real thing ("reply to one message", "check the delivery date") and deserves a small, specific grant. An open-ended visit does not.`;
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, looseUntilMinutes, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
@@ -703,6 +757,9 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
+  // Where in the day they are on this site, in terms of their own loose/strict
+  // split. Silent unless they set one. See renderPhaseLine.
+  const phaseStr = renderPhaseLine(looseUntilMinutes, minutesTodaySite);
   // The cache-break marker is prefixed HERE, at the head of the usage block,
   // so every compose path — default append and user {{usage}} overrides alike
   // — splits exactly where the volatile content starts, with no change to
@@ -716,7 +773,7 @@ Today's usage:
 - Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Minutes across all blocked sites this week: ${minutesWeekAll}
-- Reasons they already gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
+- Reasons they already gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${phaseStr}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
 
 ${reasonsStr === '(none yet today)'
     ? `This is their first visit here today, so don't recite the zeros — just ask what brings them here.`
@@ -742,7 +799,7 @@ ${reasonsStr === '(none yet today)'
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, grantsToday, grantsCap, minutesCap, minutesTodaySite, looseUntilMinutes, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, walkedAwayToday, walkedAwayWeek, observations }) {
   // Without the minutes on both branches this line read "Minutes on x today:
   // unlimited" for someone who had spent none — reporting the cap where the
   // coach is being told the usage.
@@ -760,6 +817,9 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
+  // The check-in is the moment the phase most often turns over — the minutes
+  // that spent the window are the ones this session just used.
+  const phaseStr = renderPhaseLine(looseUntilMinutes, minutesTodaySite);
   // Marker prefixed at the head of the usage block, same as the gate prompt —
   // see buildGateSystemPrompt for why it lives here.
   const usage = CACHE_BREAK_MARKER + `You are gently checking in: the user's granted time on ${domain} is up. Their original stated purpose was: "${originalReason || '(unknown)'}".
@@ -770,7 +830,7 @@ Today's usage:
 - Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
 - Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
-- Reasons they gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
+- Reasons they gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${phaseStr}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}
 
 Reference their earlier reasons and today's logged time directly (e.g. "Earlier today you came here for ${reasonsStr === '(none yet today)' ? 'this' : reasonsStr}, and you're now at ${minutesTodaySite} minutes…").
 
@@ -846,6 +906,29 @@ function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newVa
     const toStr = (newValue && Number(newValue) > 0) ? `${newValue} minutes/day` : 'unlimited (no limit)';
     const kind = changeType === 'increase_app_limit' ? 'an app' : 'a site';
     changeDesc = `RAISE the absolute max time limit on ${domain} from ${fromStr} to ${toStr} — giving themselves more time on ${kind} they chose to limit.`;
+  } else if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') {
+    // Lengthening the lenient window is a quieter loosening than raising the
+    // cap — the total time doesn't move — so the description has to spell out
+    // what actually changes: how much of today they get judged gently for.
+    changeDesc = `LENGTHEN the lenient window on ${domain} from ${Number(currentValue) || 0} to ${Number(newValue) || 0} minutes of the day's time there. Up to that mark you judge them gently and a plausible, specific reason earns time; past it only genuine need does, and any pass is capped short. They are asking you to stay easy on them for longer.`;
+  } else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') {
+    // These two answers are an input to every gate decision on this service —
+    // you quote them back at the user at the block — so rewriting one in front
+    // of the block is the block with extra steps. Both versions go in, because
+    // the whole judgement is whether the new one is a considered correction or
+    // a convenient one.
+    const what = changeType === 'edit_site_purpose'
+      ? `what they told you they need ${domain} for`
+      : `what they told you counts as a legitimate reason to open ${domain}`;
+    changeDesc = `REWRITE ${what}. They wrote the current answer calmly, nowhere near the site, and you quote it back to them at every gate on this service — so this changes every future decision, not just today's.
+
+What it says now:
+> ${String(currentValue || '(blank)').slice(0, 500)}
+
+What they want it to say instead:
+> ${String(newValue || '(blank)').slice(0, 500)}
+
+Judge the new wording, not the act of editing. A genuine correction — they got the description wrong, or their life actually changed — is fine and you should say so. A rewrite that quietly widens the door ("replying to a specific DM" becoming "keeping up with people") is the weak moment writing itself a permission slip, and is exactly what you are here for.`;
   } else if (changeType === 'disable_all') {
     changeDesc = `DISABLE all blocking — clearing their entire blocklist so NONE of their chosen sites or apps are blocked anymore.`;
   } else {
