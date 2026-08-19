@@ -67,23 +67,53 @@ preflight() {
     fi
     ok "Xcode project does not bundle env.txt"
 
-    # Every script the Apple manifest loads has to actually be in the bundle.
-    # page_context.js was listed in the manifest but never added to the Xcode
-    # project, so Safari shipped a manifest pointing at a missing file.
-    MANIFEST_SCRIPTS=$(python3 -c "
-import json
-m = json.load(open('$APPLE_EXT_DIR/manifest.json'))
+    # Every resource the extension asks for at runtime has to actually be in the
+    # bundle. Xcode membership is a separate list from the manifest, so a file
+    # can be perfectly present in the source tree, referenced correctly, and
+    # still be absent from the built .appex.
+    #
+    # This has now happened three times, and the failure is silent every time:
+    #   - page_context.js was in the manifest but not the project
+    #   - report.js joined the content-script list and was never added, which
+    #     takes out the WHOLE content-script injection (one missing file and
+    #     WebKit runs none of them — no gate, no logs, blocked sites wide open)
+    #   - tokens.css and paywall.css were linked by options.html but not added,
+    #     so every var(--token) resolved to nothing and the settings page
+    #     rendered as black text on blinding white
+    #
+    # So check the scripts AND the stylesheets AND whatever the HTML pages pull
+    # in, not just the manifest's script arrays.
+    MANIFEST_RESOURCES=$(python3 -c "
+import json, os, re
+res = '$APPLE_EXT_DIR'
+m = json.load(open(os.path.join(res, 'manifest.json')))
 names = set(m.get('background', {}).get('scripts', []))
 for cs in m.get('content_scripts', []):
     names.update(cs.get('js', []))
-print('\n'.join(sorted(names)))
+    names.update(cs.get('css', []))
+# Globs (fonts/*.woff2) name a directory's worth of files, not one target.
+for war in m.get('web_accessible_resources', []):
+    names.update(r for r in war.get('resources', []) if '*' not in r)
+page = m.get('options_ui', {}).get('page')
+if page:
+    names.add(page)
+# Anything an extension page links: stylesheets, scripts, images. A missing
+# stylesheet doesn't fail loudly — it just silently unstyles the page.
+for f in os.listdir(res):
+    if f.endswith('.html'):
+        names.add(f)
+        html = open(os.path.join(res, f)).read()
+        names.update(re.findall(r'(?:href|src)=\"([^\"#?:]+)\"', html))
+print('\n'.join(sorted(n for n in names if n)))
 ")
-    while IFS= read -r script; do
-      [[ -n "$script" ]] || continue
-      grep -q "$script" "$APPLE_PBXPROJ" \
-        || fail "$script is loaded by the Apple manifest but not referenced in the Xcode project — it will be missing from the built extension"
-    done <<< "$MANIFEST_SCRIPTS"
-    ok "Xcode project bundles every script the Apple manifest loads"
+    while IFS= read -r resource; do
+      [[ -n "$resource" ]] || continue
+      [[ -f "$APPLE_EXT_DIR/$resource" ]] \
+        || fail "$resource is referenced by the Apple extension but missing from $APPLE_EXT_DIR — run scripts/sync.sh"
+      grep -q "$resource" "$APPLE_PBXPROJ" \
+        || fail "$resource is used by the Apple extension but not referenced in the Xcode project — it will be missing from the built extension"
+    done <<< "$MANIFEST_RESOURCES"
+    ok "Xcode project bundles every resource the Apple extension uses"
   fi
 
   # Verify every platform matches shared/ (single source of truth).

@@ -61,8 +61,11 @@
 		66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
 		66B8D0822FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
 		66B8D0832FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
+		5275E5AA0000000000005202 /* report.js in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005200 /* report.js */; };
 		66B8D0842FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
 		66B8D0852FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		5275E5AA0000000000005401 /* paywall.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005400 /* paywall.css */; };
+		5275E5AA0000000000005301 /* tokens.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005300 /* tokens.css */; };
 		66B8D0862FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
 		66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06B2FE985EF00BC0D7F /* icon16.png */; };
 		66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
@@ -77,8 +80,11 @@
 		66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0732FE985EF00BC0D7F /* manifest.json */; };
 		66B8D0902FE985EF00BC0D7F /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
 		66B8D0912FE985EF00BC0D7F /* content.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0752FE985EF00BC0D7F /* content.js */; };
+		5275E5AA0000000000005201 /* report.js in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005200 /* report.js */; };
 		66B8D0922FE985EF00BC0D7F /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
 		66B8D0932FE985EF00BC0D7F /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		5275E5AA0000000000005402 /* paywall.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005400 /* paywall.css */; };
+		5275E5AA0000000000005302 /* tokens.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005300 /* tokens.css */; };
 		66B8D0942FE985EF00BC0D7F /* icon32.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0782FE985EF00BC0D7F /* icon32.png */; };
 		66B8D1022FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
 		66B8D1032FE985EF00BC0D7F /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
@@ -104,6 +110,8 @@
 		AF10C0DE00000000000000B2 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
 		AF10C0DE00000000000000B3 /* Intention Report Extension.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = AF10C0DE00000000000000AF /* Intention Report Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B3D5D21070C5C5FB7732D8D1 /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		5275E5AA0000000000005403 /* paywall.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005400 /* paywall.css */; };
+		5275E5AA0000000000005303 /* tokens.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005300 /* tokens.css */; };
 		C08A05D7C8416962ACF3E6A7 /* AppGroupStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */; };
 		C11391A3091DB42063A78CA3 /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
 		CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
@@ -234,9 +242,12 @@
 		66B8D0732FE985EF00BC0D7F /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = manifest.json; path = Resources/manifest.json; sourceTree = "<group>"; };
 		66B8D0742FE985EF00BC0D7F /* options.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = options.html; path = "../../Intention Chrome/options.html"; sourceTree = "<group>"; };
 		66B8D0752FE985EF00BC0D7F /* content.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = content.js; path = "../../Intention Chrome/content.js"; sourceTree = "<group>"; };
+		5275E5AA0000000000005200 /* report.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = report.js; path = "../../Intention Chrome/report.js"; sourceTree = "<group>"; };
 		BB10C0DE000000000000FE01 /* billing.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = billing.js; path = "../../Intention Chrome/billing.js"; sourceTree = "<group>"; };
 		66B8D0762FE985EF00BC0D7F /* providers.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = providers.js; path = "../../Intention Chrome/providers.js"; sourceTree = "<group>"; };
 		66B8D0772FE985EF00BC0D7F /* options.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = options.css; path = "../../Intention Chrome/options.css"; sourceTree = "<group>"; };
+		5275E5AA0000000000005400 /* paywall.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = paywall.css; path = "../../Intention Chrome/paywall.css"; sourceTree = "<group>"; };
+		5275E5AA0000000000005300 /* tokens.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; name = tokens.css; path = "../../Intention Chrome/tokens.css"; sourceTree = "<group>"; };
 		66B8D0782FE985EF00BC0D7F /* icon32.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon32.png; path = "../../Intention Chrome/icon32.png"; sourceTree = "<group>"; };
 		66B8D1012FE985EF00BC0D7F /* coaching.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; name = coaching.html; path = "../../Intention Chrome/coaching.html"; sourceTree = "<group>"; };
 		66B8D1042FE985EF00BC0D7F /* coaching.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = coaching.js; path = "../../Intention Chrome/coaching.js"; sourceTree = "<group>"; };
@@ -453,9 +464,12 @@
 				66B8D0732FE985EF00BC0D7F /* manifest.json */,
 				66B8D0742FE985EF00BC0D7F /* options.html */,
 				66B8D0752FE985EF00BC0D7F /* content.js */,
+				5275E5AA0000000000005200 /* report.js */,
 				66B8D0762FE985EF00BC0D7F /* providers.js */,
 				BB10C0DE000000000000FE01 /* billing.js */,
 				66B8D0772FE985EF00BC0D7F /* options.css */,
+				5275E5AA0000000000005400 /* paywall.css */,
+				5275E5AA0000000000005300 /* tokens.css */,
 				66B8D0782FE985EF00BC0D7F /* icon32.png */,
 				66B8D1012FE985EF00BC0D7F /* coaching.html */,
 				66B8D1042FE985EF00BC0D7F /* coaching.js */,
@@ -732,6 +746,8 @@
 				5EEE962544C952A6A70D7462 /* options.html in Resources */,
 				C11391A3091DB42063A78CA3 /* options.js in Resources */,
 				B3D5D21070C5C5FB7732D8D1 /* options.css in Resources */,
+				5275E5AA0000000000005403 /* paywall.css in Resources */,
+				5275E5AA0000000000005303 /* tokens.css in Resources */,
 				3A17ECA87CF0BC7FC6F1C80E /* providers.js in Resources */,
 				BB10C0DE00000000000000B1 /* billing.js in Resources */,
 				BC10C0DE00000000000000B1 /* coaching.html in Resources */,
@@ -765,12 +781,15 @@
 			files = (
 				66B8D08A2FE985EF00BC0D7F /* background.js in Resources */,
 				66B8D0912FE985EF00BC0D7F /* content.js in Resources */,
+				5275E5AA0000000000005201 /* report.js in Resources */,
 				66B8D08E2FE985EF00BC0D7F /* tracking.js in Resources */,
 				5175E5AA0000000000005102 /* sites.js in Resources */,
 				66B8D08C2FE985EF00BC0D7F /* options.js in Resources */,
 				66B8D0892FE985EF00BC0D7F /* content.css in Resources */,
 				66B8D08F2FE985EF00BC0D7F /* manifest.json in Resources */,
 				66B8D0932FE985EF00BC0D7F /* options.css in Resources */,
+				5275E5AA0000000000005402 /* paywall.css in Resources */,
+				5275E5AA0000000000005302 /* tokens.css in Resources */,
 				66B8D0882FE985EF00BC0D7F /* prompts.js in Resources */,
 				66B8D0882FE985EF00BC0D7E /* page_context.js in Resources */,
 				66B8D0872FE985EF00BC0D7F /* icon16.png in Resources */,
@@ -792,12 +811,15 @@
 			files = (
 				66B8D07C2FE985EF00BC0D7F /* background.js in Resources */,
 				66B8D0832FE985EF00BC0D7F /* content.js in Resources */,
+				5275E5AA0000000000005202 /* report.js in Resources */,
 				66B8D0802FE985EF00BC0D7F /* tracking.js in Resources */,
 				5175E5AA0000000000005101 /* sites.js in Resources */,
 				66B8D07E2FE985EF00BC0D7F /* options.js in Resources */,
 				66B8D07B2FE985EF00BC0D7F /* content.css in Resources */,
 				66B8D0812FE985EF00BC0D7F /* manifest.json in Resources */,
 				66B8D0852FE985EF00BC0D7F /* options.css in Resources */,
+				5275E5AA0000000000005401 /* paywall.css in Resources */,
+				5275E5AA0000000000005301 /* tokens.css in Resources */,
 				66B8D07A2FE985EF00BC0D7F /* prompts.js in Resources */,
 				66B8D07A2FE985EF00BC0D7E /* page_context.js in Resources */,
 				66B8D0792FE985EF00BC0D7F /* icon16.png in Resources */,
