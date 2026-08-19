@@ -93,12 +93,27 @@ class IntentionAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // A pass can outlive this service — a reboot, an app update, the system
+        // reclaiming the process — so put its timer back rather than waiting
+        // for the next app switch to notice.
+        SessionOverlay.sync(applicationContext)
     }
 
     override fun onDestroy() {
         if (instance == this) instance = null
         handler.removeCallbacks(expiryRecheck)
+        // The pass timer is a window this service added to the WindowManager,
+        // so it does not go away with the service: left behind it would sit on
+        // the user's screen with nothing left to tick it. Both teardown paths
+        // are covered — onUnbind runs when accessibility is switched off,
+        // onDestroy when the process is going.
+        SessionOverlay.hide(applicationContext)
         super.onDestroy()
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        SessionOverlay.hide(applicationContext)
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -113,6 +128,15 @@ class IntentionAccessibilityService : AccessibilityService() {
         checkPipBypass()
 
         val packageName = event.packageName?.toString() ?: return
+
+        // Whatever just came to the front, the pass timer has to be right about
+        // it — including when that is one of our own screens, which is the one
+        // case it must NOT float over (the coach is a full-screen block; a
+        // timer on top of it would be reporting a session that is over). So
+        // this sits above the early return below, not below it.
+        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            SessionOverlay.sync(applicationContext, overOwnUi = packageName == this.packageName)
+        }
 
         // Skip our own app packages
         if (packageName == this.packageName) return
@@ -274,7 +298,14 @@ class IntentionAccessibilityService : AccessibilityService() {
         lastSeenHost.clear()
 
         val root = rootInActiveWindow
-        val packageName = root?.packageName?.toString() ?: lastForegroundPackage ?: return
+        val foreground = root?.packageName?.toString() ?: lastForegroundPackage
+        // Expiry is the pass timer's most important moment. This runs when a
+        // pass runs out — from the alarm or from the in-process re-check — and
+        // again once one has been ended early, and the badge has to go in both
+        // cases; a live pass that is merely still running re-renders instead.
+        SessionOverlay.sync(applicationContext, overOwnUi = foreground == this.packageName)
+
+        val packageName = foreground ?: return
         if (packageName == this.packageName) return
 
         if (isAppBlocked(packageName)) {
