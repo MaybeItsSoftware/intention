@@ -117,6 +117,12 @@
 		CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
 		CE510BB9AADCBEF64B46E9CD /* JSBridgeCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */; };
 		D143666024E51AD56C339518 /* AppGroupConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C82B6114B5CE5FA7C5FCC52 /* AppGroupConfig.swift */; };
+		B110C0DE00000000000000B1 /* PassActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B110C0DE000000000000A1 /* PassActivityAttributes.swift */; };
+		B110C0DE00000000000000B2 /* PassLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B110C0DE000000000000A2 /* PassLiveActivityController.swift */; };
+		B110C0DE00000000000000B3 /* PassExpiryNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B110C0DE000000000000A3 /* PassExpiryNotifier.swift */; };
+		B010C0DE00000000000000B1 /* PassActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B010C0DE000000000000A1 /* PassActivityWidget.swift */; };
+		B010C0DE00000000000000B2 /* PassActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B110C0DE000000000000A1 /* PassActivityAttributes.swift */; };
+		B010C0DE00000000000000B3 /* Intention Widget Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B010C0DE000000000000AF /* Intention Widget Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -162,6 +168,13 @@
 			remoteGlobalIDString = AF10C0DE00000000000000D0;
 			remoteInfo = "Intention Report Extension";
 		};
+		B010C0DE000000000000E1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 66B8D00B2FE985ED00BC0D7F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B010C0DE000000000000D0;
+			remoteInfo = "Intention Widget Extension";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -175,6 +188,7 @@
 				AC10C0DE00000000000000B3 /* Intention Monitor Extension.appex in Embed Foundation Extensions */,
 				AD10C0DE00000000000000B3 /* Intention Shield Extension.appex in Embed Foundation Extensions */,
 				AE10C0DE00000000000000B3 /* Intention Shield Action Extension.appex in Embed Foundation Extensions */,
+				B010C0DE00000000000000B3 /* Intention Widget Extension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -277,6 +291,12 @@
 		E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSBridgeCodec.swift; sourceTree = "<group>"; };
 		EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupStorage.swift; sourceTree = "<group>"; };
 		F7AA81643104FBF47EF49C27 /* background.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = background.html; sourceTree = "<group>"; };
+		B110C0DE000000000000A1 /* PassActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassActivityAttributes.swift; sourceTree = "<group>"; };
+		B110C0DE000000000000A2 /* PassLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassLiveActivityController.swift; sourceTree = "<group>"; };
+		B110C0DE000000000000A3 /* PassExpiryNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassExpiryNotifier.swift; sourceTree = "<group>"; };
+		B010C0DE000000000000A1 /* PassActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PassActivityWidget.swift; sourceTree = "<group>"; };
+		B010C0DE000000000000A2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B010C0DE000000000000AF /* Intention Widget Extension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "Intention Widget Extension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -336,6 +356,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B010C0DE000000000000C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -352,6 +379,7 @@
 				AD10C0DE00000000000000A0 /* iOS (Shield Extension) */,
 				AE10C0DE00000000000000A0 /* iOS (Shield Action Extension) */,
 				AF10C0DE00000000000000A0 /* iOS (Report Extension) */,
+				B010C0DE000000000000A0 /* iOS (Widget Extension) */,
 				66B8D04A2FE985EF00BC0D7F /* macOS (Extension) */,
 				66B8D01F2FE985EE00BC0D7F /* Products */,
 			);
@@ -402,6 +430,7 @@
 				AD10C0DE00000000000000AF /* Intention Shield Extension.appex */,
 				AE10C0DE00000000000000AF /* Intention Shield Action Extension.appex */,
 				AF10C0DE00000000000000AF /* Intention Report Extension.appex */,
+				B010C0DE000000000000AF /* Intention Widget Extension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -527,8 +556,20 @@
 				EF2C795B61DC8868BAFD9297 /* AppGroupStorage.swift */,
 				E04C52DDA013E524B4F7BAD8 /* JSBridgeCodec.swift */,
 				B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */,
+				B110C0DE000000000000A1 /* PassActivityAttributes.swift */,
+				B110C0DE000000000000A2 /* PassLiveActivityController.swift */,
+				B110C0DE000000000000A3 /* PassExpiryNotifier.swift */,
 			);
 			path = "Shared (iOS)";
+			sourceTree = "<group>";
+		};
+		B010C0DE000000000000A0 /* iOS (Widget Extension) */ = {
+			isa = PBXGroup;
+			children = (
+				B010C0DE000000000000A1 /* PassActivityWidget.swift */,
+				B010C0DE000000000000A2 /* Info.plist */,
+			);
+			path = "iOS (Widget Extension)";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -552,6 +593,7 @@
 				AD10C0DE00000000000000E2 /* PBXTargetDependency */,
 				AE10C0DE00000000000000E2 /* PBXTargetDependency */,
 				AF10C0DE00000000000000E2 /* PBXTargetDependency */,
+				B010C0DE000000000000E2 /* PBXTargetDependency */,
 			);
 			name = "Intention Safari (iOS)";
 			productName = "Intention Safari (iOS)";
@@ -679,6 +721,23 @@
 			productReference = AF10C0DE00000000000000AF /* Intention Report Extension.appex */;
 			productType = "com.apple.product-type.extensionkit-extension";
 		};
+		B010C0DE000000000000D0 /* Intention Widget Extension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B010C0DE000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Widget Extension" */;
+			buildPhases = (
+				B010C0DE000000000000C1 /* Sources */,
+				B010C0DE000000000000C2 /* Frameworks */,
+				B010C0DE000000000000C3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Intention Widget Extension";
+			productName = "Intention Widget Extension";
+			productReference = B010C0DE000000000000AF /* Intention Widget Extension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -725,6 +784,7 @@
 				AD10C0DE00000000000000D0 /* Intention Shield Extension */,
 				AE10C0DE00000000000000D0 /* Intention Shield Action Extension */,
 				AF10C0DE00000000000000D0 /* Intention Report Extension */,
+				B010C0DE000000000000D0 /* Intention Widget Extension */,
 			);
 		};
 /* End PBXProject section */
@@ -863,6 +923,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B010C0DE000000000000C3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -879,6 +946,9 @@
 				CE510BB9AADCBEF64B46E9CC /* JSBridgeCodec.swift in Sources */,
 				97FE0F7C3C8C278A618268B0 /* BackgroundJSHost.swift in Sources */,
 				AB10C0DE000000000000BF01 /* AppBlockingManager.swift in Sources */,
+				B110C0DE00000000000000B1 /* PassActivityAttributes.swift in Sources */,
+				B110C0DE00000000000000B2 /* PassLiveActivityController.swift in Sources */,
+				B110C0DE00000000000000B3 /* PassExpiryNotifier.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -949,6 +1019,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B010C0DE000000000000C1 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B010C0DE00000000000000B1 /* PassActivityWidget.swift in Sources */,
+				B010C0DE00000000000000B2 /* PassActivityAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -981,6 +1060,11 @@
 			isa = PBXTargetDependency;
 			target = AF10C0DE00000000000000D0 /* Intention Report Extension */;
 			targetProxy = AF10C0DE00000000000000E1 /* PBXContainerItemProxy */;
+		};
+		B010C0DE000000000000E2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B010C0DE000000000000D0 /* Intention Widget Extension */;
+			targetProxy = B010C0DE000000000000E1 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1740,6 +1824,73 @@
 			};
 			name = Release;
 		};
+		B010C0DE000000000000D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Widget Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Widget Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.22.1;
+				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Widget;
+				PRODUCT_NAME = "Intention Widget Extension";
+				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Widget";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B010C0DE000000000000D3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 16;
+				DEVELOPMENT_TEAM = 6NQNU5YSC2;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "iOS (Widget Extension)/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Intention Widget Extension";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.22.1;
+				PRODUCT_BUNDLE_IDENTIFIER = uk.co.maybeitssoftware.intention.Widget;
+				PRODUCT_NAME = "Intention Widget Extension";
+				PROVISIONING_PROFILE_SPECIFIER = "match AppStore uk.co.maybeitssoftware.intention.Widget";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1820,6 +1971,15 @@
 			buildConfigurations = (
 				AF10C0DE00000000000000D2 /* Debug */,
 				AF10C0DE00000000000000D3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B010C0DE000000000000D1 /* Build configuration list for PBXNativeTarget "Intention Widget Extension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B010C0DE000000000000D2 /* Debug */,
+				B010C0DE000000000000D3 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

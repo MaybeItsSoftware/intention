@@ -16,6 +16,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Start the hidden background WebView host so it's ready by the time
         // ViewController's options.html WebView sends its first message.
         BackgroundJSHost.shared.start()
+        // Claiming the notification delegate is not the same as asking for
+        // permission — that happens only when a pass actually needs the
+        // fallback notice (PassExpiryNotifier) — but it has to be in place
+        // before any notification can be delivered, and iOS wants it set
+        // before the app finishes launching.
+        PassExpiryNotifier.shared.registerAsPresentationDelegate()
         return true
     }
 

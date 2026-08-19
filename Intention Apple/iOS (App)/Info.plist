@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Without this the Live Activity that runs for the length of a
+	     coach-granted pass (Shared (iOS)/PassLiveActivityController.swift)
+	     cannot start at all: ActivityAuthorizationInfo reports activities as
+	     disabled and Activity.request throws. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>SFSafariWebExtensionConverterVersion</key>
 	<string>26.3</string>
 	<key>UIApplicationSceneManifest</key>

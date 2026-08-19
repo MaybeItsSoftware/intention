@@ -129,6 +129,10 @@ final class AppBlockingManager {
             defaults.removeObject(forKey: Self.selectionKey)
             defaults.removeObject(forKey: Self.passEndsAtKey)
         }
+        // Nothing is blocked any more, so any pass that was running has been
+        // ended early — take its Lock Screen card and its expiry notice with it
+        // rather than leaving a clock counting down against nothing.
+        endPassTimerUI()
     }
 
     // MARK: - Timed pass (coach-granted)
@@ -143,12 +147,31 @@ final class AppBlockingManager {
 
     func grantPass(minutes: Int) {
         let mins = max(1, min(60, minutes))
-        let endsAt = Date().addingTimeInterval(TimeInterval(mins * 60))
+        let startedAt = Date()
+        let endsAt = startedAt.addingTimeInterval(TimeInterval(mins * 60))
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {
             defaults.set(endsAt.timeIntervalSince1970, forKey: Self.passEndsAtKey)
         }
         store.shield.applications = nil
         store.shield.applicationCategories = nil
+
+        // Show the user their own pass running. Until this, iOS gave a granted
+        // pass no face at all — the shields simply lifted and the only way to
+        // know how much of the window was left was to come back into the app
+        // and read a sentence about it. The desktop extension has shown a live
+        // badge on the page the whole time (renderStatusBadge() in
+        // shared/content.js); this is that, on the Lock Screen.
+        //
+        // Safe to do here because the app is always foregrounded at this point
+        // — grantPass only ever arrives from the in-app Unlock tab — and
+        // ActivityKit refuses to start an activity from the background.
+        let purpose = PassPurpose.current()
+        if !PassLiveActivityController.shared.start(startedAt: startedAt, endsAt: endsAt, purpose: purpose) {
+            // No Live Activities on this device (pre-16.2, or switched off for
+            // Intention in Settings). One notification at the end is a poorer
+            // answer than a running clock, but it is not nothing.
+            PassExpiryNotifier.shared.scheduleExpiryNotice(at: endsAt, minutes: mins, purpose: purpose)
+        }
 
         // DeviceActivity enforces a minimum interval of ~15 minutes, so the
         // schedule end is clamped; the intervalDidEnd callback in the monitor
@@ -187,7 +210,20 @@ final class AppBlockingManager {
             defaults.removeObject(forKey: Self.passEndsAtKey)
             DeviceActivityCenter().stopMonitoring([Self.passActivityName])
         }
+        // The Live Activity has been showing "pass ended" since its staleDate
+        // passed, but only a process of ours can actually take the card down —
+        // and this is the first moment there is one. Same catch-up shape as the
+        // re-shielding above.
+        PassLiveActivityController.shared.endIfExpired()
         applyShields()
+    }
+
+    /// Tears down both halves of the pass timer UI at once — for a pass that
+    /// ends before its clock runs out, where neither the Live Activity's
+    /// staleDate nor a scheduled expiry notice is telling the truth any more.
+    private func endPassTimerUI() {
+        PassLiveActivityController.shared.end()
+        PassExpiryNotifier.shared.cancel()
     }
 
     // MARK: - Aggregate app-usage report (DeviceActivityReport)
