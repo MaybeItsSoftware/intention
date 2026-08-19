@@ -1,0 +1,42 @@
+# Publishing lane for the Android app. Mirrors what
+# .github/workflows/publish-android.yml does on CI, for when Actions isn't
+# available — same package, same track, same signing key.
+#
+#   BUNDLE_GEMFILE="../Intention Apple/Gemfile" bundle exec fastlane android internal
+#
+# Signing comes from keystore.properties (gitignored, alongside the keystore
+# itself). The Play service account is only in GitHub secrets — the root .env
+# has a GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, but it holds a copy of the Chrome Web
+# Store OAuth client, not a service account key, so point
+# GOOGLE_PLAY_JSON_KEY_PATH at a downloaded key file to publish from here.
+
+ROOT = File.expand_path("..", __dir__)
+
+require "dotenv"
+Dotenv.load(File.join(ROOT, "..", ".env"))
+
+platform :android do
+  desc "Build the signed AAB and upload it to the Play internal track"
+  lane :internal do
+    key_path = ENV["GOOGLE_PLAY_JSON_KEY_PATH"]
+    key_data = ENV["GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"] if key_path.nil?
+    UI.user_error!("Set GOOGLE_PLAY_JSON_KEY_PATH to a Play service account key") if key_path.nil? && key_data.nil?
+
+    gradle(project_dir: ROOT, task: "bundleRelease")
+
+    upload_to_play_store(
+      package_name:   "uk.co.maybeitssoftware.intention",
+      aab:            File.join(ROOT, "app", "build", "outputs", "bundle", "release", "app-release.aab"),
+      track:          "internal",
+      release_status: "completed",
+      json_key:       key_path,
+      json_key_data:  key_data,
+      # The store listing is edited in the Play console, not from here — an
+      # internal build should never rewrite what's published.
+      skip_upload_metadata:    true,
+      skip_upload_images:      true,
+      skip_upload_screenshots: true,
+      skip_upload_changelogs:  true,
+    )
+  end
+end
