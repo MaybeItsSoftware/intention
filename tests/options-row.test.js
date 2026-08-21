@@ -106,12 +106,10 @@ function load() {
   const document = doc;
 
   // options.html's own <script> list, minus the two the row builders never
-  // touch (billing.js needs a paywall DOM, report.js a real event loop). Read
-  // from the page rather than restated, so a script added to options.html
-  // reaches these tests too.
-  const source = bundleForContext('options', {
-    only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
-  });
+  // touch (billing.js needs a paywall DOM, report.js a real event loop).
+  // Stated as an exclusion, so a script added to the page reaches these
+  // tests without anybody remembering to add it here.
+  const source = bundleForContext('options', { except: ['billing.js', 'report.js'] });
 
   ctx = loadSource(join(VARIANTS.chrome, '__options_bundle__.js'), {
     chrome,

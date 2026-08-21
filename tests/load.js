@@ -232,14 +232,17 @@ export function scriptsForContext(context, variant = 'chrome') {
 }
 
 // Read a context's scripts and join them into one source string, the way the
-// browser evaluates them into one shared global scope. `only` narrows the list
-// to the files a given test actually wants (page_context.js is optional in the
-// content tests, and the options tests drive no billing UI), while still
-// picking up anything new the manifest starts loading alongside them.
-export function bundleForContext(context, { variant = 'chrome', only = null } = {}) {
+// browser evaluates them into one shared global scope.
+//
+// `except` drops the files a given test's stubs cannot support — prefer it to
+// `only`, because it keeps picking up anything new the context starts loading.
+// `only` is there for the inverse case, where a test wants a deliberately
+// minimal context (the content tests run with and without page_context.js).
+export function bundleForContext(context, { variant = 'chrome', only = null, except = null } = {}) {
   const dir = VARIANTS[variant] || VARIANTS.chrome;
   let files = scriptsForContext(context, variant);
   if (only) files = files.filter(f => only.includes(f));
+  if (except) files = files.filter(f => !except.includes(f));
   return files.map(f => readFileSync(join(dir, f), 'utf8')).join('\n;\n');
 }
 

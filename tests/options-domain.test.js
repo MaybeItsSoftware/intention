@@ -27,14 +27,12 @@ beforeAll(() => {
     setTimeout, clearTimeout, URL, URLSearchParams, fetch: async () => ({ ok: false })
   };
   sandbox.globalThis = sandbox;
-  // Same order options.html loads them in, read from the page itself —
-  // options.js resolves service groups through sites.js and target rules
-  // through rules.js, so both have to be in scope. billing.js and report.js
-  // are dropped: neither is reachable from the pure string work under test,
-  // and both want a DOM this stub does not pretend to have.
-  const source = bundleForContext('options', {
-    only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
-  });
+  // Same order options.html loads them in, read from the page itself.
+  // billing.js and report.js are dropped: neither is reachable from the
+  // pure string work under test, and both want a DOM this stub does not
+  // pretend to have. An exclusion rather than a list, so a script added to
+  // the page reaches these tests too.
+  const source = bundleForContext('options', { except: ['billing.js', 'report.js'] });
   ctx = vm.createContext(sandbox);
   vm.runInContext(source, ctx, { filename: join(VARIANTS.chrome, 'options.js') });
 });
