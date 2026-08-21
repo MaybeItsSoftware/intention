@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground: the Arvo "i" glyph from icon_glyph.svg.
+
+     The art is authored on the same 512 viewport as icon.svg, but an adaptive
+     icon only ever shows the central 72dp of its 108dp canvas - the outer 18dp
+     per side is bleed the launcher crops for masking and parallax. The group
+     therefore scales the glyph to 72/108 about the canvas centre, which keeps
+     it at the same proportion of the visible squircle as in the store asset. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <group
+        android:pivotX="256"
+        android:pivotY="256"
+        android:scaleX="0.6666667"
+        android:scaleY="0.6666667">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M210.856 206.653H272.632V364.564H301.144V396.0H211.222V364.564H238.272V238.089H210.856ZM231.875 139.577Q231.875 134.825 233.794 130.53Q235.713 126.235 238.911 123.037Q242.11 119.838 246.496 117.919Q250.883 116.0 255.817 116.0Q260.569 116.0 264.864 117.919Q269.159 119.838 272.358 123.037Q275.556 126.235 277.475 130.53Q279.394 134.825 279.394 139.577Q279.394 144.512 277.475 148.898Q275.556 153.285 272.358 156.666Q269.159 160.047 264.864 161.966Q260.569 163.885 255.817 163.885Q250.883 163.885 246.496 161.966Q242.11 160.047 238.911 156.666Q235.713 153.285 233.794 148.898Q231.875 144.512 231.875 139.577Z" />
+    </group>
+</vector>

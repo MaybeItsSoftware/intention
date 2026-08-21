@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Azure. Matches the flat fill of the Play Store 512px asset
+         (playstore/ic_launcher_playstore_512.png) and icon.svg. -->
+    <color name="ic_launcher_background">#007FFF</color>
+</resources>
