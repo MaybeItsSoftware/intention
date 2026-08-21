@@ -2090,27 +2090,12 @@ async function addDomain() {
   return true;
 }
 
-// A per-item `mode` override on a domain/app limit entry wins; otherwise the
-// global blockingMode applies. Mirrors getEffectiveMode() in background.js.
-function effectiveModeFor(entry, globalMode) {
-  return (entry && entry.mode) || globalMode || 'coach';
-}
-
-// The other half of that mirror: how many of today's minutes on this target
-// the coach spends being lenient before it turns strict. There is no global
-// default — a lenient window is a per-site line or it is nothing — so absent
-// stays absent, and absent means no split at all.
-//
-// Normalised exactly as normalizeLooseUntil() does in background.js, including
-// the null check that keeps `Number(null) === 0` from reading as "strict from
-// the first minute". Change one, change all three (the third is
-// effectiveModeFromStorage in content.js).
-function looseUntilFor(entry) {
-  const raw = entry && entry.looseUntilMinutes;
-  if (raw === undefined || raw === null || raw === '') return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-}
+// Both of these used to be hand-written mirrors of background.js. They now
+// name rules.js's resolution, which every context shares — the row rendering
+// below already holds the limits entry, so it calls the entry-level form
+// rather than the storage-reading wrappers in background.js.
+const effectiveModeFor = resolveMode;
+const looseUntilFor = (entry) => normalizeLooseUntil(entry && entry.looseUntilMinutes);
 
 // Loosening a rule (removing a block, raising a limit, lengthening the lenient
 // window, rewriting what you told the coach a site is for, disabling

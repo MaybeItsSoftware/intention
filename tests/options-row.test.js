@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadSource, VARIANTS } from './load.js';
+import { loadSource, VARIANTS, bundleForContext } from './load.js';
 
 // ---- The DOM shim ---------------------------------------------------------
 
@@ -106,9 +106,13 @@ function load() {
   };
   const document = doc;
 
-  const source = ['sites.js', 'providers.js', 'options.js']
-    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
-    .join('\n;\n');
+  // options.html's own <script> list, minus the two the row builders never
+  // touch (billing.js needs a paywall DOM, report.js a real event loop). Read
+  // from the page rather than restated, so a script added to options.html
+  // reaches these tests too.
+  const source = bundleForContext('options', {
+    only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
+  });
 
   ctx = loadSource(join(VARIANTS.chrome, '__options_bundle__.js'), {
     chrome,

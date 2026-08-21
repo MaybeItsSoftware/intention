@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadSource, loadTracking, VARIANTS, REPO_ROOT } from './load.js';
+import { loadSource, loadPrompts, loadTracking, VARIANTS, REPO_ROOT } from './load.js';
 
 const VARIANT_KEYS = ['chrome', 'firefox', 'apple'];
 
@@ -77,7 +77,7 @@ describe('prompts.js parity across variants', () => {
 
   it('buildGateSystemPrompt is identical across variants', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.buildGateSystemPrompt(gateArgs);
     });
     // strip the volatile {{time}}/{{day}} substitutions are absent here since
@@ -88,7 +88,7 @@ describe('prompts.js parity across variants', () => {
 
   it('buildSettingsGateSystemPrompt is identical across variants', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.buildSettingsGateSystemPrompt(settingsArgs);
     });
     expect(outputs[1]).toBe(outputs[0]);
@@ -97,7 +97,7 @@ describe('prompts.js parity across variants', () => {
 
   it('composeSystemPrompt unknown-placeholder stripping is identical', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.composeSystemPrompt('A {{missing}} B', { questions: 'q', usage: 'u' });
     });
     expect(outputs[1]).toBe(outputs[0]);
@@ -106,11 +106,46 @@ describe('prompts.js parity across variants', () => {
   });
 
   it('DEFAULT_COACH_INSTRUCTIONS and tool schemas are identical', () => {
-    const ctxs = VARIANT_KEYS.map(v => loadSource('prompts.js', { variant: v }));
+    const ctxs = VARIANT_KEYS.map(v => loadPrompts({ variant: v }));
     expect(ctxs[1].DEFAULT_COACH_INSTRUCTIONS).toBe(ctxs[0].DEFAULT_COACH_INSTRUCTIONS);
     expect(ctxs[2].DEFAULT_COACH_INSTRUCTIONS).toBe(ctxs[0].DEFAULT_COACH_INSTRUCTIONS);
     expect(JSON.stringify(ctxs[1].GRANT_TOOL)).toBe(JSON.stringify(ctxs[0].GRANT_TOOL));
     expect(JSON.stringify(ctxs[2].APPROVE_CHANGE_TOOL)).toBe(JSON.stringify(ctxs[0].APPROVE_CHANGE_TOOL));
+  });
+});
+
+// rules.js decides whether a site is gated and how hard. A variant answering
+// that differently is the one drift the user would feel directly, so it gets
+// the same treatment as prompts.js and tracking.js.
+describe('rules.js parity across variants', () => {
+  const CASES = [
+    [null, {}],
+    [null, { blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25 }],
+    [{ mode: 'simple', passMinutes: 5 }, { blockingMode: 'coach', simplePassMinutes: 30 }],
+    [{ looseUntilMinutes: '20' }, {}],
+    [{ looseUntilMinutes: '' }, {}],
+    [{ looseUntilMinutes: 0 }, {}],
+    [{ maxGrants: 'abc', maxMinutes: -1 }, {}]
+  ];
+
+  it('resolveBlockConfig and resolveLimits are identical across variants', () => {
+    const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
+    for (const [entry, globals] of CASES) {
+      const block = ctxs.map(c => JSON.stringify(c.resolveBlockConfig(entry, globals)));
+      const limits = ctxs.map(c => JSON.stringify(c.resolveLimits(entry)));
+      expect(block[1], JSON.stringify({ entry, globals })).toBe(block[0]);
+      expect(block[2], JSON.stringify({ entry, globals })).toBe(block[0]);
+      expect(limits[1]).toBe(limits[0]);
+      expect(limits[2]).toBe(limits[0]);
+    }
+  });
+
+  it('normalizeLooseUntil is identical across variants', () => {
+    const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
+    for (const input of [undefined, null, '', 0, '0', '15', 15.6, -1, NaN, 'abc']) {
+      expect(ctxs[1].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
+      expect(ctxs[2].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
+    }
   });
 });
 

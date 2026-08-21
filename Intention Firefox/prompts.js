@@ -498,13 +498,18 @@ const STRICT_PHASE_CLAMP_CAUSE = "the strict-phase cap on a single pass — toda
 
 // null when there is no split to speak of. Everything else derives from the
 // one stored number and today's minutes, both of which the caller already has.
+//
+// The field is read through rules.js rather than parsed again here. Callers
+// normally hand over an already-normalised value, but "already normalised" is
+// not something this can check, and a second hand-written parse of the same
+// field is exactly the drift rules.js exists to end — absent must keep meaning
+// "no split", never `Number(null) === 0`, "strict from the first minute".
 function computePhase(looseUntilMinutes, minutesTodaySite) {
-  if (looseUntilMinutes === undefined || looseUntilMinutes === null || looseUntilMinutes === '') return null;
-  const split = Number(looseUntilMinutes);
-  if (!Number.isFinite(split) || split < 0) return null;
+  const split = normalizeLooseUntil(looseUntilMinutes);
+  if (split === null) return null;
   const used = Math.max(0, Number(minutesTodaySite) || 0);
   return {
-    split: Math.round(split),
+    split,
     strict: used >= split,
     remaining: Math.max(0, Math.round(split - used))
   };

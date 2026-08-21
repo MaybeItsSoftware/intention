@@ -608,9 +608,9 @@ function readGateStorage() {
         "simpleBehavior",
         "simplePassMinutes",
         // Every per-site limit field the fail-safe reads rides in here: the
-        // mode override, the pass length, and now `looseUntilMinutes`. Anything
-        // new the gate reads has to be named in THIS list or effectiveModeFrom-
-        // Storage sees `undefined` and the fail-safe decides on nothing.
+        // mode override, the pass length, and `looseUntilMinutes`. Anything new
+        // the gate reads has to be named in THIS list, or resolveBlockConfig
+        // sees `undefined` and the fail-safe decides on nothing.
         "domainLimits",
       ],
       (items) => {
@@ -668,7 +668,9 @@ async function checkFromStorage(host) {
   }
 
   matchedDomain = matched;
-  matchedBlockConfig = effectiveModeFromStorage(matched, stored);
+  // Same resolution the background worker would have run, from rules.js — the
+  // point of this whole path is reaching that verdict with the worker dead.
+  matchedBlockConfig = resolveBlockConfig(limitEntryFor(matched, stored), stored);
 
   // Which per-tab key a live pass was granted under isn't knowable from
   // inside the page, so any unexpired session for this domain counts. Erring
@@ -699,35 +701,6 @@ async function checkFromStorage(host) {
   }
 
   showGate("background unreachable (storage fail-safe)");
-}
-
-// Content-script mirror of background.js's getEffectiveMode: same per-domain
-// override, same global defaults, same shape.
-//
-// `looseUntilMinutes` is normalised the same way normalizeLooseUntil() does in
-// background.js, and for the same reason: absent means no loose/strict split
-// at all, and `Number(null)` is 0, which would read as "strict from the first
-// minute" — the opposite. Nothing in the gate branches on the phase today (it
-// is the coach that turns strict, and the coach needs a live background
-// anyway), but a mirror that answers a different shape is a mirror nobody can
-// trust the next time one of them grows a branch.
-function effectiveModeFromStorage(domain, stored) {
-  const entry = (stored.domainLimits || {})[domain] || null;
-  const globalPassMinutes =
-    Number(stored.simplePassMinutes) > 0 ? Number(stored.simplePassMinutes) : 10;
-  const rawLoose = entry?.looseUntilMinutes;
-  const loose =
-    rawLoose === undefined || rawLoose === null || rawLoose === ""
-      ? NaN
-      : Number(rawLoose);
-  return {
-    mode: entry?.mode || stored.blockingMode || "coach",
-    behavior: entry?.behavior || stored.simpleBehavior || "pass",
-    passMinutes:
-      Number(entry?.passMinutes) > 0 ? Number(entry.passMinutes) : globalPassMinutes,
-    looseUntilMinutes:
-      Number.isFinite(loose) && loose >= 0 ? Math.round(loose) : null,
-  };
 }
 
 runCheck();

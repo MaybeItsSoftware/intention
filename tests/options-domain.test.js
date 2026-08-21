@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
-import { VARIANTS } from './load.js';
+import { VARIANTS, bundleForContext } from './load.js';
 
 let ctx;
 
@@ -28,11 +28,14 @@ beforeAll(() => {
     setTimeout, clearTimeout, URL, URLSearchParams, fetch: async () => ({ ok: false })
   };
   sandbox.globalThis = sandbox;
-  // Same order options.html loads them in — options.js resolves service groups
-  // through sites.js, so it has to be in scope.
-  const source = ['sites.js', 'providers.js', 'options.js']
-    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
-    .join('\n;\n');
+  // Same order options.html loads them in, read from the page itself —
+  // options.js resolves service groups through sites.js and target rules
+  // through rules.js, so both have to be in scope. billing.js and report.js
+  // are dropped: neither is reachable from the pure string work under test,
+  // and both want a DOM this stub does not pretend to have.
+  const source = bundleForContext('options', {
+    only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
+  });
   ctx = vm.createContext(sandbox);
   vm.runInContext(source, ctx, { filename: join(VARIANTS.chrome, 'options.js') });
 });

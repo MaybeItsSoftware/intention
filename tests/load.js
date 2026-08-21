@@ -198,9 +198,60 @@ function topLevelDeclaredNames(code) {
   return [...names];
 }
 
-// Convenience: load prompts.js for a variant.
-export function loadPrompts(opts = {}) {
-  return loadSource('prompts.js', opts);
+// ---------------------------------------------------------------------------
+// Which files load into which context
+// ---------------------------------------------------------------------------
+//
+// Read out of the shipped manifests and HTML rather than hand-listed here. The
+// lists used to be written out a third time in this file, so adding a shared
+// file to the extension left every vm context in the suite one script short —
+// the tests then failed on a ReferenceError that says nothing about the real
+// mistake. Derive them, and a script added to the manifest is a script the
+// tests load.
+//
+// Chrome's manifest names only `service_worker`, with the rest pulled in by
+// background.js's own importScripts() call; Firefox and Apple spell the whole
+// list out, and it is the same set, so the Firefox overlay is what gets read.
+export function scriptsForContext(context, variant = 'chrome') {
+  const dir = VARIANTS[variant] || VARIANTS.chrome;
+  if (context === 'content') {
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+    return manifest.content_scripts[0].js.slice();
+  }
+  if (context === 'background') {
+    const manifest = JSON.parse(
+      readFileSync(join(VARIANTS.firefox, 'manifest.json'), 'utf8')
+    );
+    return manifest.background.scripts.slice();
+  }
+  if (context === 'options' || context === 'coaching') {
+    const html = readFileSync(join(dir, `${context}.html`), 'utf8');
+    return [...html.matchAll(/<script\s+src="([^"]+)"/g)].map(m => m[1]);
+  }
+  throw new Error(`unknown script context: ${context}`);
+}
+
+// Read a context's scripts and join them into one source string, the way the
+// browser evaluates them into one shared global scope. `only` narrows the list
+// to the files a given test actually wants (page_context.js is optional in the
+// content tests, and the options tests drive no billing UI), while still
+// picking up anything new the manifest starts loading alongside them.
+export function bundleForContext(context, { variant = 'chrome', only = null } = {}) {
+  const dir = VARIANTS[variant] || VARIANTS.chrome;
+  let files = scriptsForContext(context, variant);
+  if (only) files = files.filter(f => only.includes(f));
+  return files.map(f => readFileSync(join(dir, f), 'utf8')).join('\n;\n');
+}
+
+// Convenience: load prompts.js for a variant, over rules.js — the loose/strict
+// split reads its stored field through normalizeLooseUntil rather than parsing
+// it a second time, and every context that loads prompts.js loads rules.js too.
+export function loadPrompts({ variant = 'chrome', ...opts } = {}) {
+  const dir = VARIANTS[variant] || VARIANTS.chrome;
+  const source = ['rules.js', 'prompts.js']
+    .map(f => readFileSync(join(dir, f), 'utf8'))
+    .join('\n;\n');
+  return loadSource(join(dir, 'prompts.js'), { variant, source, ...opts });
 }
 
 // Convenience: load tracking.js for a variant with seeded storage.
@@ -211,11 +262,11 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
   return { ctx, chrome };
 }
 
-// Convenience: load the whole background worker — sites.js, providers.js,
-// prompts.js, tracking.js and background.js — into ONE vm context, the way the
-// service worker (importScripts) and the native background WebViews (five
-// <script> tags) both load them. Concatenating is safe because no top-level
-// name is declared in more than one of the five.
+// Convenience: load the whole background worker — every script the manifest
+// lists for it — into ONE vm context, the way the service worker
+// (importScripts) and the native background WebViews (<script> tags) both load
+// them. Concatenating is safe because no top-level name is declared in more
+// than one of them.
 //
 // Returns { ctx, chrome, fetch, listeners } where `listeners` exposes the
 // handlers background.js registers, so tests can fire an alarm or a tab close
@@ -296,9 +347,7 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
     _sessionRules: sessionRules
   };
 
-  const sources = ['sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']
-    .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
-    .join('\n;\n');
+  const sources = bundleForContext('background');
 
   // `runtime.sendNativeMessage` exists only where a native host is listening —
   // the Safari Web Extension and the iOS/Android WebViews — and that is how the
