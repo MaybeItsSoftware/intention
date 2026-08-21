@@ -66,6 +66,11 @@ Intention Apple/fastlane/report.xml
 Intention Apple/fastlane/Preview.html
 Intention Apple/fastlane/.env
 Intention Apple/fastlane/test_output
+
+# Fastlane (Intention Android/) - run artefacts, same as the Apple lane above.
+Intention Android/fastlane/report.xml
+Intention Android/fastlane/Preview.html
+Intention Android/fastlane/.env
 # Regenerated each run from match's live profile-name mapping — see Fastfile.
 Intention Apple/ExportOptions-ios.plist
 Intention Apple/ExportOptions-ios-dev.plist
