@@ -9,7 +9,7 @@
 // apple.js's certificate chain-of-trust walk is exercised separately with a
 // locally generated (deliberately untrusted) chain.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import crypto from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1276,16 +1276,160 @@ describe('token lifetime and revocation', () => {
 });
 
 describe('health reflects store readiness', () => {
+  const health = (d, ip = '1.2.3.4') => handleRequest({ method: 'GET', path: '/health', ip }, d);
+
   it('is ok when the store round-trips', async () => {
-    const res = await handleRequest({ method: 'GET', path: '/health' }, deps());
+    const res = await health(deps());
     expect(res.status).toBe(200);
   });
 
   it('is 503 when the store cannot write (volume gone)', async () => {
     const broken = { set() { throw new Error('EIO: disk gone'); }, get() { return null; }, delete() {}, increment() { return 1; } };
-    const res = await handleRequest({ method: 'GET', path: '/health' }, deps({ store: broken }));
+    const res = await health(deps({ store: broken }));
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('store_unavailable');
+  });
+
+  // /health is unauthenticated and, being answered before the route switch, is
+  // the one endpoint the IP limits below never covered. A FileStore write
+  // serialises the entire ledger and fsyncs it, so an unthrottled probe was
+  // disk write amplification that grew with every purchase ever made — free to
+  // trigger, and worse the longer the service had been running.
+  describe('and does not turn a public GET into a disk write', () => {
+    // Counts writes without pretending to be anything else the store isn't.
+    const countingStore = () => {
+      const inner = new MemoryStore();
+      let writes = 0;
+      return {
+        get: (k) => inner.get(k),
+        set: (k, v, ttl) => { writes += 1; return inner.set(k, v, ttl); },
+        delete: (k) => inner.delete(k),
+        increment: (k, ttl) => inner.increment(k, ttl),
+        sweep: () => inner.sweep(),
+        get writes() { return writes; }
+      };
+    };
+
+    it('writes once, not once per request', async () => {
+      const store = countingStore();
+      const d = deps({ store });
+      for (let i = 0; i < 50; i++) {
+        expect((await health(d)).status).toBe(200);
+      }
+      expect(store.writes).toBe(1);
+    });
+
+    it('still writes again once the interval has passed', async () => {
+      const store = countingStore();
+      const d = deps({ store });
+      await health(d);
+      expect(store.writes).toBe(1);
+      // Age the recorded probe past the write interval.
+      store.set('health:probe', Date.now() - 60_000, 600_000);
+      await health(d);
+      expect(store.writes).toBe(3); // the ageing write, then the probe's own
+    });
+
+    // Reads still happen every time, so a store that has lost its backing is
+    // caught on the calls between writes too, not only at the interval.
+    it('is 503 between writes when the store stops answering', async () => {
+      const d = deps();
+      expect((await health(d)).status).toBe(200);
+      const res = await handleRequest(
+        { method: 'GET', path: '/health', ip: '1.2.3.4' },
+        { ...d, store: { get: () => null, set() {}, delete() {}, increment: () => 1 } }
+      );
+      expect(res.status).toBe(503);
+    });
+
+    it('rate-limits a flood, unlike before', async () => {
+      const d = deps();
+      let limited = 0;
+      for (let i = 0; i < 200; i++) {
+        if ((await health(d)).status === 429) limited += 1;
+      }
+      expect(limited).toBeGreaterThan(0);
+    });
+
+    it('limits per IP, so one prober cannot lock out the deploy check', async () => {
+      const d = deps();
+      for (let i = 0; i < 200; i++) await health(d, '9.9.9.9');
+      expect((await health(d, '1.1.1.1')).status).toBe(200);
+    });
+  });
+});
+
+// A rate-limit key is per-IP and its counter only ever expires lazily, when
+// someone reads that same key again. An address that hits once and never comes
+// back therefore left its entry in the Map for the life of the process — one
+// per address ever seen, on a public endpoint, forever.
+describe('rate-limit counters do not accumulate for ever', () => {
+  const WINDOW = 60_000;
+  // One short of the sweep threshold, so the test controls exactly when the
+  // sweep happens rather than depending on where the counter landed.
+  const ALMOST = 999;
+
+  const hitDistinct = (limiter, count, from = 0) => {
+    for (let i = from; i < from + count; i++) limiter.check('probe', `ip-${i}`, 5, WINDOW);
+  };
+
+  beforeEach(() => { vi.useRealTimers(); });
+
+  it('releases the memory of addresses whose window has passed', () => {
+    vi.useFakeTimers();
+    const backing = new MemoryStore();
+    const limiter = new RateLimiter(backing);
+
+    hitDistinct(limiter, ALMOST);
+    expect(backing.size).toBe(ALMOST); // still live, nothing swept yet
+
+    // Every one of those windows is now long gone.
+    vi.advanceTimersByTime(WINDOW * 2);
+    limiter.check('probe', 'someone-new', 5, WINDOW); // the 1000th, which sweeps
+
+    expect(backing.size).toBe(1);
+    vi.useRealTimers();
+  });
+
+  it('keeps counters that are still inside their window', () => {
+    vi.useFakeTimers();
+    const backing = new MemoryStore();
+    const limiter = new RateLimiter(backing);
+    hitDistinct(limiter, ALMOST);
+    limiter.check('probe', 'someone-new', 5, WINDOW); // sweeps, but nothing has expired
+    expect(backing.size).toBe(ALMOST + 1);
+    vi.useRealTimers();
+  });
+
+  it('does not reset a counter that is still counting', () => {
+    vi.useFakeTimers();
+    const backing = new MemoryStore();
+    const limiter = new RateLimiter(backing);
+
+    for (let i = 0; i < 4; i++) expect(limiter.check('probe', 'steady', 5, WINDOW)).toBe(true);
+    hitDistinct(limiter, ALMOST, 100); // carries past the sweep threshold
+
+    expect(limiter.check('probe', 'steady', 5, WINDOW)).toBe(true);   // 5th
+    expect(limiter.check('probe', 'steady', 5, WINDOW)).toBe(false);  // 6th, over
+    vi.useRealTimers();
+  });
+
+  // The sweep is the fix; this is the bug it fixes, stated directly.
+  it('would grow without bound if nothing swept', () => {
+    vi.useFakeTimers();
+    const backing = new MemoryStore();
+    for (let i = 0; i < 1500; i++) backing.set(`rl:probe:ip-${i}`, 1, WINDOW);
+    vi.advanceTimersByTime(WINDOW * 2);
+
+    // Every entry is expired, and the Map is still holding all of them: get()
+    // evicts on the way past, but only for a key somebody asks about again.
+    expect(backing.size).toBe(1500);
+    expect(backing.get('rl:probe:ip-0')).toBe(null);
+    expect(backing.size).toBe(1499);
+
+    expect(backing.sweep()).toBe(1499);
+    expect(backing.size).toBe(0);
+    vi.useRealTimers();
   });
 });
 
