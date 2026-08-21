@@ -77,17 +77,7 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
   const limiter = deps.rateLimiter || rateLimiter;
 
   if (method === 'GET' && path === '/health') {
-    // Readiness, not liveness: a store round-trip (a real write, so a
-    // FileStore whose volume unmounted after boot fails here rather than at
-    // the next purchase). Boot-time config problems already stop the process.
-    try {
-      backing.set('health:probe', Date.now(), 60_000);
-      if (!(Number(backing.get('health:probe')) > 0)) throw new Error('probe read back empty');
-      return json(200, { ok: true });
-    } catch (e) {
-      console.error('[intention] health probe failed', e);
-      return json(503, { ok: false, code: 'store_unavailable' });
-    }
+    return healthEndpoint(backing, limiter, ip);
   }
   if (method !== 'POST') {
     return json(405, { error: 'Method not allowed', code: 'method_not_allowed' });
@@ -123,6 +113,47 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
     }
     console.error('[intention] unhandled error', e);
     return json(500, { error: 'Internal error', code: 'internal_error' });
+  }
+}
+
+// ---- Health ---------------------------------------------------------------
+
+// How often the probe is allowed to actually write. A FileStore mutation
+// serialises the whole ledger and fsyncs it, so the write must not be on a
+// path anyone can call at will: /health is unauthenticated and, unlike every
+// other route, is answered before the IP limits below — so an unthrottled
+// probe is disk write amplification that grows with every purchase ever made.
+//
+// Reads still happen on every request, which is what catches the failure this
+// exists for on all but the first call after a volume goes: a store whose
+// backing file vanished cannot answer the value it just wrote either.
+const HEALTH_WRITE_INTERVAL_MS = 30_000;
+const HEALTH_PROBE_KEY = 'health:probe';
+
+// A ceiling on probe traffic regardless. Railway only calls this at deploy
+// time; anything above this rate is not a deploy.
+const HEALTH_LIMIT = { limit: 120, windowMs: MINUTE };
+
+function healthEndpoint(backing, limiter, ip) {
+  if (!limiter.check('ip:/health', ip || 'unknown', HEALTH_LIMIT.limit, HEALTH_LIMIT.windowMs)) {
+    return rateLimited();
+  }
+  // Readiness, not liveness: a store round-trip, including a real write, so a
+  // FileStore whose volume unmounted after boot fails here rather than at the
+  // next purchase. Boot-time config problems already stop the process.
+  try {
+    const previous = Number(backing.get(HEALTH_PROBE_KEY) || 0);
+    const now = Date.now();
+    if (now - previous >= HEALTH_WRITE_INTERVAL_MS) {
+      backing.set(HEALTH_PROBE_KEY, now, 10 * MINUTE);
+      if (!(Number(backing.get(HEALTH_PROBE_KEY)) > 0)) throw new Error('probe read back empty');
+    } else if (!(previous > 0)) {
+      throw new Error('probe read back empty');
+    }
+    return json(200, { ok: true });
+  } catch (e) {
+    console.error('[intention] health probe failed', e);
+    return json(503, { ok: false, code: 'store_unavailable' });
   }
 }
 

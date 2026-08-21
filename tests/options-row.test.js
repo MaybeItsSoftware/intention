@@ -15,9 +15,7 @@
 // what is being tested than a full jsdom would be.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { loadSource, VARIANTS } from './load.js';
+import { loadSource, filesForContext } from './load.js';
 
 // ---- The DOM shim ---------------------------------------------------------
 
@@ -106,13 +104,12 @@ function load() {
   };
   const document = doc;
 
-  const source = ['sites.js', 'providers.js', 'options.js']
-    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
-    .join('\n;\n');
-
-  ctx = loadSource(join(VARIANTS.chrome, '__options_bundle__.js'), {
+  // options.html's own <script> list, minus the two the row builders never
+  // touch (billing.js needs a paywall DOM, report.js a real event loop).
+  // Stated as an exclusion, so a script added to the page reaches these
+  // tests without anybody remembering to add it here.
+  ctx = loadSource(filesForContext('options', { except: ['billing.js', 'report.js'] }), {
     chrome,
-    source,
     extraGlobals: {
       document,
       window: {},

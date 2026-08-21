@@ -1,5 +1,5 @@
 try {
-  importScripts('sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js');
+  importScripts('sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'rules.js');
 } catch (e) {
   // Firefox loads these via manifest scripts array; globals already present.
 }
@@ -396,8 +396,10 @@ async function applyBlockingRules() {
   }
 }
 
-// Session rules to temporarily allow a tab to visit a domain
-async function registerSessionRule(tabId, domain, minutes) {
+// Session rules to temporarily allow a tab to visit a domain. No duration:
+// a session rule has no TTL of its own, so the pass ending is what removes it
+// (removeSessionRule), not the clock.
+async function registerSessionRule(tabId, domain) {
   try {
     const ruleId = tabId;
     const addRules = [{
@@ -924,42 +926,12 @@ async function checkPageMatch(host, tabId, pageContext) {
   };
 }
 
-// `looseUntilMinutes`: how many of today's minutes on a target the coach spends
-// in its lenient phase before it turns strict (see renderPhaseLine in
-// prompts.js). Absent is a real answer, not a missing one — it means no split,
-// which is exactly how every entry written before the field existed behaves —
-// so anything that isn't a finite number of minutes normalises to null rather
-// than to a number. In particular `Number(null)` is 0, and 0 would mean
-// "strict from the first minute", which is the opposite of what an unset field
-// should do.
-//
-// Normalised in three other places on purpose: effectiveModeFromStorage() in
-// content.js (which must reach a verdict with this worker dead) and
-// looseUntilFor() in options.js (which cannot import this file). Change one,
-// change all three.
-function normalizeLooseUntil(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-}
-
+// The storage half of the target-rule lookups. The resolution itself lives in
+// rules.js, which every context loads — this only knows which storage keys to
+// read before handing the values over.
 async function getLimitsForDomain(domain) {
-  // Apps and sites can't collide: appLimits is keyed by Android package name,
-  // domainLimits by hostname, so a single lookup across both is safe.
-  const { domainLimits = {}, appLimits = {} } = await getStorage(['domainLimits', 'appLimits']);
-  const defaults = { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: null };
-  const entry = domain ? (domainLimits[domain] || appLimits[domain]) : null;
-  if (entry) {
-    const limits = entry;
-    const maxGrants = Number(limits.maxGrants);
-    const maxMinutes = Number(limits.maxMinutes);
-    return {
-      maxGrants: isNaN(maxGrants) ? defaults.maxGrants : maxGrants,
-      maxMinutes: isNaN(maxMinutes) ? defaults.maxMinutes : maxMinutes,
-      looseUntilMinutes: normalizeLooseUntil(limits.looseUntilMinutes)
-    };
-  }
-  return { ...defaults };
+  const stored = await getStorage(['domainLimits', 'appLimits']);
+  return resolveLimits(limitEntryFor(domain, stored));
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,19 +1074,11 @@ async function getAccess() {
 }
 
 // Per-item mode/behavior override falls back to the global default, so most
-// domains carry no mode/behavior/passMinutes fields at all.
+// domains carry no mode/behavior/passMinutes fields at all. As with
+// getLimitsForDomain, the resolution is rules.js's — this reads the keys.
 async function getEffectiveMode(domain) {
-  const { blockingMode = 'coach', simpleBehavior = 'pass', simplePassMinutes = 10, domainLimits = {}, appLimits = {} } = await getStorage(['blockingMode', 'simpleBehavior', 'simplePassMinutes', 'domainLimits', 'appLimits']);
-  const entry = domain ? (domainLimits[domain] || appLimits[domain]) : null;
-  const mode = entry?.mode || blockingMode || 'coach';
-  const behavior = entry?.behavior || simpleBehavior || 'pass';
-  const globalPassMinutes = Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10;
-  const passMinutes = Number(entry?.passMinutes) > 0 ? Number(entry.passMinutes) : globalPassMinutes;
-  // Carried alongside the mode because the three mirrors of this resolution are
-  // only worth anything if they answer the same shape — see normalizeLooseUntil
-  // above and effectiveModeFromStorage() in content.js. It has no global
-  // default: a lenient window is a per-site line, or it is nothing.
-  return { mode, behavior, passMinutes, looseUntilMinutes: normalizeLooseUntil(entry?.looseUntilMinutes) };
+  const stored = await getStorage(['blockingMode', 'simpleBehavior', 'simplePassMinutes', 'domainLimits', 'appLimits']);
+  return resolveBlockConfig(limitEntryFor(domain, stored), stored);
 }
 
 // The two setup answers, keyed by service (see serviceKeyFor in sites.js).
@@ -1808,7 +1772,7 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason 
   // Apps have no network rules to allow — the Android accessibility
   // service reads activeSessions directly to let the app through — and
   // neither do the native ports, which have no tab to scope a rule to.
-  if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+  if (!isApp && tabId != null) await registerSessionRule(tabId, domain);
   // Drops this domain's redirect rule for the life of the pass.
   if (!isApp) await syncBlockingRules();
   return session;
@@ -1890,11 +1854,7 @@ async function settleTabRule(tabId) {
     .map(key => activeSession(activeSessions[key]))
     .find(Boolean);
   if (stillLive) {
-    const remainingMinutes = Math.max(
-      1,
-      Math.ceil((stillLive.startTime + stillLive.intervalMinutes * 60000 - Date.now()) / 60000)
-    );
-    await registerSessionRule(tabId, stillLive.domain, remainingMinutes);
+    await registerSessionRule(tabId, stillLive.domain);
   } else {
     removeSessionRule(tabId);
   }

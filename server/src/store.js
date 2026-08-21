@@ -53,6 +53,28 @@ export class MemoryStore {
     this.set(key, current, existing && existing.expiresAt ? existing.expiresAt - Date.now() : ttlMs);
     return current;
   }
+
+  // Drop every expired entry. get() already evicts one on the way past, but
+  // only for a key somebody comes back to ask about — so a key written once
+  // and never read again stays in the Map for the life of the process. That is
+  // fine for the durable store (FileStore.persist filters on every write, and
+  // its keys are mostly permanent anyway) and not fine for the rate limiter,
+  // whose keys are per-IP and unbounded: one entry per address ever seen,
+  // never released. Callers decide when to pay for it; see ratelimit.js.
+  sweep(now = Date.now()) {
+    let removed = 0;
+    for (const [key, entry] of this.map) {
+      if (entry.expiresAt && entry.expiresAt < now) {
+        this.map.delete(key);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  get size() {
+    return this.map.size;
+  }
 }
 
 // Durable variant: the in-memory Map stays the authoritative synchronous

@@ -1398,7 +1398,7 @@ describe('sessions written under the old key format', () => {
   });
 
   it('still bank if their old check-in alarm fires first', async () => {
-    const { ctx, chrome, listeners } = loadBackground({ seed: legacySeed() });
+    const { chrome, listeners } = loadBackground({ seed: legacySeed() });
     chrome.storage._store.activeSessions['42'].startTime = Date.now() - 10 * 60000;
 
     // The tab id is still recoverable from the legacy alarm name, so this
@@ -1663,7 +1663,7 @@ describe('what the user was actually opening reaches the coach', () => {
   });
 
   it('records a pass that ran its clock out as such', async () => {
-    const { ctx, chrome, listeners } = loadBackground({
+    const { ctx, chrome } = loadBackground({
       seed: SEED, fetch: grantingFetch(10, 'check DMs')
     });
     await ctx.handleMessage(

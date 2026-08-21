@@ -247,8 +247,7 @@ async function passThroughIfGranted() {
 }
 
 async function renderCoachUI() {
-  sendBtn.addEventListener('click', send);
-  inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  conversation.wireComposer();
   inputEl.focus();
 
   // Bail if this tab is the duplicate — window.close() is already on its way.
@@ -270,7 +269,7 @@ async function renderCoachUI() {
 
   // The coach speaks first: always at check-in (the pass ending is the news),
   // otherwise only when there is no conversation to pick back up.
-  if (mode === 'checkin' || turns.length === 0) attemptOpen();
+  if (mode === 'checkin' || turns.length === 0) conversation.attemptOpen();
 }
 
 // No-AI counterpart to renderCoachUI: a message plus a single action button,
@@ -342,201 +341,41 @@ try {
 // at load rather than asking anything at close time.
 let domainStats = null;
 
-// Fetch stats and render stats row
-try {
-  chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
-    if (chrome.runtime.lastError) {
-      console.warn(INT_LOG, 'getStatsForDomain lastError:', chrome.runtime.lastError.message);
-      return;
-    }
-    if (stats) {
-      domainStats = stats;
-      const statsRow = document.getElementById('int-stats-row');
-      if (statsRow) {
-        statsRow.innerHTML = `
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesToday || 0}m</div>
-            <div class="int-stat-label">Today</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesWeek || 0}m</div>
-            <div class="int-stat-label">Week</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesYear || 0}m</div>
-            <div class="int-stat-label">Year</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
-            <div class="int-stat-label">All Time</div>
-          </div>
-          <div class="int-stat">
-            <div class="int-stat-value">${stats.walkedAwayWeek || 0}</div>
-            <div class="int-stat-label">Walked away (wk)</div>
-          </div>
-        `;
-        statsRow.style.display = 'flex';
-      }
-    }
-  });
-} catch (e) {
-  console.warn(INT_LOG, 'getStatsForDomain message threw:', e);
-}
-
-let sending = false;
-// Bumped above providers.js's 30s per-request fetch timeout so the background
-// worker's own timeout/error classification wins the race and reaches the UI
-// as a friendly message, instead of the UI giving up first on a request that
-// was actually about to fail cleanly on its own. A clamped grant now makes
-// TWO sequential LLM calls (the honesty turn), so the budget covers both —
-// giving up between them would leave a granted pass with nobody following it.
-const CHAT_TIMEOUT_MS = 75000;
-// Only the most recent attemptSend's result is allowed to touch the DOM.
-// Nothing in the current flow can put two attempts in flight at once, but
-// this keeps a stale response harmless if that ever changes.
-let requestSeq = 0;
-
-function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-    try {
-      chrome.runtime.sendMessage(message, (resp) => {
-        clearTimeout(timer);
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(resp);
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      reject(e);
-    }
-  });
-}
-
-async function send() {
-  const text = inputEl.value.trim();
-  if (!text || sending) return;
-  addMessage(messagesEl, 'user', text);
-  inputEl.value = '';
-  attemptSend(text);
-}
-
-async function attemptSend(text) {
-  const seq = ++requestSeq;
-  sending = true;
-  const thinking = addMessage(messagesEl, 'assistant', '…', true);
-
-  let resp;
-  try {
-    resp = await sendTabMessage({
-      action: 'chat',
-      mode,
-      domain,
-      isApp,
-      appLabel: isApp ? appLabel : undefined,
-      userMessage: text
-    });
-  } catch (e) {
-    if (seq !== requestSeq) return;
-    thinking.remove();
-    sending = false;
-    const message = e && e.message === 'timeout'
-      ? "That's taking too long to answer. Check your connection and try again."
-      : '[no response: background worker may be offline]';
-    showRetryableError(messagesEl, message, text);
-    return;
-  }
-
-  if (seq !== requestSeq) return;
-
-  if (!resp) {
-    thinking.remove();
-    sending = false;
-    showRetryableError(messagesEl, '[no response: background worker may be offline]', text);
-    return;
-  }
-  if (resp.error) {
-    thinking.remove();
-    sending = false;
-    if (resp.locked) {
-      showPaywall();
-      return;
-    }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
-    showRetryableError(messagesEl, message, text, resp.errorCode);
-    return;
-  }
-  thinking.classList.remove('int-thinking');
-  typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
-    if (seq !== requestSeq) return;
-    sending = false;
-    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-    if (resp.grantedSession) {
-      followGrantedSession(resp.grantedSession);
-    }
-  });
-}
+loadStatsRow(domain, (stats) => { domainStats = stats; });
 
 // The hardcoded greetings the gate used to open with, kept as the offline
 // fallback: if the LLM opener can't be fetched, this line still stands the
-// gate up. No retry row — the composer stays live, so the user's first reply
-// retries naturally through attemptSend.
+// gate up.
 const OPENER_FALLBACK = mode === 'checkin'
   ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
-  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
+  : `Hey. I see you've opened ${displayName}. What's going on — what are you hoping to get out of it?`;
 
-// attemptSend minus the user bubble: asks the background for the coach's
-// opening line. No userMessage — the background records its own marker turn.
-async function attemptOpen() {
-  const seq = ++requestSeq;
-  sending = true;
-  const thinking = addMessage(messagesEl, 'assistant', '…', true);
-
-  const fallBack = () => {
-    thinking.remove();
-    addMessage(messagesEl, 'assistant', OPENER_FALLBACK);
-    sending = false;
-  };
-
-  let resp;
-  try {
-    resp = await sendTabMessage({
-      action: 'chat',
-      mode,
-      domain,
-      isApp,
-      appLabel: isApp ? appLabel : undefined
-    });
-  } catch (e) {
-    if (seq !== requestSeq) return;
-    fallBack();
-    return;
-  }
-
-  if (seq !== requestSeq) return;
-
-  if (!resp || resp.error) {
-    if (resp && resp.locked) {
-      thinking.remove();
-      sending = false;
-      showPaywall();
-      return;
-    }
-    fallBack();
-    return;
-  }
-  thinking.classList.remove('int-thinking');
-  typeMessage(thinking, messagesEl, resp.assistantText || OPENER_FALLBACK, () => {
-    if (seq !== requestSeq) return;
-    sending = false;
-    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-    if (resp.grantedSession) {
-      followGrantedSession(resp.grantedSession);
-    }
-  });
-}
+// The loop itself is gate-ui.js's, shared with content.js. What is
+// host-specific is here: the transport — this gate is an extension page, so
+// every message carries the tab id resolved at the top of this file, and an
+// app gate has a package name and a label rather than a page to describe —
+// and what a locked account or a granted pass means when the gate is the
+// whole screen rather than an overlay on the thing being gated.
+const conversation = createGateConversation({
+  messages: messagesEl,
+  input: inputEl,
+  sendButton: sendBtn,
+  openerFallback: OPENER_FALLBACK,
+  sendChat: (userMessage) => sendTabMessage({
+    action: 'chat',
+    mode,
+    domain,
+    isApp,
+    appLabel: isApp ? appLabel : undefined,
+    // Absent rather than empty when opening the conversation: the background
+    // reads the missing key as "no user turn yet" and records its own marker
+    // turn instead.
+    ...(userMessage ? { userMessage } : {})
+  }),
+  onLocked: showPaywall,
+  onGranted: followGrantedSession,
+  onOpenSettings: () => openOptionsSection('settings')
+});
 
 // Shared by the coach chat flow and the no-AI simple-mode pass button: once a
 // session is granted, get the user through to what they asked for. The pause
@@ -564,28 +403,6 @@ function followGrantedSession(grantedSession, delayMs = 600) {
   }, delayMs);
 }
 
-function showRetryableError(container, message, text, errorCode) {
-  const errorEl = addMessage(container, 'assistant', message);
-  const actions = [];
-  if (errorCode === 'auth') {
-    // Left open (not dismissed on click) so the user can still hit "Try
-    // again" here after fixing the key in the settings tab this opens.
-    actions.push({
-      label: 'Fix API key',
-      keepOpen: true,
-      onClick: () => openOptionsSection('settings')
-    });
-  }
-  actions.push({
-    label: 'Try again',
-    onClick: () => {
-      errorEl.remove();
-      attemptSend(text);
-    }
-  });
-  addActionRow(container, actions);
-}
-
 // Native ports have no background page (chrome.tabs doesn't exist), except
 // Android, which intercepts the "openOptions" message before it ever gets
 // there — see WebAppInterface.sendMessage. iOS has neither, so it has to
@@ -597,25 +414,6 @@ function openOptionsSection(section) {
     return;
   }
   chrome.runtime.sendMessage({ action: 'openOptions', section });
-}
-
-function addActionRow(container, actions) {
-  const row = document.createElement('div');
-  row.className = 'int-retry-row';
-  for (const action of actions) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'int-retry-btn';
-    btn.textContent = action.label;
-    btn.addEventListener('click', () => {
-      if (!action.keepOpen) row.remove();
-      action.onClick();
-    });
-    row.appendChild(btn);
-  }
-  container.appendChild(row);
-  container.scrollTop = container.scrollHeight;
-  return row;
 }
 
 // A double-click can get both clicks past the awaits below before the
@@ -654,98 +452,6 @@ closeBtn.addEventListener('click', async () => {
   // immediately — 'walked_away' doesn't close the tab on the background side,
   // so the moment below owns the close timing.
   postTabMessage({ action: 'endSession', domain, reason: 'walked_away' });
-  showWalkAwayMoment(leave);
+  showWalkAwayMoment(leave, domainStats);
 });
 
-// Spoken at the moment of walking away. Deliberately not an LLM call and not
-// awaited on anything: the whole point of the moment is that it costs nothing
-// and leaves fast.
-const WALK_AWAY_LINES = [
-  'Closed. That is the whole game.',
-  'You looked at the urge and left. Strong.',
-  'Nothing here you needed. Well spotted.',
-  'That urge just lost one.',
-  'Walking away is the rep. You just did one.'
-];
-
-// A ~1s full-screen affirmation before the page goes, skippable with a click
-// (same capture-phase idiom as typeMessage). onDone fires exactly once,
-// whether the timer or the skip gets there first.
-function showWalkAwayMoment(onDone) {
-  const overlay = document.createElement('div');
-  overlay.className = 'int-walkaway';
-  // +1 for the walk-away just recorded: domainStats was fetched at load,
-  // before this one happened.
-  const weekCount = ((domainStats?.walkedAwayWeek) || 0) + 1;
-  overlay.textContent = weekCount >= 2
-    ? `That's ${weekCount} times this week you've walked away. That streak is the real work.`
-    : WALK_AWAY_LINES[Math.floor(Math.random() * WALK_AWAY_LINES.length)];
-  document.body.appendChild(overlay);
-
-  let finished = false;
-  function finish() {
-    if (finished) return;
-    finished = true;
-    clearTimeout(timer);
-    document.removeEventListener('click', skip, true);
-    onDone();
-  }
-  function skip() { finish(); }
-
-  const timer = setTimeout(finish, 950);
-  document.addEventListener('click', skip, true);
-}
-
-// Short user-facing note from the background (a clamped grant, a cap hit):
-// machinery speaking, not the coach, so it renders as a centered aside.
-function addSystemNote(container, text) {
-  const div = document.createElement('div');
-  div.className = 'int-msg int-system';
-  div.textContent = text;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-  return div;
-}
-
-function addMessage(container, role, text, isThinking) {
-  const div = document.createElement('div');
-  div.className = `int-msg int-msg-${role}` + (isThinking ? ' int-thinking' : '');
-  div.textContent = text;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-  // Press and hold anything the coach said to report it (report.js). Bound
-  // even while it is still the typing indicator, because that same node is
-  // what the reply gets typed into.
-  if (role === 'assistant') attachReportPress(div);
-  return div;
-}
-
-function typeMessage(el, container, text, onDone) {
-  el.textContent = '';
-  let i = 0;
-  let finished = false;
-  // Reveal the whole message in ~290ms (24 steps × 12ms) regardless of
-  // length — the old 2.5s length-independent crawl was self-inflicted
-  // latency at the impulse moment.
-  const step = Math.max(1, Math.ceil(text.length / 24));
-
-  function finish() {
-    if (finished) return;
-    finished = true;
-    clearInterval(timer);
-    el.textContent = text;
-    if (container) container.scrollTop = container.scrollHeight;
-    document.removeEventListener('click', skip, true);
-    if (onDone) onDone();
-  }
-  function skip() { finish(); }
-
-  const timer = setInterval(() => {
-    i += step;
-    el.textContent = text.slice(0, i);
-    if (container) container.scrollTop = container.scrollHeight;
-    if (i >= text.length) finish();
-  }, 12);
-
-  document.addEventListener('click', skip, true);
-}

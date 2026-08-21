@@ -4,7 +4,10 @@
       "id": "intention@maybeitsadam",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
-        "required": ["browsingActivity", "personalCommunications"]
+        "required": [
+          "browsingActivity",
+          "personalCommunications"
+        ]
       }
     },
     "gecko_android": {
@@ -18,6 +21,7 @@
       "prompts.js",
       "tracking.js",
       "page_context.js",
+      "rules.js",
       "background.js"
     ]
   }

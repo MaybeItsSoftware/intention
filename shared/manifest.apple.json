@@ -11,6 +11,7 @@
       "prompts.js",
       "tracking.js",
       "page_context.js",
+      "rules.js",
       "background.js"
     ],
     "persistent": false

@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadSource, loadTracking, VARIANTS, REPO_ROOT } from './load.js';
+import { loadSource, loadPrompts, loadTracking, VARIANTS, REPO_ROOT } from './load.js';
 
 const VARIANT_KEYS = ['chrome', 'firefox', 'apple'];
 
@@ -77,7 +77,7 @@ describe('prompts.js parity across variants', () => {
 
   it('buildGateSystemPrompt is identical across variants', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.buildGateSystemPrompt(gateArgs);
     });
     // strip the volatile {{time}}/{{day}} substitutions are absent here since
@@ -88,7 +88,7 @@ describe('prompts.js parity across variants', () => {
 
   it('buildSettingsGateSystemPrompt is identical across variants', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.buildSettingsGateSystemPrompt(settingsArgs);
     });
     expect(outputs[1]).toBe(outputs[0]);
@@ -97,7 +97,7 @@ describe('prompts.js parity across variants', () => {
 
   it('composeSystemPrompt unknown-placeholder stripping is identical', () => {
     const outputs = VARIANT_KEYS.map(v => {
-      const ctx = loadSource('prompts.js', { variant: v });
+      const ctx = loadPrompts({ variant: v });
       return ctx.composeSystemPrompt('A {{missing}} B', { questions: 'q', usage: 'u' });
     });
     expect(outputs[1]).toBe(outputs[0]);
@@ -106,11 +106,135 @@ describe('prompts.js parity across variants', () => {
   });
 
   it('DEFAULT_COACH_INSTRUCTIONS and tool schemas are identical', () => {
-    const ctxs = VARIANT_KEYS.map(v => loadSource('prompts.js', { variant: v }));
+    const ctxs = VARIANT_KEYS.map(v => loadPrompts({ variant: v }));
     expect(ctxs[1].DEFAULT_COACH_INSTRUCTIONS).toBe(ctxs[0].DEFAULT_COACH_INSTRUCTIONS);
     expect(ctxs[2].DEFAULT_COACH_INSTRUCTIONS).toBe(ctxs[0].DEFAULT_COACH_INSTRUCTIONS);
     expect(JSON.stringify(ctxs[1].GRANT_TOOL)).toBe(JSON.stringify(ctxs[0].GRANT_TOOL));
     expect(JSON.stringify(ctxs[2].APPROVE_CHANGE_TOOL)).toBe(JSON.stringify(ctxs[0].APPROVE_CHANGE_TOOL));
+  });
+});
+
+// The gate has two homes — the overlay content.js injects into the blocked
+// page, and coaching.html driven by coaching.js — and they had grown their own
+// copies of the small shared pieces. Identical line for line in most cases,
+// and in one (typeMessage) identical only because a fix to one was carried to
+// the other by hand. gate-ui.js is now the single copy; this is what stops a
+// second one appearing.
+describe('the two gate hosts share one UI', () => {
+  const SHARED_NAMES = [
+    'addMessage', 'addSystemNote', 'typeMessage',
+    'showWalkAwayMoment', 'WALK_AWAY_LINES',
+    'renderStatsRow', 'loadStatsRow', 'CHAT_TIMEOUT_MS',
+    'sendChatMessage', 'createGateConversation'
+  ];
+
+  const source = (file) => readFileSync(join(VARIANTS.chrome, file), 'utf8');
+
+  it('is loaded into both of them', () => {
+    const manifest = JSON.parse(readFileSync(join(VARIANTS.chrome, 'manifest.json'), 'utf8'));
+    expect(manifest.content_scripts[0].js).toContain('gate-ui.js');
+    expect(source('coaching.html')).toContain('src="gate-ui.js"');
+  });
+
+  it.each(['content.js', 'coaching.js'])('%s declares none of them itself', (file) => {
+    const code = source(file);
+    const redeclared = SHARED_NAMES.filter(name =>
+      new RegExp(`^\\s*(?:const|let|var|function|async function)\\s+${name}\\b`, 'm').test(code)
+    );
+    expect(redeclared).toEqual([]);
+  });
+
+  it('declares all of them exactly once, in gate-ui.js', () => {
+    const code = source('gate-ui.js');
+    for (const name of SHARED_NAMES) {
+      const matches = code.match(new RegExp(`^\\s*(?:const|let|var|function)\\s+${name}\\b`, 'gm')) || [];
+      expect(matches.length, name).toBe(1);
+    }
+  });
+
+  // It runs in a content script, on every page the user visits, and on an
+  // extension page. Anything host-specific in it would only work in one.
+  it('reaches for nothing that exists in only one of the two hosts', () => {
+    const code = source('gate-ui.js').replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    // The overlay root exists only in the content script; gate-ui.js may look
+    // for it, but must not require it.
+    expect(code).toMatch(/intention-root'\)\s*;[\s\S]{0,80}\|\|\s*document\.body/);
+    expect(code).not.toMatch(/\bwindow\.intention/);
+    expect(code).not.toMatch(/postTabMessage|sendTabMessage|capturePageContext/);
+  });
+
+  // The loop the two hosts wrapped around the helpers above was the copy that
+  // had already drifted — one had a stale-response guard the other lacked, and
+  // their offline opener lines differed by a character. These are the marks a
+  // second copy would leave: the transcript's own strings, the retry row's
+  // markup, the timeout wording. Only the host-specific edges belong out there.
+  //
+  // Not `int-retry-btn`: that is a style class, and coaching.js dresses its
+  // simple-mode buttons in it without there being a conversation in sight.
+  // content.js's injected CSS copy names the others, so it is cut first.
+  it.each(['content.js', 'coaching.js'])('%s keeps no second copy of the loop', (file) => {
+    const code = source(file).replace(/const OVERLAY_CSS = `[\s\S]*?`;/, '');
+    for (const mark of ['int-retry-row', 'int-thinking', 'Try again',
+                        'taking too long', 'no response:', "Can't reach the coach"]) {
+      expect(code, mark).not.toContain(mark);
+    }
+    // What it must still own: the transport, and what a result means locally.
+    expect(code).toContain('createGateConversation({');
+    expect(code).toMatch(/onLocked:|onLocked\(/);
+    expect(code).toMatch(/onGranted:|onGranted\(/);
+  });
+
+  // Both openers say the same thing in the same words — differing only in the
+  // name of what is being opened, which the hosts supply.
+  it('the two hosts speak the same offline opener', () => {
+    const opener = (file, re) => {
+      const m = re.exec(source(file));
+      return m && m[1];
+    };
+    const overlay = opener('content.js', /\?\s*`Hey\. I see you've opened \$\{domain\}\.([^`]*)`/);
+    const page = opener('coaching.js', /:\s*`Hey\. I see you've opened \$\{displayName\}\.([^`]*)`/);
+    expect(overlay).toBeTruthy();
+    expect(page).toBe(overlay);
+  });
+
+  it.each(VARIANT_KEYS)('is byte-identical in %s', (variant) => {
+    expect(readFileSync(join(VARIANTS[variant], 'gate-ui.js'), 'utf8'))
+      .toBe(readFileSync(join(VARIANTS.chrome, 'gate-ui.js'), 'utf8'));
+  });
+});
+
+// rules.js decides whether a site is gated and how hard. A variant answering
+// that differently is the one drift the user would feel directly, so it gets
+// the same treatment as prompts.js and tracking.js.
+describe('rules.js parity across variants', () => {
+  const CASES = [
+    [null, {}],
+    [null, { blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25 }],
+    [{ mode: 'simple', passMinutes: 5 }, { blockingMode: 'coach', simplePassMinutes: 30 }],
+    [{ looseUntilMinutes: '20' }, {}],
+    [{ looseUntilMinutes: '' }, {}],
+    [{ looseUntilMinutes: 0 }, {}],
+    [{ maxGrants: 'abc', maxMinutes: -1 }, {}]
+  ];
+
+  it('resolveBlockConfig and resolveLimits are identical across variants', () => {
+    const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
+    for (const [entry, globals] of CASES) {
+      const block = ctxs.map(c => JSON.stringify(c.resolveBlockConfig(entry, globals)));
+      const limits = ctxs.map(c => JSON.stringify(c.resolveLimits(entry)));
+      expect(block[1], JSON.stringify({ entry, globals })).toBe(block[0]);
+      expect(block[2], JSON.stringify({ entry, globals })).toBe(block[0]);
+      expect(limits[1]).toBe(limits[0]);
+      expect(limits[2]).toBe(limits[0]);
+    }
+  });
+
+  it('normalizeLooseUntil is identical across variants', () => {
+    const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
+    for (const input of [undefined, null, '', 0, '0', '15', 15.6, -1, NaN, 'abc']) {
+      expect(ctxs[1].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
+      expect(ctxs[2].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
+    }
   });
 });
 

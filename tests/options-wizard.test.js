@@ -1,7 +1,7 @@
-// Guard for the setup wizard's weakest seam: options.js reaches into
+// Guard for the setup wizard's weakest seam: the settings page reaches into
 // options.html purely by string id, so a section that gets renamed or dropped
 // in the markup fails at runtime, not at load. That is exactly how the wizard
-// broke once before — options.js kept driving a `setup-step-provider` section
+// broke once before — the script kept driving a `setup-step-provider` section
 // that the markup no longer had, and reading a control off it threw before the
 // first step was ever shown, leaving a first-run user staring at whichever
 // section happened not to carry `hidden`.
@@ -9,12 +9,15 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { VARIANTS } from './load.js';
+import { VARIANTS, bundleForContext } from './load.js';
 
 const read = (variant, file) => fs.readFileSync(path.join(VARIANTS[variant], file), 'utf8');
 
 const html = read('chrome', 'options.html');
-const js = read('chrome', 'options.js');
+// Every script the page loads, not just options.js: the ids are looked up from
+// whichever of them owns that part of the UI, and a check that reads one file
+// silently stops covering the rest the moment the page grows a second.
+const js = bundleForContext('options');
 const css = read('chrome', 'options.css');
 
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]));

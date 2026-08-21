@@ -8,8 +8,15 @@ on:
     branches:
       - main
 
+# A second push to a PR makes the first run's answer irrelevant, and the macOS
+# leg is the expensive one to leave running for nothing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
+    name: Lint, test and validate
     runs-on: ubuntu-latest
 
     steps:
@@ -20,20 +27,42 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: npm
 
-      - name: Install dependencies and run tests
-        run: |
-          echo "Installing test dependencies..."
-          npm ci
-          echo "Running test suite..."
-          npm test
+      - name: Install dependencies
+        run: npm ci
+
+      # There is no bundler here: shared/ is a set of classic scripts loaded
+      # into four separate global scopes, each loading a different subset. The
+      # ESLint config derives each file's allowed globals from the shipped
+      # manifests, so this is what catches a call into a file the manifest
+      # does not load alongside you — a TypeError in the overlay otherwise.
+      - name: Lint
+        run: npm run lint
+
+      # With coverage, and with a floor under it. The extension source is
+      # evaluated in vm contexts rather than imported, so the numbers only
+      # exist because tests/load.js gives each file its own file: URL — see
+      # vitest.config.js for what is measured and why.
+      - name: Unit tests
+        run: npm run test:coverage
+
+      # Kept for the run where the number matters: the HTML report says which
+      # lines, which a percentage in a log does not.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
 
       - name: Validate JSON manifests
         run: |
-          echo "Validating Chrome manifest..."
-          jq empty "Intention Chrome/manifest.json"
-          echo "Validating Firefox manifest..."
-          jq empty "Intention Firefox/manifest.json"
+          for dir in "Intention Chrome" "Intention Firefox" "Intention Apple/Shared (Extension)/Resources"; do
+            echo "Validating $dir/manifest.json..."
+            jq empty "$dir/manifest.json"
+          done
 
       - name: Verify version sync across platforms
         run: |
@@ -62,47 +91,124 @@ jobs:
 
       - name: Check JS syntax
         run: |
-          echo "Checking Chrome JS files..."
-          find "Intention Chrome/" -name '*.js' -exec node --check {} +
-          echo "Checking Firefox JS files..."
-          find "Intention Firefox/" -name '*.js' -exec node --check {} +
+          for dir in "Intention Chrome" "Intention Firefox"; do
+            echo "Checking $dir JS files..."
+            find "$dir/" -name '*.js' -exec node --check {} +
+          done
 
       - name: Lint Firefox extension (AMO validation)
         run: npx web-ext lint --source-dir="Intention Firefox"
 
+      # Every file the manifests actually load, in every platform directory —
+      # read from the manifests rather than restated, so a script added to the
+      # extension is checked here without editing this workflow.
       - name: Verify file structure
-        run: |
-          REQUIRED_FILES=(
-            manifest.json
-            background.js
-            content.js
-            content.css
-            options.html
-            options.css
-            options.js
-            coaching.html
-            coaching.js
-            prompts.js
-            providers.js
-            tracking.js
-            billing.js
-          )
-
-          EXIT_CODE=0
-
-          for dir in "Intention Chrome" "Intention Firefox"; do
-            echo "Checking $dir/..."
-            for file in "${REQUIRED_FILES[@]}"; do
-              if [ ! -f "$dir/$file" ]; then
-                echo "  ✗ Missing: $dir/$file"
-                EXIT_CODE=1
-              else
-                echo "  ✓ Found: $dir/$file"
-              fi
-            done
-          done
-
-          exit $EXIT_CODE
+        run: node scripts/check-platform-files.mjs
 
       - name: Cross-platform sync check
         run: scripts/sync.sh --check
+
+  # The only end-to-end coverage of the overlay, the setup wizard and colour
+  # contrast — it drives a real Chromium with the extension loaded. It used to
+  # exist and never run, which is the same as not existing.
+  smoke:
+    name: Smoke tests (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-failure-artifacts
+          path: |
+            build/shots/**
+            tests/smoke/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ~2,700 lines of Kotlin, including Play Billing, used to be compiled for the
+  # first time by the publish workflow — i.e. after the release was cut. This
+  # is a debug build: it needs no keystore and no secrets.
+  android:
+    name: Android compiles
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug
+        run: |
+          cd "Intention Android"
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug
+
+  # ~2,500 lines of Swift, including StoreKit. Compile only: no signing, no
+  # provisioning profile, no secrets — CODE_SIGNING_ALLOWED=NO is what makes
+  # that possible on a runner with no certificates.
+  apple:
+    name: Apple compiles
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build macOS target
+        run: |
+          xcodebuild \
+            -project "Intention Apple/Intention Safari.xcodeproj" \
+            -scheme "Intention Safari (macOS)" \
+            -configuration Debug \
+            -derivedDataPath build/ci-macos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -quiet \
+            build
+
+      # The iOS app is where the Screen Time, Live Activity and StoreKit code
+      # lives, none of which the macOS target compiles.
+      - name: Build iOS target (simulator)
+        run: |
+          xcodebuild \
+            -project "Intention Apple/Intention Safari.xcodeproj" \
+            -scheme "Intention Safari (iOS)" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build/ci-ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            -quiet \
+            build

@@ -8,10 +8,8 @@
 // they assert *whether* the page was gated, never how it looks.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import vm from 'node:vm';
-import { VARIANTS, makeMockChrome } from './load.js';
+import { makeMockChrome, scriptsForContext, evaluateScripts } from './load.js';
 
 // A DOM stub: every node answers the handful of calls the overlay makes, and
 // records nothing but its own identity.
@@ -185,15 +183,15 @@ function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageConte
     fetch: async () => { throw new Error('offline'); }
   };
   sandbox.globalThis = sandbox;
-  const files = withPageContext
-    ? ['page_context.js', 'report.js', 'content.js']
-    : ['report.js', 'content.js'];
-  const source = files
-    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
-    .join('\n;\n');
-  const path = join(VARIANTS.chrome, 'content.js');
+  // The manifest's content-script list, minus page_context.js unless this test
+  // asked for it — so anything new the manifest starts injecting is loaded
+  // here too, rather than surfacing later as a bare ReferenceError.
+  const all = scriptsForContext('content');
   const context = vm.createContext(sandbox);
-  vm.runInContext(source, context, { filename: path });
+  // Top-level `let`s (matchedBlockConfig and friends) are read back by running
+  // more code in the context, not off the global object, so nothing is exposed.
+  evaluateScripts(context, withPageContext ? all : all.filter(f => f !== 'page_context.js'),
+    { expose: false });
   return { ...dom, chrome, observers, context };
 }
 
@@ -294,6 +292,71 @@ describe('when the background never answers', () => {
     });
     await vi.advanceTimersByTimeAsync(10000);
     expect(gated(dom)).toBe(true);
+  });
+
+  // The fail-safe has to reach the same verdict the background would have,
+  // from the same stored settings — that is the entire point of it. It used to
+  // do that through its own copy of the resolution; it now calls rules.js, and
+  // these are the cases that copy got to decide on its own and untested.
+  describe('and the rules have to be resolved without it', () => {
+    const gateWith = async (storage) => {
+      vi.useFakeTimers();
+      const dom = loadContent({
+        storage: { setupComplete: true, blockedDomains: ['instagram.com'], ...storage },
+        sendMessage: () => {}
+      });
+      await vi.advanceTimersByTimeAsync(10000);
+      return dom;
+    };
+
+    // What the overlay was handed is the verdict. `matchedBlockConfig` is a
+    // top-level `let`, which lives in the context's lexical scope rather than
+    // on its global object, so it has to be read by evaluating it there — and
+    // round-tripped, so the comparison is against plain host-realm values.
+    const config = (dom) =>
+      JSON.parse(vm.runInContext('JSON.stringify(matchedBlockConfig)', dom.context));
+
+    it('resolves the global settings when the site carries no override', async () => {
+      const dom = await gateWith({
+        blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25
+      });
+      expect(gated(dom)).toBe(true);
+      expect(config(dom)).toEqual({
+        mode: 'simple', behavior: 'hard', passMinutes: 25, looseUntilMinutes: null
+      });
+    });
+
+    it('lets a per-site override beat the global setting', async () => {
+      const dom = await gateWith({
+        blockingMode: 'coach',
+        domainLimits: { 'instagram.com': { mode: 'simple', passMinutes: 5 } }
+      });
+      expect(config(dom).mode).toBe('simple');
+      expect(config(dom).passMinutes).toBe(5);
+    });
+
+    it('falls back to the built-in defaults when nothing is configured', async () => {
+      const dom = await gateWith({});
+      expect(config(dom)).toEqual({
+        mode: 'coach', behavior: 'pass', passMinutes: 10, looseUntilMinutes: null
+      });
+    });
+
+    // The one that made the mirrors worth unifying: an unset lenient window
+    // must stay unset. Read as 0 it would mean "strict from the first minute".
+    it('reads an unset lenient window as no split, not as zero', async () => {
+      const dom = await gateWith({
+        domainLimits: { 'instagram.com': { mode: 'coach' } }
+      });
+      expect(config(dom).looseUntilMinutes).toBe(null);
+    });
+
+    it('carries a lenient window that was set', async () => {
+      const dom = await gateWith({
+        domainLimits: { 'instagram.com': { looseUntilMinutes: '20' } }
+      });
+      expect(config(dom).looseUntilMinutes).toBe(20);
+    });
   });
 
   it('retries before giving up on the background', async () => {

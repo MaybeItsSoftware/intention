@@ -8,7 +8,7 @@
 // consts back off that context's global object.
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, isAbsolute } from 'node:path';
 import vm from 'node:vm';
 
@@ -134,9 +134,12 @@ export function makeMockFetch(handler) {
 // declarations onto the context global).
 // `source` overrides reading from disk (used by loadBackground to evaluate
 // several files as one script); `file` then only names the vm frame.
+// `file` may be one filename or a list of them. A list is evaluated one script
+// at a time into the same context, the way the browser loads a page's <script>
+// tags: same shared global scope, but each file keeps its own identity — see
+// runScript for why that matters.
 export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGlobals = {}, source } = {}) {
-  const path = resolveSourcePath(file, variant);
-  const code = source !== undefined ? source : readFileSync(path, 'utf8');
+  const files = Array.isArray(file) ? file : [file];
 
   const sandbox = {
     chrome: chrome || makeMockChrome(),
@@ -167,24 +170,52 @@ export function loadSource(file, { variant = 'chrome', chrome, fetch, extraGloba
   sandbox.globalThis = sandbox;
   sandbox.self = sandbox;
 
-  // Top-level `function` and `var` declarations are hoisted onto the vm
-  // context's global object, but top-level `const`/`let` are NOT — they live
-  // in the script's lexical scope and vanish once the script finishes. The
-  // source files declare their consts (GRANT_TOOL, PROVIDERS, ...) with
-  // `const`, so we append (in the SAME script, where those bindings are still
-  // in lexical scope) an epilogue that copies every top-level declared name
-  // onto `globalThis`. We do NOT modify the source file on disk — this is
-  // string concatenation at load time only.
-  const declared = topLevelDeclaredNames(code);
+  const context = vm.createContext(sandbox);
+  if (source !== undefined) {
+    runScript(context, resolveSourcePath(files[0], variant), source);
+  } else {
+    evaluateScripts(context, files, { variant });
+  }
+  return context;
+}
+
+// Evaluate each file as its own script into an existing context, in order.
+// `expose: false` skips the globalThis epilogue below — for tests that read
+// their subject out of the context by running more code in it rather than off
+// the global object.
+export function evaluateScripts(context, files, { variant = 'chrome', expose = true } = {}) {
+  for (const file of files) {
+    const path = resolveSourcePath(file, variant);
+    runScript(context, path, readFileSync(path, 'utf8'), expose);
+  }
+  return context;
+}
+
+// One script, under its own name.
+//
+// That name has to be a file: URL. V8 records coverage per script keyed by it,
+// and the reporter drops anything it cannot resolve to a path — which is why
+// the whole extension read as 0% covered while seven hundred tests drove it.
+// Evaluating the files separately rather than as one concatenated string is
+// the other half: a bundle can only be attributed to one file, so everything
+// after the first would be counted against the wrong line numbers.
+//
+// The epilogue: top-level `function` and `var` declarations are hoisted onto
+// the vm context's global object, but top-level `const`/`let` are NOT — they
+// live in the script's lexical scope. The source files declare their consts
+// (GRANT_TOOL, PROVIDERS, ...) with `const`, so we append — in the SAME
+// script, where those bindings are still in scope — a copy of every top-level
+// declared name onto `globalThis`. It goes after the last line of the file so
+// it cannot shift the line numbers the coverage above is keyed to. We do NOT
+// modify the source file on disk.
+function runScript(context, path, code, expose = true) {
+  const declared = expose ? topLevelDeclaredNames(code) : [];
   const epilogue = declared.length
     ? `\n;(function(){${declared
         .map(n => `try{globalThis[${JSON.stringify(n)}]=${n}}catch(e){}`)
         .join('')}})();`
     : '';
-
-  const context = vm.createContext(sandbox);
-  vm.runInContext(code + epilogue, context, { filename: path });
-  return context;
+  vm.runInContext(code + epilogue, context, { filename: pathToFileURL(path).href });
 }
 
 // Find top-level (column-0) const/let/var/function declaration names so we can
@@ -198,9 +229,67 @@ function topLevelDeclaredNames(code) {
   return [...names];
 }
 
-// Convenience: load prompts.js for a variant.
-export function loadPrompts(opts = {}) {
-  return loadSource('prompts.js', opts);
+// ---------------------------------------------------------------------------
+// Which files load into which context
+// ---------------------------------------------------------------------------
+//
+// Read out of the shipped manifests and HTML rather than hand-listed here. The
+// lists used to be written out a third time in this file, so adding a shared
+// file to the extension left every vm context in the suite one script short —
+// the tests then failed on a ReferenceError that says nothing about the real
+// mistake. Derive them, and a script added to the manifest is a script the
+// tests load.
+//
+// Chrome's manifest names only `service_worker`, with the rest pulled in by
+// background.js's own importScripts() call; Firefox and Apple spell the whole
+// list out, and it is the same set, so the Firefox overlay is what gets read.
+export function scriptsForContext(context, variant = 'chrome') {
+  const dir = VARIANTS[variant] || VARIANTS.chrome;
+  if (context === 'content') {
+    const manifest = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
+    return manifest.content_scripts[0].js.slice();
+  }
+  if (context === 'background') {
+    const manifest = JSON.parse(
+      readFileSync(join(VARIANTS.firefox, 'manifest.json'), 'utf8')
+    );
+    return manifest.background.scripts.slice();
+  }
+  if (context === 'options' || context === 'coaching') {
+    const html = readFileSync(join(dir, `${context}.html`), 'utf8');
+    return [...html.matchAll(/<script\s+src="([^"]+)"/g)].map(m => m[1]);
+  }
+  throw new Error(`unknown script context: ${context}`);
+}
+
+// Read a context's scripts and join them into one source string, the way the
+// browser evaluates them into one shared global scope.
+//
+// `except` drops the files a given test's stubs cannot support — prefer it to
+// `only`, because it keeps picking up anything new the context starts loading.
+// `only` is there for the inverse case, where a test wants a deliberately
+// minimal context (the content tests run with and without page_context.js).
+export function filesForContext(context, { variant = 'chrome', only = null, except = null } = {}) {
+  let files = scriptsForContext(context, variant);
+  if (only) files = files.filter(f => only.includes(f));
+  if (except) files = files.filter(f => !except.includes(f));
+  return files;
+}
+
+// The same list, read and joined into one string. For tests that assert about
+// the source *text* — the ids the page looks up, the strings it must not
+// contain. To run a context, pass filesForContext() to loadSource or
+// evaluateScripts instead, so each file keeps its own identity.
+export function bundleForContext(context, opts = {}) {
+  const dir = VARIANTS[opts.variant] || VARIANTS.chrome;
+  return filesForContext(context, opts).map(f => readFileSync(join(dir, f), 'utf8')).join('\n;\n');
+}
+
+// Convenience: load prompts.js for a variant, over rules.js — the loose/strict
+// split reads its stored field through normalizeLooseUntil rather than parsing
+// it a second time, and every context that loads prompts.js loads rules.js too.
+export function loadPrompts({ variant = 'chrome', ...opts } = {}) {
+  return loadSource(['rules.js', 'prompts.js'], { variant, ...opts });
 }
 
 // Convenience: load tracking.js for a variant with seeded storage.
@@ -211,11 +300,11 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
   return { ctx, chrome };
 }
 
-// Convenience: load the whole background worker — sites.js, providers.js,
-// prompts.js, tracking.js and background.js — into ONE vm context, the way the
-// service worker (importScripts) and the native background WebViews (five
-// <script> tags) both load them. Concatenating is safe because no top-level
-// name is declared in more than one of the five.
+// Convenience: load the whole background worker — every script the manifest
+// lists for it — into ONE vm context, the way the service worker
+// (importScripts) and the native background WebViews (<script> tags) both load
+// them. Concatenating is safe because no top-level name is declared in more
+// than one of them.
 //
 // Returns { ctx, chrome, fetch, listeners } where `listeners` exposes the
 // handlers background.js registers, so tests can fire an alarm or a tab close
@@ -296,10 +385,6 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
     _sessionRules: sessionRules
   };
 
-  const sources = ['sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'background.js']
-    .map(f => readFileSync(resolveSourcePath(f, 'chrome'), 'utf8'))
-    .join('\n;\n');
-
   // `runtime.sendNativeMessage` exists only where a native host is listening —
   // the Safari Web Extension and the iOS/Android WebViews — and that is how the
   // shared background code tells it is running there. Answering nothing keeps
@@ -308,11 +393,10 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
     ? { browser: { runtime: { sendNativeMessage: async () => ({}) } } }
     : {};
 
-  const ctx = loadSource(join(VARIANTS.chrome, '__background_bundle__.js'), {
+  const ctx = loadSource(filesForContext('background'), {
     chrome,
     fetch: mockFetch,
-    extraGlobals,
-    source: sources
+    extraGlobals
   });
   return { ctx, chrome, fetch: mockFetch, listeners };
 }
@@ -327,14 +411,10 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
 export function loadBilling({ variant = 'chrome', fetch, window: win = {}, userAgent = 'Chrome/120' } = {}) {
   const mockFetch = fetch || makeMockFetch({});
   const navigator = { userAgent };
-  const sources = ['providers.js', 'billing.js']
-    .map(f => readFileSync(resolveSourcePath(f, variant), 'utf8'))
-    .join('\n;\n');
 
-  const ctx = loadSource(join(VARIANTS[variant], '__billing_bundle__.js'), {
+  const ctx = loadSource(['providers.js', 'billing.js'], {
     variant,
     fetch: mockFetch,
-    source: sources,
     extraGlobals: { window: { ...win, navigator }, navigator, document: undefined }
   });
   return { ctx, fetch: mockFetch };

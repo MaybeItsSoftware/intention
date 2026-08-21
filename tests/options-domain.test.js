@@ -10,10 +10,8 @@
 // pure string work and touch none of it.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import vm from 'node:vm';
-import { VARIANTS } from './load.js';
+import { evaluateScripts, filesForContext } from './load.js';
 
 let ctx;
 
@@ -28,13 +26,13 @@ beforeAll(() => {
     setTimeout, clearTimeout, URL, URLSearchParams, fetch: async () => ({ ok: false })
   };
   sandbox.globalThis = sandbox;
-  // Same order options.html loads them in — options.js resolves service groups
-  // through sites.js, so it has to be in scope.
-  const source = ['sites.js', 'providers.js', 'options.js']
-    .map(f => readFileSync(join(VARIANTS.chrome, f), 'utf8'))
-    .join('\n;\n');
+  // Same order options.html loads them in, read from the page itself.
+  // billing.js and report.js are dropped: neither is reachable from the
+  // pure string work under test, and both want a DOM this stub does not
+  // pretend to have. An exclusion rather than a list, so a script added to
+  // the page reaches these tests too.
   ctx = vm.createContext(sandbox);
-  vm.runInContext(source, ctx, { filename: join(VARIANTS.chrome, 'options.js') });
+  evaluateScripts(ctx, filesForContext('options', { except: ['billing.js', 'report.js'] }));
 });
 
 const normalize = (raw) => ctx.normalizeDomainInput(raw);

@@ -32,6 +32,8 @@
       "js": [
         "page_context.js",
         "report.js",
+        "rules.js",
+        "gate-ui.js",
         "content.js"
       ],
       "run_at": "document_start",
@@ -69,6 +71,7 @@
       "prompts.js",
       "tracking.js",
       "page_context.js",
+      "rules.js",
       "background.js"
     ],
     "persistent": false
