@@ -28,10 +28,14 @@ intention/
 │   └── Intention Safari.xcodeproj
 ├── server/                    # Hosted coach backend (receipt verification + LLM proxy)
 ├── .github/workflows/         # CI + Release + Publish workflows
+├── eslint.config.mjs          # Per-file globals, derived from the manifests (see below)
+├── scripts/script-contexts.mjs      # Which shared file loads into which context — the one
+│                                    #   reader of that, used by eslint AND the tests
+├── scripts/check-platform-files.mjs # Every file the manifests load exists everywhere
 ├── scripts/sync.sh            # Propagates shared/ to all platforms (--check verifies)
 ├── scripts/bump-version.sh    # Bumps version in shared/manifest.base.json + Xcode + Android
 ├── icon.svg / icon_glyph.svg  # Source icons
-├── package.json               # Dev-only: web-ext tooling for Firefox lint/build
+├── package.json               # Dev-only: eslint, vitest, playwright, web-ext
 ├── PRIVACY.md                 # Privacy policy (linked from store listings)
 ├── DEPLOYMENT.md              # Store submission guide (secrets, checklist, release flow)
 └── README.md
@@ -45,8 +49,15 @@ intention/
 | `background.js` | Service worker / background script — LLM calls, alarm management, grant logic. |
 | `content.js` | Content script — injects the overlay UI onto blocked pages. Contains a duplicate of `content.css` as an inline `OVERLAY_CSS` JS string constant. |
 | `content.css` | Overlay styles (also injected via manifest `content_scripts.css`). |
-| `options.html` / `options.css` / `options.js` | Settings page — provider config, blocklist, coaching. |
-| `coaching.html` / `coaching.js` | Standalone coaching chat page. Has **inline `<style>` block** that duplicates some overlay CSS. |
+| `options.html` / `options.css` / `options.js` | Settings page shell — tabs, modals, the settings view, stats. |
+| `options-wizard.js` | First-run setup: draft state, step order, per-service questions, the save that ends it. |
+| `options-rows.js` | The blocked-site / blocked-app row and every control on it. |
+| `options-coach.js` | The coach modal (rewriting "about you") and the settings gate. |
+| `options-lists.js` | Recommendation grids, app search, the wizard's own site/app lists. |
+| `options-access.js` | Coaching credit: purchase, restore, paywall. |
+| `coaching.html` / `coaching.js` | Standalone coaching chat page (Android, iOS, and the gate backstop). Has **inline `<style>` block** that duplicates some overlay CSS. |
+| `gate-ui.js` | The parts of the gate conversation both hosts share: message bubble, typing reveal, walk-away moment, stats strip. Loaded by the content script AND `coaching.html`. |
+| `rules.js` | Resolves a blocked target's rules (mode, behaviour, pass length, lenient window) — pure functions, loaded into **every** context. |
 | `prompts.js` | System prompt construction for the AI coach. |
 | `providers.js` | LLM provider adapters (Intention's hosted backend, Anthropic, OpenAI, Groq, Gemini) plus `entitlementIsActive()`. |
 | `billing.js` | Page-side In-App Purchase layer: store-bridge calls, backend verification, and the paywall renderer. Loaded by `options.html` and `coaching.html`, not by the background worker. |
@@ -85,7 +96,10 @@ Rules to keep that intact:
 - **No build system.** All files are loaded directly by the browser. Do not introduce bundlers, transpilers, or `package.json` unless explicitly asked.
 - **Vanilla JS only.** No frameworks, no TypeScript. Use `const`/`let`, template literals, and modern DOM APIs.
 - **Keep code clean, modular, and well-documented.** Follow existing patterns.
-- **CSS duplication awareness.** `content.js` contains a full copy of the overlay CSS as the `OVERLAY_CSS` string constant. `coaching.html` contains inline `<style>` blocks with similar styles. When modifying overlay styles, update **both** `content.css` and the `OVERLAY_CSS` constant in `content.js`, and check `coaching.html` inline styles.
+- **`npm run lint` before you finish.** ESLint derives each shared file's allowed globals from the manifests and pages, so `no-undef` is what catches a call into a file your context does not load — the failure mode this architecture makes easy and the browser only reports at runtime. A new shared file must be added to the manifest / page that loads it, or nothing can call it.
+- **Resolve a target's rules through `rules.js`, never inline.** Which mode applies to a site, and when the coach turns strict, was once written out in four files held together by "change one, change all three" comments. They had drifted. `tests/rules.test.js` now fails if a copy comes back.
+- **CSS duplication awareness.** `content.js` contains a full copy of the overlay CSS as the `OVERLAY_CSS` string constant. `coaching.html` contains inline `<style>` blocks with similar styles. When modifying overlay styles, update **both** `content.css` and the `OVERLAY_CSS` constant in `content.js`, and check `coaching.html` inline styles. `tests/parity.test.js` fails the build if the two copies drift.
+- **Shared gate UI.** The message bubble, typing reveal, walk-away moment and stats strip live in `gate-ui.js` and are used by both gate hosts. Change them there, not in `content.js` or `coaching.js` — parity.test.js fails if either redeclares one.
 
 ## Styling Conventions
 
@@ -94,6 +108,15 @@ Rules to keep that intact:
 - **Overlay isolation**: The content overlay uses `all: initial` on `#intention-root` and max `z-index` (`2147483647`) to avoid style leakage from host pages.
 - **Font loading in content scripts**: Arvo is dynamically injected into host pages via `<link>` elements in `injectOverlayStyle()` (with a guard to prevent duplicates).
 - **Options/coaching pages**: Load Arvo via `<link>` tags with `preconnect` hints in the HTML `<head>`.
+
+## Checking your work
+
+| Command | What it checks |
+|---------|----------------|
+| `npm run lint` | ESLint. `no-undef` is the load-bearing rule: each shared file's allowed globals come from the manifests and pages, so calling something the manifest does not load alongside you fails here rather than at runtime. |
+| `npm test` | The vitest suite (~730 tests, ~3s). |
+| `npm run test:smoke` | Playwright against a real Chromium with the extension loaded. Slower, and the only thing that catches a broken page load — run it after touching `content.js`, `coaching.js`, `options*.js` or a `<script>` list. |
+| `scripts/sync.sh --check` | Platform copies match `shared/`. |
 
 ## Building Locally
 
@@ -116,12 +139,22 @@ Run `npm install` once to get `web-ext` for Firefox linting (`npm run lint:firef
 ## CI/CD
 
 ### CI (`ci.yml`) — runs on push/PR to `main`
-1. Validates JSON manifests with `jq`
-2. Verifies Chrome/Firefox/Safari versions are in sync
-3. Checks JS syntax with `node --check`
-4. Verifies all required files exist in Chrome and Firefox directories
-5. Confirms cross-platform file sync (Chrome ↔ Firefox ↔ Apple)
+
+Four jobs, run in parallel.
+
+**`validate`**
+1. `npm run lint` — ESLint, with each shared file's globals derived from the manifests
+2. `npm test` — the vitest suite
+3. Validates JSON manifests with `jq`
+4. Verifies Chrome/Firefox/Safari/Android versions are in sync
+5. Checks JS syntax with `node --check`
 6. Runs `web-ext lint` against the Firefox extension (AMO validation)
+7. `scripts/check-platform-files.mjs` — every file the manifests load exists in all four platform directories
+8. Confirms cross-platform file sync (`scripts/sync.sh --check`)
+
+**`smoke`** — the Playwright suite (`npm run test:smoke`) against a real Chromium with the extension loaded. Screenshots are kept as artefacts on failure.
+
+**`android`** / **`apple`** — compile-only builds of the native apps, so a broken Kotlin or Swift change fails on the PR rather than in the publish workflow after a release is cut. Neither needs secrets: Android builds `assembleDebug`, Apple builds with `CODE_SIGNING_ALLOWED=NO`.
 
 ### Automated Release (`auto-release.yml`) — runs on push to `main`
 1. Analyzes Conventional Commits since the last tag to calculate the next SemVer version.
