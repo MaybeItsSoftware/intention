@@ -10,7 +10,6 @@
 // pure string work and touch none of it.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { VARIANTS, bundleForContext } from './load.js';

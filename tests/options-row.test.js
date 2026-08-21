@@ -15,7 +15,6 @@
 // what is being tested than a full jsdom would be.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadSource, VARIANTS, bundleForContext } from './load.js';
 

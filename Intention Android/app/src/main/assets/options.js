@@ -3033,13 +3033,13 @@ async function openCoachModal() {
   // conversation every time the modal reopens. Clear first so each open
   // really starts clean.
   sendBg({ action: 'clearChatHistory', historyKey: 'context' }).then(() => {
-    attemptCoachOpen(messagesEl);
+    attemptCoachOpen();
   });
 }
 
 // attemptCoachSend minus the user bubble: the coach speaks first. No
 // userMessage — the background records its own marker turn.
-async function attemptCoachOpen(messagesEl) {
+async function attemptCoachOpen() {
   const seq = ++coachRequestSeq;
   coachSending = true;
   const thinking = addCoachMsg('assistant', '…', true);
@@ -3205,7 +3205,7 @@ async function openGateModal({ changeType, domain, isApp, appLabel, currentValue
   // closeGateModal's transcript delete, so clear before the opener rather
   // than stacking onto an orphaned conversation.
   sendBg({ action: 'clearChatHistory', historyKey: `settings_gate:${changeType}:${domain || 'all'}` }).then(() => {
-    attemptGateOpen(messagesEl);
+    attemptGateOpen();
   });
 }
 
@@ -3237,7 +3237,7 @@ function gateOpenerFallback(changeType, domain) {
 
 // attemptGateSend minus the user bubble: the coach speaks first. No
 // userMessage — the background records its own marker turn.
-async function attemptGateOpen(messagesEl) {
+async function attemptGateOpen() {
   const seq = ++gateRequestSeq;
   gateSending = true;
   // gateChange can be nulled by closeGateModal while the request is in

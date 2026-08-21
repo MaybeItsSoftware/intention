@@ -396,8 +396,10 @@ async function applyBlockingRules() {
   }
 }
 
-// Session rules to temporarily allow a tab to visit a domain
-async function registerSessionRule(tabId, domain, minutes) {
+// Session rules to temporarily allow a tab to visit a domain. No duration:
+// a session rule has no TTL of its own, so the pass ending is what removes it
+// (removeSessionRule), not the clock.
+async function registerSessionRule(tabId, domain) {
   try {
     const ruleId = tabId;
     const addRules = [{
@@ -1770,7 +1772,7 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason 
   // Apps have no network rules to allow — the Android accessibility
   // service reads activeSessions directly to let the app through — and
   // neither do the native ports, which have no tab to scope a rule to.
-  if (!isApp && tabId != null) await registerSessionRule(tabId, domain, minutes);
+  if (!isApp && tabId != null) await registerSessionRule(tabId, domain);
   // Drops this domain's redirect rule for the life of the pass.
   if (!isApp) await syncBlockingRules();
   return session;
@@ -1852,11 +1854,7 @@ async function settleTabRule(tabId) {
     .map(key => activeSession(activeSessions[key]))
     .find(Boolean);
   if (stillLive) {
-    const remainingMinutes = Math.max(
-      1,
-      Math.ceil((stillLive.startTime + stillLive.intervalMinutes * 60000 - Date.now()) / 60000)
-    );
-    await registerSessionRule(tabId, stillLive.domain, remainingMinutes);
+    await registerSessionRule(tabId, stillLive.domain);
   } else {
     removeSessionRule(tabId);
   }

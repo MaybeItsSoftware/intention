@@ -49,6 +49,7 @@ env.txt
 
 # Android / Gradle
 .gradle/
+.kotlin/
 local.properties
 *.apk
 *.aab

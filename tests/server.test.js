@@ -86,7 +86,7 @@ describe('entitlement tokens', () => {
 
   it('rejects a tampered payload', () => {
     const token = signToken({ sub: 'abc' }, SECRET, 60_000);
-    const [prefix, payload, sig] = token.split('.');
+    const [prefix, , sig] = token.split('.');
     const forged = Buffer.from(JSON.stringify({ sub: 'someone-else', exp: Date.now() + 60_000 })).toString('base64url');
     expect(() => verifyToken(`${prefix}.${forged}.${sig}`, SECRET)).toThrow(/signature/i);
   });

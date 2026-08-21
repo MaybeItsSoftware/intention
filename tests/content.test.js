@@ -8,7 +8,6 @@
 // they assert *whether* the page was gated, never how it looks.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 import { VARIANTS, makeMockChrome, scriptsForContext, bundleForContext } from './load.js';
