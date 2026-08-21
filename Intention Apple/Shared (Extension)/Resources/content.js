@@ -891,63 +891,12 @@ function renderChatUI({ mode, domain, blockConfig }) {
   const sendBtn = document.getElementById("int-send");
   const closeBtn = document.getElementById("int-close");
 
-  // Fetch stats and render stats row
-  try {
-    chrome.runtime.sendMessage(
-      { action: "getStatsForDomain", domain },
-      (stats) => {
-        if (chrome.runtime.lastError) {
-          console.warn(
-            INT_LOG,
-            "getStatsForDomain lastError:",
-            chrome.runtime.lastError.message,
-          );
-          return;
-        }
-        if (stats) {
-          domainStats = stats;
-          const statsRow = document.getElementById("int-stats-row");
-          if (statsRow) {
-            statsRow.innerHTML = `
-            <div class="int-stat">
-              <div class="int-stat-value">${stats.minutesToday || 0}m</div>
-              <div class="int-stat-label">Today</div>
-            </div>
-            <div class="int-stat">
-              <div class="int-stat-value">${stats.minutesWeek || 0}m</div>
-              <div class="int-stat-label">Week</div>
-            </div>
-            <div class="int-stat">
-              <div class="int-stat-value">${stats.minutesYear || 0}m</div>
-              <div class="int-stat-label">Year</div>
-            </div>
-            <div class="int-stat">
-              <div class="int-stat-value">${stats.minutesAllTime || 0}m</div>
-              <div class="int-stat-label">All Time</div>
-            </div>
-            <div class="int-stat">
-              <div class="int-stat-value">${stats.walkedAwayWeek || 0}</div>
-              <div class="int-stat-label">Walked away (wk)</div>
-            </div>
-          `;
-            statsRow.style.display = "flex";
-          }
-        }
-      },
-    );
-  } catch (e) {
-    console.warn(INT_LOG, "getStatsForDomain message threw:", e);
-  }
+  loadStatsRow(domain, (stats) => { domainStats = stats; });
 
   let sending = false;
   // Only the most recent attemptSend's result is allowed to touch the DOM,
   // so a stale response after a timeout+retry can't double-render.
   let requestSeq = 0;
-  // Above providers.js's 30s per-request fetch timeout, so the background
-  // worker's own timeout/error classification wins the race — and above TWO
-  // of them, since a clamped grant makes a second honesty-turn call; giving
-  // up between the calls would orphan a pass that was actually granted.
-  const CHAT_TIMEOUT_MS = 75000;
 
   async function send() {
     const text = inputEl.value.trim();
@@ -1027,7 +976,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
       resp.assistantText || "(no reply)",
       () => {
         sending = false;
-        if (resp.systemNote) addSystemNote(resp.systemNote);
+        if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
         if (resp.grantedSession) {
           // The reveal above has already finished — just long enough to
           // register the grant line before the pass starts.
@@ -1035,16 +984,6 @@ function renderChatUI({ mode, domain, blockConfig }) {
         }
       },
     );
-  }
-
-  // Short user-facing note from the background (a clamped grant, a cap hit):
-  // machinery speaking, not the coach, so it renders as a centered aside.
-  function addSystemNote(text) {
-    const div = document.createElement("div");
-    div.className = "int-msg int-system";
-    div.textContent = text;
-    messagesEl.appendChild(div);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   // The hardcoded greetings the gate used to open with, kept as the offline
@@ -1116,7 +1055,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
       resp.assistantText || OPENER_FALLBACK,
       () => {
         sending = false;
-        if (resp.systemNote) addSystemNote(resp.systemNote);
+        if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
         if (resp.grantedSession) {
           setTimeout(() => window.location.reload(), 600);
         }
@@ -1184,7 +1123,7 @@ function renderChatUI({ mode, domain, blockConfig }) {
     showWalkAwayMoment(() => {
       chrome.runtime.sendMessage({ action: "closeCurrentTab" });
       window.close();
-    });
+    }, domainStats);
   });
   inputEl.focus();
 
@@ -1295,105 +1234,15 @@ function renderSimpleGateUI({ mode, domain, blockConfig }) {
     showWalkAwayMoment(() => {
       chrome.runtime.sendMessage({ action: "closeCurrentTab" });
       window.close();
-    });
+    }, domainStats);
   });
   actionsEl.appendChild(secondaryBtn);
-}
-
-function addMessage(container, role, text, isThinking) {
-  const div = document.createElement("div");
-  div.className =
-    `int-msg int-msg-${role}` + (isThinking ? " int-thinking" : "");
-  div.textContent = text;
-  container.appendChild(div);
-  container.scrollTop = container.scrollHeight;
-  // Press and hold anything the coach said to report it (report.js).
-  if (role === "assistant") attachReportPress(div);
-  return div;
 }
 
 // Today's stats for the gated domain, kept for showWalkAwayMoment below: the
 // walk-away line must render instantly, so it reads what was already fetched
 // at load rather than asking anything at close time.
 let domainStats = null;
-
-// Spoken at the moment of walking away. Deliberately not an LLM call and not
-// awaited on anything: the whole point of the moment is that it costs nothing
-// and leaves fast.
-const WALK_AWAY_LINES = [
-  "Closed. That is the whole game.",
-  "You looked at the urge and left. Strong.",
-  "Nothing here you needed. Well spotted.",
-  "That urge just lost one.",
-  "Walking away is the rep. You just did one.",
-];
-
-// A ~1s full-screen affirmation before the tab goes, skippable with a click
-// (same capture-phase idiom as typeMessage). onDone fires exactly once,
-// whether the timer or the skip gets there first.
-function showWalkAwayMoment(onDone) {
-  const overlay = document.createElement("div");
-  overlay.className = "int-walkaway";
-  // +1 for the walk-away just recorded: domainStats was fetched at load,
-  // before this one happened.
-  const weekCount = ((domainStats?.walkedAwayWeek) || 0) + 1;
-  overlay.textContent = weekCount >= 2
-    ? `That's ${weekCount} times this week you've walked away. That streak is the real work.`
-    : WALK_AWAY_LINES[Math.floor(Math.random() * WALK_AWAY_LINES.length)];
-  // Inside the overlay root so the injected styles and Arvo reach it; the
-  // page body is a fallback that at worst shows an unstyled line.
-  const root = document.getElementById("intention-root");
-  (root || document.body).appendChild(overlay);
-
-  let finished = false;
-  function finish() {
-    if (finished) return;
-    finished = true;
-    clearTimeout(timer);
-    document.removeEventListener("click", skip, true);
-    onDone();
-  }
-  function skip() {
-    finish();
-  }
-
-  const timer = setTimeout(finish, 950);
-  document.addEventListener("click", skip, true);
-}
-
-// Reveal `text` into `el` a few characters at a time. Clicking anywhere skips
-// to the full text. `onDone` fires exactly once when the reveal completes.
-function typeMessage(el, container, text, onDone) {
-  el.textContent = "";
-  let i = 0;
-  let finished = false;
-  // Reveal the whole message in ~290ms (24 steps × 12ms) regardless of
-  // length — the old 2.5s length-independent crawl was self-inflicted
-  // latency at the impulse moment.
-  const step = Math.max(1, Math.ceil(text.length / 24));
-
-  function finish() {
-    if (finished) return;
-    finished = true;
-    clearInterval(timer);
-    el.textContent = text;
-    if (container) container.scrollTop = container.scrollHeight;
-    document.removeEventListener("click", skip, true);
-    if (onDone) onDone();
-  }
-  function skip() {
-    finish();
-  }
-
-  const timer = setInterval(() => {
-    i += step;
-    el.textContent = text.slice(0, i);
-    if (container) container.scrollTop = container.scrollHeight;
-    if (i >= text.length) finish();
-  }, 12);
-
-  document.addEventListener("click", skip, true);
-}
 
 // Tears down whatever the running badge left behind: its ticking timer, its
 // re-attach observer and the node itself. Stored module-side because the
