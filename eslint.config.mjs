@@ -82,6 +82,8 @@ export default [
     ignores: [
       'node_modules/**',
       'build/**',
+      // istanbul's own report assets, rewritten on every coverage run.
+      'coverage/**',
       // Generated copies of shared/ — linting them would report every finding
       // four times, and sync.sh --check already guarantees they match.
       'Intention Chrome/**',

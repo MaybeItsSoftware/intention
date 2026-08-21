@@ -16,7 +16,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadSource, loadBackground, bundleForContext, VARIANTS, REPO_ROOT } from './load.js';
+import { loadSource, loadBackground, filesForContext, VARIANTS, REPO_ROOT } from './load.js';
 
 let R;
 beforeAll(() => {
@@ -215,10 +215,9 @@ describe('every context resolves a target the same way', () => {
   // The options page: given a limits entry it is already rendering a row for.
   let optionsCtx;
   beforeAll(() => {
-    optionsCtx = loadSource(join(VARIANTS.chrome, '__options_bundle__.js'), {
-      source: bundleForContext('options', {
-        only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
-      }),
+    optionsCtx = loadSource(filesForContext('options', {
+      only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
+    }), {
       extraGlobals: {
         document: { addEventListener() {}, getElementById: () => null },
         window: {},

@@ -8,9 +8,8 @@
 // they assert *whether* the page was gated, never how it looks.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { join } from 'node:path';
 import vm from 'node:vm';
-import { VARIANTS, makeMockChrome, scriptsForContext, bundleForContext } from './load.js';
+import { makeMockChrome, scriptsForContext, evaluateScripts } from './load.js';
 
 // A DOM stub: every node answers the handful of calls the overlay makes, and
 // records nothing but its own identity.
@@ -188,12 +187,11 @@ function loadContent({ storage = {}, sendMessage, dom: domOptions, withPageConte
   // asked for it — so anything new the manifest starts injecting is loaded
   // here too, rather than surfacing later as a bare ReferenceError.
   const all = scriptsForContext('content');
-  const source = bundleForContext('content', {
-    only: withPageContext ? all : all.filter(f => f !== 'page_context.js')
-  });
-  const path = join(VARIANTS.chrome, 'content.js');
   const context = vm.createContext(sandbox);
-  vm.runInContext(source, context, { filename: path });
+  // Top-level `let`s (matchedBlockConfig and friends) are read back by running
+  // more code in the context, not off the global object, so nothing is exposed.
+  evaluateScripts(context, withPageContext ? all : all.filter(f => f !== 'page_context.js'),
+    { expose: false });
   return { ...dom, chrome, observers, context };
 }
 

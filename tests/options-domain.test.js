@@ -10,9 +10,8 @@
 // pure string work and touch none of it.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { join } from 'node:path';
 import vm from 'node:vm';
-import { VARIANTS, bundleForContext } from './load.js';
+import { evaluateScripts, filesForContext } from './load.js';
 
 let ctx;
 
@@ -32,9 +31,8 @@ beforeAll(() => {
   // pure string work under test, and both want a DOM this stub does not
   // pretend to have. An exclusion rather than a list, so a script added to
   // the page reaches these tests too.
-  const source = bundleForContext('options', { except: ['billing.js', 'report.js'] });
   ctx = vm.createContext(sandbox);
-  vm.runInContext(source, ctx, { filename: join(VARIANTS.chrome, 'options.js') });
+  evaluateScripts(ctx, filesForContext('options', { except: ['billing.js', 'report.js'] }));
 });
 
 const normalize = (raw) => ctx.normalizeDomainInput(raw);

@@ -24,18 +24,41 @@ source file and evaluates it inside a `node:vm` context with injected mocks for
 resulting functions/consts back off the context. See `loadPrompts`,
 `loadTracking`, `loadProviders`, `makeMockChrome`, `makeMockFetch`.
 
-`loadBackground` is the exception to one-file-per-context: it evaluates
-`providers.js` + `prompts.js` + `tracking.js` + `background.js` together, the
-way the service worker (`importScripts`) and the native background WebViews
-(four `<script>` tags) both load them, and hands back the registered alarm and
-tab-removal listeners so tests can fire them like the browser would.
+A context that loads more than one file — `loadBackground`, `loadPrompts`,
+`loadBilling`, and the options/content loaders — gets each file evaluated as
+its **own** script into the **same** context, which is exactly what the browser
+does with `importScripts` and a page's `<script>` tags: one shared global
+scope, but every file keeps its own identity. `filesForContext(context)` reads
+that list out of the shipped manifest or HTML, and `evaluateScripts` runs it.
+(`bundleForContext` still joins the same files into one string, for the tests
+that assert about the source *text* rather than running it.)
+
+Each script is evaluated under its real path as a `file:` URL, because that is
+what V8 keys coverage to — see "Coverage" below.
+
+`loadBackground` also hands back the registered alarm and tab-removal listeners
+so tests can fire them like the browser would.
 
 ## Running tests
 
 ```bash
-npm test          # vitest run (one-shot)
+npm test           # vitest run (one-shot)
 npm run test:watch # vitest watch mode
+npm run test:coverage # with coverage, and the thresholds enforced
 ```
+
+## Coverage
+
+`vitest.config.js` holds the setup and the reasoning. The short version: the
+source is evaluated in `vm` contexts rather than imported, so it only appears
+in the report because every script is run under its own `file:` URL — with a
+bare path (or as one concatenated bundle) V8's records cannot be resolved back
+to a file, and the whole extension reads as 0% covered while the suite drives
+it. What is measured is `Intention Chrome/*.js` (the variant the tests run,
+byte-identical to `shared/`) plus `server/src`. Thresholds are a floor set just
+under the current number; raise them when it rises.
+
+`npm run test:coverage` writes a browsable report to `coverage/index.html`.
 
 Test files:
 
@@ -57,6 +80,11 @@ Test files:
 - `server.test.js` — the backend (`server/`): entitlement tokens, the verify/
   refresh/redeem routes, the daily quota, and the coaching proxy's validation.
   Store verification is injected, so it needs no network or credentials.
+- `gate-conversation.test.js` — `gate-ui.js`'s `createGateConversation`: the
+  loop both gate hosts run. What the user sees when a reply lands, fails,
+  times out, comes back locked, or is superseded by a newer one. The two hosts
+  differ only in the `host` object they pass in, which is the seam these tests
+  drive.
 - `parity.test.js` — loads `prompts.js` and `tracking.js` from **all three**
   variant directories and asserts identical behavior (a sync guard on top of
   the byte-diff check in CI/build).
@@ -158,6 +186,8 @@ shipping prompt or gating changes.
 
 ## CI
 
-`.github/workflows/ci.yml` runs `npm ci && npm test` before the JSON/JS/sync
-validation. `build.sh` also runs `npm test` in its preflight when Node and
-`node_modules` are available.
+`.github/workflows/ci.yml` runs `npm ci`, `npm run lint` and
+`npm run test:coverage` before the JSON/JS/sync validation, then the Playwright
+smoke suite and the Android/Apple compiles in their own jobs. The coverage
+report is kept as a build artefact. `build.sh` also runs `npm test` in its
+preflight when Node and `node_modules` are available.

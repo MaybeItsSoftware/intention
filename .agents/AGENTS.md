@@ -29,6 +29,7 @@ intention/
 ├── server/                    # Hosted coach backend (receipt verification + LLM proxy)
 ├── .github/workflows/         # CI + Release + Publish workflows
 ├── eslint.config.mjs          # Per-file globals, derived from the manifests (see below)
+├── vitest.config.js           # Coverage: what is measured, why, and the floor under it
 ├── scripts/script-contexts.mjs      # Which shared file loads into which context — the one
 │                                    #   reader of that, used by eslint AND the tests
 ├── scripts/check-platform-files.mjs # Every file the manifests load exists everywhere
@@ -116,6 +117,7 @@ Rules to keep that intact:
 |---------|----------------|
 | `npm run lint` | ESLint. `no-undef` is the load-bearing rule: each shared file's allowed globals come from the manifests and pages, so calling something the manifest does not load alongside you fails here rather than at runtime. |
 | `npm test` | The vitest suite (~750 tests, ~3s). |
+| `npm run test:coverage` | The same suite with coverage, and a floor under it. The source is evaluated in `vm` contexts rather than imported, so it is only measurable because `tests/load.js` runs each file under its own `file:` URL — see `vitest.config.js`. Report at `coverage/index.html`. |
 | `npm run test:smoke` | Playwright against a real Chromium with the extension loaded. Slower, and the only thing that catches a broken page load — run it after touching `content.js`, `coaching.js`, `options*.js` or a `<script>` list. |
 | `scripts/sync.sh --check` | Platform copies match `shared/`. |
 
@@ -145,7 +147,7 @@ Four jobs, run in parallel.
 
 **`validate`**
 1. `npm run lint` — ESLint, with each shared file's globals derived from the manifests
-2. `npm test` — the vitest suite
+2. `npm run test:coverage` — the vitest suite, with the coverage thresholds enforced and the report kept as an artefact
 3. Validates JSON manifests with `jq`
 4. Verifies Chrome/Firefox/Safari/Android versions are in sync
 5. Checks JS syntax with `node --check`

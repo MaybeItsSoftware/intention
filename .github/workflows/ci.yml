@@ -40,8 +40,22 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # With coverage, and with a floor under it. The extension source is
+      # evaluated in vm contexts rather than imported, so the numbers only
+      # exist because tests/load.js gives each file its own file: URL — see
+      # vitest.config.js for what is measured and why.
       - name: Unit tests
-        run: npm test
+        run: npm run test:coverage
+
+      # Kept for the run where the number matters: the HTML report says which
+      # lines, which a percentage in a log does not.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
 
       - name: Validate JSON manifests
         run: |

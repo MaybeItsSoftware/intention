@@ -72,3 +72,6 @@ Intention Apple/ExportOptions-ios.plist
 Intention Apple/ExportOptions-ios-dev.plist
 Intention Apple/ExportOptions-macos.plist
 Intention Apple/ExportOptions-macos-local.plist
+
+# Coverage (vitest)
+coverage/

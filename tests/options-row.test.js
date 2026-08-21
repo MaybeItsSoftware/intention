@@ -15,8 +15,7 @@
 // what is being tested than a full jsdom would be.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { join } from 'node:path';
-import { loadSource, VARIANTS, bundleForContext } from './load.js';
+import { loadSource, filesForContext } from './load.js';
 
 // ---- The DOM shim ---------------------------------------------------------
 
@@ -109,11 +108,8 @@ function load() {
   // touch (billing.js needs a paywall DOM, report.js a real event loop).
   // Stated as an exclusion, so a script added to the page reaches these
   // tests without anybody remembering to add it here.
-  const source = bundleForContext('options', { except: ['billing.js', 'report.js'] });
-
-  ctx = loadSource(join(VARIANTS.chrome, '__options_bundle__.js'), {
+  ctx = loadSource(filesForContext('options', { except: ['billing.js', 'report.js'] }), {
     chrome,
-    source,
     extraGlobals: {
       document,
       window: {},
