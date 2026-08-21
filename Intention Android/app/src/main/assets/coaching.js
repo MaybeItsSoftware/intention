@@ -190,6 +190,22 @@ async function showPaywall() {
       const entitlement = await redeemAccessCode(code, config?.backendUrl);
       if (!entitlementIsActive(entitlement)) throw new Error("That code isn't active.");
       await afterUnlock(entitlement);
+    },
+    // A store-issued code (App Store promo / Play promo), redeemed through
+    // the store's own sheet — a different thing from onRedeem's access code,
+    // which only moves an existing balance to a browser. This one grants.
+    onRedeemStoreCode: async () => {
+      const result = await redeemStoreCode();
+      if (!result || result.status === 'cancelled') return;
+      if (result.status !== 'purchased') {
+        throw new Error(result.error || "That code didn't unlock anything.");
+      }
+      const entitlement = await verifyPurchase({
+        platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
+        receipt: result.receipt,
+        backendUrl: config?.backendUrl
+      });
+      await afterUnlock(entitlement);
     }
   });
 }

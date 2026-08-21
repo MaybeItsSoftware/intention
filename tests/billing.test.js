@@ -188,6 +188,37 @@ describe('verifyPurchase', () => {
     expect(entitlement.receipt).toBe('jws');
   });
 
+  // Store-issued promo codes are redeemed outside the app's purchase flow, so
+  // their transaction carries no account token and the backend has nothing to
+  // credit. The client asserts its own on every store verify to cover that.
+  it('asserts the device account token on store builds', async () => {
+    const fetch = makeMockFetch({ active: true, token: 'tok' });
+    const win = bridge();
+    win.intentionBilling.accountToken = (cb) => cb({ token: 'uuid-from-keychain' });
+    const { ctx } = loadBilling({ fetch, window: win, userAgent: SAFARI_UA });
+    await ctx.verifyPurchase({ platform: 'apple', receipt: 'jws' });
+    expect(JSON.parse(fetch.calls[0].init.body)).toEqual({
+      platform: 'apple', receipt: 'jws', accountToken: 'uuid-from-keychain'
+    });
+  });
+
+  // A browser has no bridge to ask, and no store code to redeem either.
+  it('sends no account token on browser builds', async () => {
+    const fetch = makeMockFetch({ active: true, token: 'tok' });
+    const { ctx } = loadBilling({ fetch, userAgent: CHROME_UA });
+    await ctx.verifyPurchase({ platform: 'apple', receipt: 'jws' });
+    expect(JSON.parse(fetch.calls[0].init.body)).toEqual({ platform: 'apple', receipt: 'jws' });
+  });
+
+  // An app built against an older bridge has no accountToken action. A bought
+  // purchase must still verify — only a redemption actually needs the token.
+  it('still verifies when the bridge has no accountToken action', async () => {
+    const fetch = makeMockFetch({ active: true, token: 'tok' });
+    const { ctx } = loadBilling({ fetch, window: bridge(), userAgent: SAFARI_UA });
+    await ctx.verifyPurchase({ platform: 'apple', receipt: 'jws' });
+    expect(JSON.parse(fetch.calls[0].init.body)).toEqual({ platform: 'apple', receipt: 'jws' });
+  });
+
   it('honours a backend override', async () => {
     const fetch = makeMockFetch({ active: true, token: 't' });
     const { ctx } = loadBilling({ fetch });

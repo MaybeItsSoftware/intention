@@ -76,6 +76,12 @@
     restore: function(callback) {
       AndroidInterface.billingRestore(window.AndroidCallbacks.register(callback));
     },
+    redeem: function(callback) {
+      AndroidInterface.billingRedeem(window.AndroidCallbacks.register(callback));
+    },
+    accountToken: function(callback) {
+      AndroidInterface.billingAccountToken(window.AndroidCallbacks.register(callback));
+    },
     status: function(callback) {
       AndroidInterface.billingStatus(window.AndroidCallbacks.register(callback));
     },

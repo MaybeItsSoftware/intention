@@ -50,7 +50,7 @@ npm start               # or: npm run dev
 | Route | Auth | Purpose |
 |-------|------|---------|
 | `GET /health` | — | Liveness |
-| `POST /v1/entitlement/verify` | — | `{ platform, receipt }` → credits the top-up (once), returns entitlement + token |
+| `POST /v1/entitlement/verify` | — | `{ platform, receipt, accountToken? }` → credits the top-up (once), returns entitlement + token |
 | `POST /v1/entitlement/refresh` | — | `{ token }` → re-checked token, live balance (never re-grants) |
 | `POST /v1/entitlement/code` | Bearer | Mint a one-time code linking a browser to this account's balance |
 | `POST /v1/entitlement/redeem` | — | `{ code }` → entitlement + token, live balance |
@@ -90,6 +90,30 @@ balance into the token count shown on the paywall.
 
 `INTENTION_ALLOW_UNVERIFIED_RECEIPTS=1` skips store verification for local work.
 It is ignored unless `NODE_ENV=development`, and it is logged loudly at boot.
+
+## Giving a tester credit
+
+Promo codes, minted in the stores' own consoles, are the supported way to put
+real credit on a real account without money changing hands — they work against
+production, unlike the `INTENTION_ALLOW_TEST_PURCHASES` / `APPLE_ENVIRONMENT`
+escape hatches, which exist only for dev and staging deployments.
+
+- **App Store Connect** → your app → *Promo Codes*, or the in-app purchase's
+  own promo code section. The tester redeems in the app (Settings → AI access →
+  *Redeem a code*, which presents Apple's own sheet) or in the App Store app.
+- **Play Console** → *Monetise* → *Promotions* → one-time product promo codes.
+  The tester taps *Redeem a code*, which hands off to the Play Store, and the
+  granted purchase is picked up when they come back.
+
+Both land as an ordinary consumable purchase and credit the matching top-up
+tier, so a code against `intention1pound` is worth exactly what a bought £1
+top-up is worth (face value less commission and skim).
+
+One wrinkle worth knowing: a redeemed code never goes through the app's own
+purchase flow, so its transaction carries no `appAccountToken` /
+`obfuscatedExternalAccountId` to key a balance by. The client sends its own
+device-local UUID as `accountToken` on every verify to cover that; the store's
+own token always wins when there is one, so a real sale can't be re-pointed.
 
 ## State
 

@@ -175,10 +175,39 @@ async function verifyEndpoint(body, deps, backing) {
     return json(400, { error: `Unknown platform: ${platform}`, code: 'bad_request' });
   }
 
-  const accountToken = platform === 'apple' ? result.appAccountToken : result.obfuscatedExternalAccountId;
+  // A promo code is redeemed in the App Store / Play Store, outside this app's
+  // own purchase flow, so its transaction carries no account token to key a
+  // balance by. For those — and only those — the client asserts the same
+  // device-local UUID its real purchases are already keyed by, so a tester's
+  // promo credit lands in the very same balance as anything they later buy.
+  //
+  // Strictly a fallback: whenever the store gave us a token that one wins, so
+  // a tampered client can never re-point a real sale at a subject of its
+  // choosing. The residual risk is narrow and deliberate — someone who already
+  // knew another person's account UUID could direct a promo grant at their
+  // balance, which adds credit rather than taking it.
+  const storeToken = platform === 'apple' ? result.appAccountToken : result.obfuscatedExternalAccountId;
+  const accountToken = storeToken || (result.isPromo ? assertedAccountToken(body?.accountToken) : '');
+  if (!accountToken) {
+    return json(400, {
+      error: 'A redeemed code needs an account token to credit.',
+      code: 'account_token_required'
+    });
+  }
   const subject = subjectFor(platform, accountToken);
   await creditTopUp(platform, subject, result, backing, deps);
   return json(200, entitlementResponse(subject, platform, result.productId, backing));
+}
+
+// Both clients key a balance by a UUID they generate once and keep (Keychain
+// on Apple, SharedPreferences on Android). Shape-checked and bounded rather
+// than taken as-is, so the subject hash can never be fed an oversized or
+// structured value by a client that made one up.
+const ACCOUNT_TOKEN_RE = /^[A-Za-z0-9-]{8,64}$/;
+
+function assertedAccountToken(value) {
+  const token = String(value || '').trim();
+  return ACCOUNT_TOKEN_RE.test(token) ? token : '';
 }
 
 // A refresh only proves the token is still valid and reports the current

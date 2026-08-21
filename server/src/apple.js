@@ -193,7 +193,20 @@ export async function verifyAppleReceipt(jws) {
     appAccountToken = info.appAccountToken || appAccountToken;
   }
 
-  if (!appAccountToken) throw new VerificationError('receipt has no linked account token');
-
-  return { productId, creditId: transactionId, appAccountToken };
+  // Every purchase this app starts passes .appAccountToken (see
+  // IntentionStore.purchase), so a fully verified transaction *without* one
+  // cannot have come from our own purchase flow — it was redeemed against an
+  // App Store promo code. For a consumable that absence is the only
+  // discriminator StoreKit offers, since offerType/offerDiscountType are
+  // subscription-only fields, and it is a sound one: the transaction is still
+  // Apple-signed, bundle-checked, environment-checked, refund-checked and
+  // credited exactly once by transaction id. The client asserts its own
+  // account token for these (see verifyEndpoint in app.js), which is what
+  // gives the grant a balance to land in.
+  return {
+    productId,
+    creditId: transactionId,
+    appAccountToken,
+    isPromo: !appAccountToken
+  };
 }

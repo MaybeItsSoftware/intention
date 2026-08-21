@@ -101,6 +101,8 @@
     products: function(callback) { billingCall('products', null, callback); },
     purchase: function(productId, callback) { billingCall('purchase', { productId: productId }, callback); },
     restore: function(callback) { billingCall('restore', null, callback); },
+    redeem: function(callback) { billingCall('redeem', null, callback); },
+    accountToken: function(callback) { billingCall('accountToken', null, callback); },
     status: function(callback) { billingCall('status', null, callback); },
     manage: function(callback) { billingCall('manage', null, callback); }
   };

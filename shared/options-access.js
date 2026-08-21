@@ -105,6 +105,22 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       await rerender();
       await onAccessChanged();
     },
+    // A store-issued code (App Store promo / Play promo), redeemed through
+    // the store's own sheet — a different thing from onRedeem's access code,
+    // which only moves an existing balance to a browser. This one grants.
+    onRedeemStoreCode: async () => {
+      const result = await redeemStoreCode();
+      if (!result || result.status === 'cancelled') return;
+      if (result.status === 'none') {
+        throw new Error('No redeemed code was found. If you have just redeemed one, give it a moment and try again.');
+      }
+      if (result.status !== 'purchased') {
+        throw new Error(result.error || "That code didn't unlock anything.");
+      }
+      await verifyAndStore(result.platform || storePlatform(), result.receipt);
+      await rerender();
+      await onAccessChanged();
+    },
     onLinkBrowser: async () => {
       const backendUrl = await currentBackendUrl();
       return requestAccessCode(entitlement, backendUrl);

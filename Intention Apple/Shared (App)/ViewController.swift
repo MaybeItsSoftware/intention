@@ -544,6 +544,16 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
                 let result = await store.restore()
                 self.invokeBridgeCallback(callbackId, result: result)
             }
+        case "redeem":
+            Task {
+                let result = await store.redeem()
+                self.invokeBridgeCallback(callbackId, result: result)
+            }
+        case "accountToken":
+            Task {
+                let result = await store.accountToken()
+                self.invokeBridgeCallback(callbackId, result: result)
+            }
         case "status":
             Task {
                 let result = await store.status()

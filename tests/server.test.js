@@ -152,6 +152,72 @@ describe('POST /v1/entitlement/verify', () => {
     expect(refreshed.body.token).not.toBe('');
   });
 
+  // ---- Promo code redemptions -------------------------------------------
+  //
+  // These arrive with no store-supplied account token (they never went
+  // through the app's own purchase flow), so the client asserts the same
+  // device-local UUID its real purchases are keyed by.
+
+  const applePromo = { ...appleResult, appAccountToken: '', isPromo: true };
+
+  it('credits a redeemed code against the account token the client asserts', async () => {
+    const d = deps({ verifyApple: async () => applePromo });
+    const res = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws', accountToken: 'acct-apple-1' }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.active).toBe(true);
+    expect(res.body.balanceMicros).toBe(CREDIT1);
+    // Lands in the same balance the client's own purchases would.
+    expect(getBalanceMicros(subjectFor('apple', 'acct-apple-1'), d.store)).toBe(CREDIT1);
+  });
+
+  it('refuses a redeemed code with no account token to credit', async () => {
+    const res = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws' }, {}, deps({ verifyApple: async () => applePromo }));
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('account_token_required');
+  });
+
+  it('refuses a redeemed code whose asserted token is not a plausible one', async () => {
+    for (const accountToken of ['', 'short', 'has spaces in it', 'x'.repeat(65), { sub: 'nope' }]) {
+      const res = await post('/v1/entitlement/verify',
+        { platform: 'apple', receipt: 'jws', accountToken }, {}, deps({ verifyApple: async () => applePromo }));
+      expect(res.status).toBe(400);
+    }
+  });
+
+  // The whole point of the fallback being a fallback: a tampered client must
+  // not be able to re-point a real, store-attested sale at a subject of its
+  // choosing.
+  it('ignores an asserted account token when the store supplied its own', async () => {
+    const d = deps();
+    const res = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws', accountToken: 'acct-someone-else' }, {}, d);
+    expect(res.status).toBe(200);
+    expect(getBalanceMicros(subjectFor('apple', 'acct-apple-1'), d.store)).toBe(CREDIT1);
+    expect(getBalanceMicros(subjectFor('apple', 'acct-someone-else'), d.store)).toBe(0);
+  });
+
+  it('credits a redeemed Play code the same way', async () => {
+    const d = deps({
+      verifyGoogle: async () => ({ ...googleResult, obfuscatedExternalAccountId: '', isPromo: true })
+    });
+    const res = await post('/v1/entitlement/verify',
+      { platform: 'google', receipt: { purchaseToken: 'pt' }, accountToken: 'acct-google-1' }, {}, d);
+    expect(res.status).toBe(200);
+    expect(getBalanceMicros(subjectFor('google', 'acct-google-1'), d.store)).toBe(creditMicrosForTopUp('google', 1));
+  });
+
+  // A redemption is still one grant: re-verifying the same receipt (which the
+  // JS layer does on every launch) must not top the balance up again.
+  it('credits a redeemed code exactly once', async () => {
+    const d = deps({ verifyApple: async () => applePromo });
+    const body = { platform: 'apple', receipt: 'jws', accountToken: 'acct-apple-1' };
+    await post('/v1/entitlement/verify', body, {}, d);
+    const res = await post('/v1/entitlement/verify', body, {}, d);
+    expect(res.body.balanceMicros).toBe(CREDIT1);
+  });
+
   it('rejects an unknown platform', async () => {
     const res = await post('/v1/entitlement/verify', { platform: 'nintendo', receipt: 'x' });
     expect(res.status).toBe(400);
@@ -358,7 +424,8 @@ describe('Apple transaction info (consumable verification)', () => {
     expect(result).toEqual({
       productId: 'uk.co.maybeitssoftware.intention.coach.credit1',
       creditId: 'txn-100',
-      appAccountToken: 'acct-100'
+      appAccountToken: 'acct-100',
+      isPromo: false
     });
   });
 
@@ -378,10 +445,17 @@ describe('Apple transaction info (consumable verification)', () => {
       .rejects.toThrow(/refunded/);
   });
 
-  it('rejects a purchase with no linked account token', async () => {
+  // Every purchase the app itself starts passes .appAccountToken, so a
+  // verified transaction without one can only have been redeemed against an
+  // App Store promo code. That absence is the discriminator — the transaction
+  // stays fully checked, it just needs the client to say whose balance it is.
+  it('reads a transaction with no linked account token as a promo redemption', async () => {
     const payload = basePayload();
     delete payload.appAccountToken;
-    await expect(verifyAppleReceipt(fakeJWS(payload))).rejects.toThrow(/account token/);
+    const result = await verifyAppleReceipt(fakeJWS(payload));
+    expect(result.isPromo).toBe(true);
+    expect(result.appAccountToken).toBe('');
+    expect(result.creditId).toBe('txn-100');
   });
 
   // Sandbox transactions chain to the same pinned Apple roots, so a free
@@ -416,15 +490,27 @@ describe('Google product purchase verification', () => {
       .rejects.toThrow(/purchase token/);
   });
 
-  // The Play record's purchaseType is only present for licence-tester, promo
-  // and rewarded purchases — none of which moved real money.
-  it('rejects test and promo purchases from the Play record', async () => {
+  // The Play record's purchaseType is only present for licence-tester (0),
+  // promo (1) and rewarded (2) purchases. A promo code is Console-minted in a
+  // fixed quantity and redeemable once, so it is creditable on production;
+  // the other two are neither scarce nor auditable and stay opt-in.
+  it('credits promo purchases but not test or rewarded ones', async () => {
     const { assertCreditablePlayPurchase } = await import('../server/src/google.js');
     const base = { purchaseState: 0, obfuscatedExternalAccountId: 'acct' };
     expect(() => assertCreditablePlayPurchase(base)).not.toThrow();
-    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 0 })).toThrow(/test and promo/i);
-    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 1 })).toThrow(/test and promo/i);
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 0 })).toThrow(/test and rewarded/i);
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 2 })).toThrow(/test and rewarded/i);
+    expect(() => assertCreditablePlayPurchase({ ...base, purchaseType: 1 })).not.toThrow();
     expect(() => assertCreditablePlayPurchase({ ...base, purchaseState: 1 })).toThrow(/cancelled/i);
+  });
+
+  // A code is redeemed in the Play Store app, never through launchBillingFlow,
+  // so it arrives with no obfuscatedAccountId. Only promo purchases get that
+  // latitude — a real sale without one is still refused.
+  it('allows a promo purchase to arrive with no obfuscated account id', async () => {
+    const { assertCreditablePlayPurchase } = await import('../server/src/google.js');
+    expect(() => assertCreditablePlayPurchase({ purchaseState: 0, purchaseType: 1 })).not.toThrow();
+    expect(() => assertCreditablePlayPurchase({ purchaseState: 0 })).toThrow(/account token/i);
   });
 });
 

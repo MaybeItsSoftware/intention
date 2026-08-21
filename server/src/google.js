@@ -68,26 +68,44 @@ function productsUrl(productId, purchaseToken) {
 // purchase is creditable — a consumable has no renewal/grace concept.
 const CREDITABLE_PURCHASE_STATE = 0;
 
+// purchaseType is only present for non-standard purchases: 0 test (licence
+// tester), 1 promo code, 2 rewarded.
+const PURCHASE_TYPE_PROMO = 1;
+
+// A promo code is minted in Play Console in a fixed, exhaustible quantity and
+// is redeemable exactly once, so it is every bit as controlled a grant as a
+// sale — which is why, unlike a licence-tester or rewarded purchase, it is
+// creditable on production. Handing a tester real credit against the real
+// ledger is the entire point of it.
+export function isPromoPlayPurchase(data) {
+  return Number(data?.purchaseType) === PURCHASE_TYPE_PROMO;
+}
+
 // The creditability rules over the Play Developer API's purchase record.
 // Exported so the rules are testable without the network exchange around them.
 export function assertCreditablePlayPurchase(data) {
   if (Number(data.purchaseState) !== CREDITABLE_PURCHASE_STATE) {
     throw new VerificationError('that purchase was cancelled or is still pending');
   }
-  // purchaseType is only present for non-standard purchases: 0 test (licence
-  // tester), 1 promo code, 2 rewarded. None of those moved real money, so
-  // none of them may mint real coaching credit unless explicitly allowed for
-  // a dev/staging deployment.
-  if (data.purchaseType !== undefined && !config.google.allowTestPurchases) {
-    throw new VerificationError('test and promo purchases are not creditable');
+  // Test and rewarded purchases moved no real money and are neither scarce
+  // nor auditable after the fact, so they stay behind the dev/staging opt-in.
+  if (data.purchaseType !== undefined
+      && !isPromoPlayPurchase(data)
+      && !config.google.allowTestPurchases) {
+    throw new VerificationError('test and rewarded purchases are not creditable');
   }
-  if (!data.obfuscatedExternalAccountId) {
+  // A code is redeemed in the Play Store app, never through this app's own
+  // launchBillingFlow, so there is no obfuscatedAccountId on it to key a
+  // balance by. The client asserts its own at verify time for those (see
+  // verifyEndpoint in app.js); every other purchase must still carry one,
+  // or a tampered client could re-point a real sale at another subject.
+  if (!data.obfuscatedExternalAccountId && !isPromoPlayPurchase(data)) {
     throw new VerificationError('purchase has no linked account token');
   }
 }
 
 /**
- * @returns {{ productId, creditId, purchaseToken, obfuscatedExternalAccountId }}
+ * @returns {{ productId, creditId, purchaseToken, obfuscatedExternalAccountId, isPromo }}
  */
 export async function verifyGooglePurchase(receipt) {
   const purchaseToken = receipt && receipt.purchaseToken;
@@ -102,7 +120,8 @@ export async function verifyGooglePurchase(receipt) {
       productId,
       creditId: purchaseToken.slice(0, 64),
       purchaseToken,
-      obfuscatedExternalAccountId: `dev:${purchaseToken.slice(0, 32)}`
+      obfuscatedExternalAccountId: `dev:${purchaseToken.slice(0, 32)}`,
+      isPromo: false
     };
   }
 
@@ -122,7 +141,8 @@ export async function verifyGooglePurchase(receipt) {
     productId,
     creditId: String(data.orderId || purchaseToken),
     purchaseToken,
-    obfuscatedExternalAccountId: data.obfuscatedExternalAccountId
+    obfuscatedExternalAccountId: data.obfuscatedExternalAccountId || '',
+    isPromo: isPromoPlayPurchase(data)
   };
 }
 

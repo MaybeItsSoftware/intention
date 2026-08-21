@@ -56,6 +56,7 @@ actor IntentionStore {
                 guard case .verified(let transaction) = update else { continue }
                 if await IntentionStore.shared.verifyWithBackend(receipt: update.jwsRepresentation) {
                     await transaction.finish()
+                    await IntentionStore.shared.noteCredited(update.jwsRepresentation)
                 }
             }
         }
@@ -178,6 +179,71 @@ actor IntentionStore {
         return lastRecovered
     }
 
+    // MARK: - Redeem an App Store code
+
+    // Presents Apple's own code-redemption sheet. Everything about the
+    // redemption happens inside StoreKit: there is no field of ours, and the
+    // only codes it accepts are ones App Store Connect issued against this
+    // app. The granted transaction arrives asynchronously through
+    // Transaction.updates (see start()), which verifies-and-credits it just
+    // like a bought one — so this waits for it to land rather than returning
+    // the instant the sheet closes.
+    //
+    // iOS only: macOS has no presentCodeRedemptionSheet, and a Mac user
+    // redeems in the App Store app instead, which start()'s listener picks up
+    // on the next launch.
+    func redeem() async -> [String: Any] {
+#if os(iOS)
+        // Cleared first so a grant from a *previous* redemption can't be
+        // mistaken for this one's.
+        lastCreditedJWS = nil
+        await MainActor.run { SKPaymentQueue.default().presentCodeRedemptionSheet() }
+
+        // The sheet is fire-and-forget: StoreKit reports the grant through
+        // Transaction.updates whenever the App Store gets round to it, which
+        // is usually seconds after the sheet closes but is not guaranteed to
+        // be before it. Wait for the transaction rather than returning
+        // immediately, or the paywall would report nothing while the balance
+        // quietly changed underneath it.
+        //
+        // Two places to look, because start()'s listener and this call race
+        // for the same transaction: whichever of them gets there first is the
+        // answer. Checking only Transaction.unfinished would report "none"
+        // for a redemption the listener had already finished.
+        for _ in 0..<30 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if let jws = lastCreditedJWS {
+                return ["status": "purchased", "platform": "apple", "receipt": jws]
+            }
+            if let jws = await recoverUnfinishedTransactions(), !jws.isEmpty {
+                return ["status": "purchased", "platform": "apple", "receipt": jws]
+            }
+        }
+        // Not a failure — App Store grants can land minutes later. The next
+        // launch's start() sweep will credit it.
+        return ["status": "none", "error": "No redeemed code has come through yet. It can take a moment — the credit will appear on its own."]
+#else
+        return ["status": "failed", "error": "Redeem your code in the App Store app; the credit will appear here."]
+#endif
+    }
+
+    // Set by whichever path credits a transaction, so redeem() above can tell
+    // that the code it just presented actually landed.
+    private var lastCreditedJWS: String?
+
+    func noteCredited(_ jws: String) {
+        lastCreditedJWS = jws
+    }
+
+    // The device-local UUID a balance is keyed by, handed to the web layer so
+    // it can name the subject on a verify. A redeemed code's transaction
+    // carries no appAccountToken of its own — this is what gives that grant a
+    // balance to land in, and it is the same value every bought transaction
+    // already carries, so both end up in one balance.
+    func accountToken() -> [String: Any] {
+        return ["token": stableAccountToken().uuidString]
+    }
+
     // MARK: - Status
 
     // No local StoreKit truth to report for a consumable (see file header) —
@@ -193,7 +259,14 @@ actor IntentionStore {
         var request = URLRequest(url: defaultBackendURL.appendingPathComponent("v1/entitlement/verify"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["platform": "apple", "receipt": receipt])
+        // accountToken is only *used* by the backend when the transaction has
+        // none of its own (a redeemed code); for a bought one the signed
+        // transaction's own token wins and this is ignored.
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "platform": "apple",
+            "receipt": receipt,
+            "accountToken": stableAccountToken().uuidString
+        ])
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }

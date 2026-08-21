@@ -97,6 +97,30 @@ class WebAppInterface(
         BillingManager.restore { result -> respond(callbackId, result) }
     }
 
+    // Hands off to Play's own redemption screen and waits for the grant to
+    // come back through queryPurchasesAsync. Needs the Activity for the same
+    // reason a purchase does — it starts an activity.
+    @JavascriptInterface
+    fun billingRedeem(callbackId: String) {
+        val activity = context as? Activity
+        if (activity == null) {
+            respond(callbackId, JSONObject().put("status", "failed")
+                .put("error", "Codes can only be redeemed from the Intention app."))
+            return
+        }
+        Handler(Looper.getMainLooper()).post {
+            BillingManager.redeem(activity) { result -> respond(callbackId, result) }
+        }
+    }
+
+    // The device-local UUID a balance is keyed by. billing.js sends it on
+    // every verify so a redeemed code — which carries no obfuscatedAccountId
+    // of its own — has a balance to land in.
+    @JavascriptInterface
+    fun billingAccountToken(callbackId: String) {
+        respond(callbackId, JSONObject().put("token", BillingManager.accountToken()))
+    }
+
     @JavascriptInterface
     fun billingStatus(callbackId: String) {
         BillingManager.status { result -> respond(callbackId, result) }

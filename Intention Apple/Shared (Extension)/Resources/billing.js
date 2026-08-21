@@ -88,6 +88,23 @@ function restorePurchases() {
   return sendBilling('restore');
 }
 
+// Opens the platform's own code-redemption sheet — App Store promo codes via
+// SKPaymentQueue on iOS, Play's redeem screen on Android — and resolves the
+// same shape a purchase does once the granted transaction has been picked up.
+// Nothing about this leaves the store's own flow: there is no code field of
+// ours, and no way to redeem anything here that the store didn't issue.
+function redeemStoreCode() {
+  return sendBilling('redeem');
+}
+
+// The device-local UUID a balance is keyed by. A redeemed code carries no
+// account token of its own (it never went through our purchase flow), so this
+// is what gives the grant a balance to land in.
+async function storeAccountToken() {
+  const result = await sendBilling('accountToken');
+  return (result && result.token) || '';
+}
+
 function storeEntitlementStatus() {
   return sendBilling('status');
 }
@@ -115,8 +132,27 @@ async function postBackend(backendUrl, path, body) {
 // with Apple/Google and mints the access token the coach calls are made with.
 // Returns the entitlement to persist.
 async function verifyPurchase({ platform, receipt, backendUrl }) {
-  const data = await postBackend(backendUrl, '/v1/entitlement/verify', { platform, receipt });
+  const data = await postBackend(backendUrl, '/v1/entitlement/verify',
+    await verifyRequestBody(platform, receipt));
   return normalizeEntitlement({ ...data, source: platform, receipt });
+}
+
+// Sent on every store verify, not just redemptions: it costs nothing when the
+// transaction carries its own account token (the backend prefers that one and
+// ignores this), and it is the only thing that makes a redeemed code
+// creditable. Browser builds have no bridge to ask, so they send nothing.
+async function verifyRequestBody(platform, receipt) {
+  const body = { platform, receipt };
+  if (BILLING_MODE !== 'store') return body;
+  try {
+    const accountToken = await storeAccountToken();
+    if (accountToken) body.accountToken = accountToken;
+  } catch (e) {
+    // An older bridge has no accountToken action. A normal purchase verifies
+    // fine without it; only a redemption needs it, and that will surface as
+    // the backend's own account_token_required rather than as a crash here.
+  }
+  return body;
 }
 
 // Re-checks a stored entitlement's live balance. Falls back to the entitlement
@@ -127,10 +163,8 @@ async function refreshEntitlement(entitlement, backendUrl) {
   try {
     const data = entitlement.token
       ? await postBackend(backendUrl, '/v1/entitlement/refresh', { token: entitlement.token })
-      : await postBackend(backendUrl, '/v1/entitlement/verify', {
-          platform: entitlement.source,
-          receipt: entitlement.receipt
-        });
+      : await postBackend(backendUrl, '/v1/entitlement/verify',
+          await verifyRequestBody(entitlement.source, entitlement.receipt));
     return normalizeEntitlement({ ...data, source: entitlement.source, receipt: entitlement.receipt });
   } catch (e) {
     // A rejected token is not necessarily a dead entitlement: tokens now age
@@ -139,10 +173,8 @@ async function refreshEntitlement(entitlement, backendUrl) {
     if (e.code === 'entitlement_invalid' || e.code === 'entitlement_expired') {
       if (entitlement.receipt && entitlement.source && entitlement.source !== 'code') {
         try {
-          const data = await postBackend(backendUrl, '/v1/entitlement/verify', {
-            platform: entitlement.source,
-            receipt: entitlement.receipt
-          });
+          const data = await postBackend(backendUrl, '/v1/entitlement/verify',
+            await verifyRequestBody(entitlement.source, entitlement.receipt));
           return normalizeEntitlement({ ...data, source: entitlement.source, receipt: entitlement.receipt });
         } catch (e2) {
           // fall through: the receipt itself no longer verifies either
@@ -283,6 +315,7 @@ function cleanProductDesc(title, desc) {
 //   onPurchase(productId)   -> Promise, called for a store purchase
 //   onRestore()             -> Promise, recovers an interrupted purchase
 //   onRedeem(code)          -> Promise         (byok builds only)
+//   onRedeemStoreCode()     -> Promise, optional (store builds only)
 //   onUseOwnKey()           -> void, optional  (byok builds only)
 //   onLinkBrowser()         -> Promise, optional (store builds only)
 //   compact                 tighter layout for the in-gate paywall
@@ -296,7 +329,7 @@ function cleanProductDesc(title, desc) {
 // through to the purchase buttons (as "add more"), it just leads with a
 // balance line instead of a lede.
 async function renderPaywall(container, opts = {}) {
-  const { entitlement, onPurchase, onRestore, onRedeem, onUseOwnKey, onSaveKey, route, compact } = opts;
+  const { entitlement, onPurchase, onRestore, onRedeem, onRedeemStoreCode, onUseOwnKey, onSaveKey, route, compact } = opts;
   container.innerHTML = '';
   container.className = 'int-paywall' + (compact ? ' int-paywall-compact' : '');
 
@@ -390,6 +423,20 @@ async function renderPaywall(container, opts = {}) {
     restoreBtn.type = 'button';
     container.appendChild(restoreBtn);
 
+    // Hands off to the store's own redemption sheet — this is still an IAP,
+    // just one that was paid for with a code we issued through the store
+    // rather than at the till. Kept out of the compact paywall for the same
+    // reason the key field is: a blocked page is the worst moment to send
+    // someone off to find a code.
+    let redeemBtn = null;
+    if (onRedeemStoreCode && !compact) {
+      redeemBtn = el('button', 'secondary int-pw-redeem', 'Redeem a code');
+      redeemBtn.type = 'button';
+      container.appendChild(redeemBtn);
+      container.appendChild(el('p', 'int-pw-sub',
+        'Been given a code for Intention? Redeem it here and the credit lands in your balance.'));
+    }
+
     // Android only — onUseOwnKey is null on Apple, so nothing renders there and
     // that build is byte-identical to before. Deliberately below the purchase
     // buttons and worded as a route rather than an offer: Play has no rule
@@ -416,6 +463,20 @@ async function renderPaywall(container, opts = {}) {
         busy(restoreBtn, false);
       }
     });
+
+    if (redeemBtn) {
+      redeemBtn.addEventListener('click', async () => {
+        setError('');
+        busy(redeemBtn, true, 'Opening…');
+        try {
+          await onRedeemStoreCode();
+        } catch (e) {
+          setError(String(e.message || e));
+        } finally {
+          busy(redeemBtn, false);
+        }
+      });
+    }
 
     const result = await fetchStoreProducts();
     plansEl.innerHTML = '';

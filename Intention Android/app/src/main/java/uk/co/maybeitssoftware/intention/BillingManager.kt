@@ -2,6 +2,10 @@ package uk.co.maybeitssoftware.intention
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
@@ -45,8 +49,17 @@ object BillingManager : PurchasesUpdatedListener {
     const val PRODUCT_CREDIT_5 = "intention5pound"
     private val PRODUCT_IDS = listOf(PRODUCT_CREDIT_1, PRODUCT_CREDIT_2, PRODUCT_CREDIT_5)
 
+    // How long redeem() waits for a Play-side grant to show up (~2 minutes).
+    private const val REDEEM_POLL_INTERVAL_MS = 2_000L
+    private const val REDEEM_POLL_ATTEMPTS = 60
+
     private var billingClient: BillingClient? = null
     private var productCache: List<ProductDetails> = emptyList()
+
+    // Held from init() so the stable account id — which lives in
+    // SharedPreferences — can be read on the backend-verify thread, which has
+    // no Activity to hand.
+    private var appContext: Context? = null
 
     // A purchase arrives asynchronously through onPurchasesUpdated, long after
     // launchBillingFlow returns, so the JS callback waiting on it is parked
@@ -54,6 +67,7 @@ object BillingManager : PurchasesUpdatedListener {
     private var pendingPurchaseCallback: ((JSONObject) -> Unit)? = null
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         if (billingClient != null) return
         val pendingPurchasesParams = PendingPurchasesParams.newBuilder()
             .enableOneTimeProducts()
@@ -242,6 +256,92 @@ object BillingManager : PurchasesUpdatedListener {
         }
     }
 
+    /**
+     * Opens Play's own redemption screen for a promo code. Play has no
+     * in-process redeem API for one-time products, so this is the documented
+     * route: hand the user to the Play Store, where the grant is applied to
+     * their Play account, and pick the resulting purchase up afterwards.
+     *
+     * Because the redemption happens in another app, there is no callback to
+     * wait on — the granted purchase simply turns up in queryPurchasesAsync.
+     * The caller re-runs restore() when the user comes back (see
+     * WebAppInterface.billingRedeem), which is the same sweep that recovers an
+     * interrupted purchase and credits it identically.
+     */
+    fun redeem(activity: Activity, callback: (JSONObject) -> Unit) {
+        if (!openRedeemScreen(activity)) {
+            callback(failed("Couldn't open Google Play to redeem a code."))
+            return
+        }
+        pollForRedeemedPurchase(0, callback)
+    }
+
+    private fun openRedeemScreen(activity: Activity): Boolean {
+        val uri = Uri.parse("https://play.google.com/redeem")
+        return try {
+            activity.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.android.vending"))
+            true
+        } catch (e: Exception) {
+            // No Play Store app, or it can't handle the deep link — fall back
+            // to whatever browser is available rather than failing outright.
+            try {
+                activity.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                true
+            } catch (e2: Exception) {
+                Log.w(TAG, "Couldn't open Play redemption: ${e2.message}")
+                false
+            }
+        }
+    }
+
+    // The redemption happens in the Play Store, in another process, so there
+    // is nothing to await — the granted purchase just turns up in
+    // queryPurchasesAsync some time after the user taps Redeem. Poll for it
+    // so the paywall can report a result when they come back, rather than
+    // leaving them looking at an unchanged balance.
+    private fun pollForRedeemedPurchase(attempt: Int, callback: (JSONObject) -> Unit) {
+        if (attempt >= REDEEM_POLL_ATTEMPTS) {
+            // Not a failure — a Play grant can land later, and the next
+            // restore() sweep will credit it.
+            callback(JSONObject().put("status", "none")
+                .put("error", "No redeemed code has come through yet. It can take a moment — the credit will appear on its own."))
+            return
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            val client = billingClient
+            if (client == null || !client.isReady) {
+                pollForRedeemedPurchase(attempt + 1, callback)
+                return@postDelayed
+            }
+            val params = QueryPurchasesParams.newBuilder()
+                .setProductType(BillingClient.ProductType.INAPP)
+                .build()
+            client.queryPurchasesAsync(params) { result, purchases ->
+                val purchase = purchases.firstOrNull {
+                    it.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                        it.products.any { p -> p in PRODUCT_IDS }
+                }
+                if (result.responseCode != BillingClient.BillingResponseCode.OK || purchase == null) {
+                    pollForRedeemedPurchase(attempt + 1, callback)
+                    return@queryPurchasesAsync
+                }
+                creditThenConsume(purchase) { callback(purchaseResult(purchase)) }
+            }
+        }, REDEEM_POLL_INTERVAL_MS)
+    }
+
+    /**
+     * The device-local UUID a balance is keyed by, handed to the web layer so
+     * it can name the subject on a verify. A promo-redeemed purchase carries
+     * no obfuscatedAccountId of its own — this is what gives that grant a
+     * balance to land in, and it is the same value every bought purchase
+     * already carries, so both end up in one balance.
+     */
+    fun accountToken(): String {
+        val context = appContext ?: return ""
+        return stableAccountId(context)
+    }
+
     /** Local view of billing state; the backend balance stays the authority. */
     fun status(callback: (JSONObject) -> Unit) {
         callback(JSONObject().put("available", true).put("entitled", false))
@@ -269,6 +369,11 @@ object BillingManager : PurchasesUpdatedListener {
                 connection.setRequestProperty("Content-Type", "application/json")
                 val body = JSONObject()
                     .put("platform", "google")
+                    // Only *used* by the backend when the purchase has no
+                    // obfuscatedAccountId of its own (a redeemed promo code);
+                    // for a bought one Play's own value wins and this is
+                    // ignored.
+                    .put("accountToken", accountToken())
                     .put(
                         "receipt",
                         JSONObject()
