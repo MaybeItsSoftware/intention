@@ -247,8 +247,7 @@ async function passThroughIfGranted() {
 }
 
 async function renderCoachUI() {
-  sendBtn.addEventListener('click', send);
-  inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  conversation.wireComposer();
   inputEl.focus();
 
   // Bail if this tab is the duplicate — window.close() is already on its way.
@@ -270,7 +269,7 @@ async function renderCoachUI() {
 
   // The coach speaks first: always at check-in (the pass ending is the news),
   // otherwise only when there is no conversation to pick back up.
-  if (mode === 'checkin' || turns.length === 0) attemptOpen();
+  if (mode === 'checkin' || turns.length === 0) conversation.attemptOpen();
 }
 
 // No-AI counterpart to renderCoachUI: a message plus a single action button,
@@ -344,153 +343,39 @@ let domainStats = null;
 
 loadStatsRow(domain, (stats) => { domainStats = stats; });
 
-let sending = false;
-// Only the most recent attemptSend's result is allowed to touch the DOM.
-// Nothing in the current flow can put two attempts in flight at once, but
-// this keeps a stale response harmless if that ever changes.
-let requestSeq = 0;
-
-function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-    try {
-      chrome.runtime.sendMessage(message, (resp) => {
-        clearTimeout(timer);
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(resp);
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      reject(e);
-    }
-  });
-}
-
-async function send() {
-  const text = inputEl.value.trim();
-  if (!text || sending) return;
-  addMessage(messagesEl, 'user', text);
-  inputEl.value = '';
-  attemptSend(text);
-}
-
-async function attemptSend(text) {
-  const seq = ++requestSeq;
-  sending = true;
-  const thinking = addMessage(messagesEl, 'assistant', '…', true);
-
-  let resp;
-  try {
-    resp = await sendTabMessage({
-      action: 'chat',
-      mode,
-      domain,
-      isApp,
-      appLabel: isApp ? appLabel : undefined,
-      userMessage: text
-    });
-  } catch (e) {
-    if (seq !== requestSeq) return;
-    thinking.remove();
-    sending = false;
-    const message = e && e.message === 'timeout'
-      ? "That's taking too long to answer. Check your connection and try again."
-      : '[no response: background worker may be offline]';
-    showRetryableError(messagesEl, message, text);
-    return;
-  }
-
-  if (seq !== requestSeq) return;
-
-  if (!resp) {
-    thinking.remove();
-    sending = false;
-    showRetryableError(messagesEl, '[no response: background worker may be offline]', text);
-    return;
-  }
-  if (resp.error) {
-    thinking.remove();
-    sending = false;
-    if (resp.locked) {
-      showPaywall();
-      return;
-    }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
-    showRetryableError(messagesEl, message, text, resp.errorCode);
-    return;
-  }
-  thinking.classList.remove('int-thinking');
-  typeMessage(thinking, messagesEl, resp.assistantText || '(no reply)', () => {
-    if (seq !== requestSeq) return;
-    sending = false;
-    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-    if (resp.grantedSession) {
-      followGrantedSession(resp.grantedSession);
-    }
-  });
-}
-
 // The hardcoded greetings the gate used to open with, kept as the offline
 // fallback: if the LLM opener can't be fetched, this line still stands the
-// gate up. No retry row — the composer stays live, so the user's first reply
-// retries naturally through attemptSend.
+// gate up.
 const OPENER_FALLBACK = mode === 'checkin'
   ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
-  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
+  : `Hey. I see you've opened ${displayName}. What's going on — what are you hoping to get out of it?`;
 
-// attemptSend minus the user bubble: asks the background for the coach's
-// opening line. No userMessage — the background records its own marker turn.
-async function attemptOpen() {
-  const seq = ++requestSeq;
-  sending = true;
-  const thinking = addMessage(messagesEl, 'assistant', '…', true);
-
-  const fallBack = () => {
-    thinking.remove();
-    addMessage(messagesEl, 'assistant', OPENER_FALLBACK);
-    sending = false;
-  };
-
-  let resp;
-  try {
-    resp = await sendTabMessage({
-      action: 'chat',
-      mode,
-      domain,
-      isApp,
-      appLabel: isApp ? appLabel : undefined
-    });
-  } catch (e) {
-    if (seq !== requestSeq) return;
-    fallBack();
-    return;
-  }
-
-  if (seq !== requestSeq) return;
-
-  if (!resp || resp.error) {
-    if (resp && resp.locked) {
-      thinking.remove();
-      sending = false;
-      showPaywall();
-      return;
-    }
-    fallBack();
-    return;
-  }
-  thinking.classList.remove('int-thinking');
-  typeMessage(thinking, messagesEl, resp.assistantText || OPENER_FALLBACK, () => {
-    if (seq !== requestSeq) return;
-    sending = false;
-    if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-    if (resp.grantedSession) {
-      followGrantedSession(resp.grantedSession);
-    }
-  });
-}
+// The loop itself is gate-ui.js's, shared with content.js. What is
+// host-specific is here: the transport — this gate is an extension page, so
+// every message carries the tab id resolved at the top of this file, and an
+// app gate has a package name and a label rather than a page to describe —
+// and what a locked account or a granted pass means when the gate is the
+// whole screen rather than an overlay on the thing being gated.
+const conversation = createGateConversation({
+  messages: messagesEl,
+  input: inputEl,
+  sendButton: sendBtn,
+  openerFallback: OPENER_FALLBACK,
+  sendChat: (userMessage) => sendTabMessage({
+    action: 'chat',
+    mode,
+    domain,
+    isApp,
+    appLabel: isApp ? appLabel : undefined,
+    // Absent rather than empty when opening the conversation: the background
+    // reads the missing key as "no user turn yet" and records its own marker
+    // turn instead.
+    ...(userMessage ? { userMessage } : {})
+  }),
+  onLocked: showPaywall,
+  onGranted: followGrantedSession,
+  onOpenSettings: () => openOptionsSection('settings')
+});
 
 // Shared by the coach chat flow and the no-AI simple-mode pass button: once a
 // session is granted, get the user through to what they asked for. The pause
@@ -518,28 +403,6 @@ function followGrantedSession(grantedSession, delayMs = 600) {
   }, delayMs);
 }
 
-function showRetryableError(container, message, text, errorCode) {
-  const errorEl = addMessage(container, 'assistant', message);
-  const actions = [];
-  if (errorCode === 'auth') {
-    // Left open (not dismissed on click) so the user can still hit "Try
-    // again" here after fixing the key in the settings tab this opens.
-    actions.push({
-      label: 'Fix API key',
-      keepOpen: true,
-      onClick: () => openOptionsSection('settings')
-    });
-  }
-  actions.push({
-    label: 'Try again',
-    onClick: () => {
-      errorEl.remove();
-      attemptSend(text);
-    }
-  });
-  addActionRow(container, actions);
-}
-
 // Native ports have no background page (chrome.tabs doesn't exist), except
 // Android, which intercepts the "openOptions" message before it ever gets
 // there — see WebAppInterface.sendMessage. iOS has neither, so it has to
@@ -551,25 +414,6 @@ function openOptionsSection(section) {
     return;
   }
   chrome.runtime.sendMessage({ action: 'openOptions', section });
-}
-
-function addActionRow(container, actions) {
-  const row = document.createElement('div');
-  row.className = 'int-retry-row';
-  for (const action of actions) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'int-retry-btn';
-    btn.textContent = action.label;
-    btn.addEventListener('click', () => {
-      if (!action.keepOpen) row.remove();
-      action.onClick();
-    });
-    row.appendChild(btn);
-  }
-  container.appendChild(row);
-  container.scrollTop = container.scrollHeight;
-  return row;
 }
 
 // A double-click can get both clicks past the awaits below before the

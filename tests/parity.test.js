@@ -124,7 +124,8 @@ describe('the two gate hosts share one UI', () => {
   const SHARED_NAMES = [
     'addMessage', 'addSystemNote', 'typeMessage',
     'showWalkAwayMoment', 'WALK_AWAY_LINES',
-    'renderStatsRow', 'loadStatsRow', 'CHAT_TIMEOUT_MS'
+    'renderStatsRow', 'loadStatsRow', 'CHAT_TIMEOUT_MS',
+    'sendChatMessage', 'createGateConversation'
   ];
 
   const source = (file) => readFileSync(join(VARIANTS.chrome, file), 'utf8');
@@ -160,6 +161,40 @@ describe('the two gate hosts share one UI', () => {
     expect(code).toMatch(/intention-root'\)\s*;[\s\S]{0,80}\|\|\s*document\.body/);
     expect(code).not.toMatch(/\bwindow\.intention/);
     expect(code).not.toMatch(/postTabMessage|sendTabMessage|capturePageContext/);
+  });
+
+  // The loop the two hosts wrapped around the helpers above was the copy that
+  // had already drifted — one had a stale-response guard the other lacked, and
+  // their offline opener lines differed by a character. These are the marks a
+  // second copy would leave: the transcript's own strings, the retry row's
+  // markup, the timeout wording. Only the host-specific edges belong out there.
+  //
+  // Not `int-retry-btn`: that is a style class, and coaching.js dresses its
+  // simple-mode buttons in it without there being a conversation in sight.
+  // content.js's injected CSS copy names the others, so it is cut first.
+  it.each(['content.js', 'coaching.js'])('%s keeps no second copy of the loop', (file) => {
+    const code = source(file).replace(/const OVERLAY_CSS = `[\s\S]*?`;/, '');
+    for (const mark of ['int-retry-row', 'int-thinking', 'Try again',
+                        'taking too long', 'no response:', "Can't reach the coach"]) {
+      expect(code, mark).not.toContain(mark);
+    }
+    // What it must still own: the transport, and what a result means locally.
+    expect(code).toContain('createGateConversation({');
+    expect(code).toMatch(/onLocked:|onLocked\(/);
+    expect(code).toMatch(/onGranted:|onGranted\(/);
+  });
+
+  // Both openers say the same thing in the same words — differing only in the
+  // name of what is being opened, which the hosts supply.
+  it('the two hosts speak the same offline opener', () => {
+    const opener = (file, re) => {
+      const m = re.exec(source(file));
+      return m && m[1];
+    };
+    const overlay = opener('content.js', /\?\s*`Hey\. I see you've opened \$\{domain\}\.([^`]*)`/);
+    const page = opener('coaching.js', /:\s*`Hey\. I see you've opened \$\{displayName\}\.([^`]*)`/);
+    expect(overlay).toBeTruthy();
+    expect(page).toBe(overlay);
   });
 
   it.each(VARIANT_KEYS)('is byte-identical in %s', (variant) => {

@@ -893,221 +893,50 @@ function renderChatUI({ mode, domain, blockConfig }) {
 
   loadStatsRow(domain, (stats) => { domainStats = stats; });
 
-  let sending = false;
-  // Only the most recent attemptSend's result is allowed to touch the DOM,
-  // so a stale response after a timeout+retry can't double-render.
-  let requestSeq = 0;
-
-  async function send() {
-    const text = inputEl.value.trim();
-    if (!text || sending) return;
-    addMessage(messagesEl, "user", text);
-    inputEl.value = "";
-    attemptSend(text);
-  }
-
-  async function attemptSend(text) {
-    const seq = ++requestSeq;
-    sending = true;
-    const thinking = addMessage(messagesEl, "assistant", "…", true);
-
-    let resp;
-    try {
-      // capturePageContext() merges rather than replaces, so this picks up
-      // anything the page has revealed since — at check-in the page ran fully
-      // — without discarding what was captured before the overlay wiped it.
-      const pageContext = capturePageContext();
-      resp = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
-        chrome.runtime.sendMessage(
-          {
-            action: "chat",
-            mode,
-            domain,
-            userMessage: text,
-            pageContext,
-          },
-          (response) => {
-            clearTimeout(timer);
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(response);
-          },
-        );
-      });
-    } catch (e) {
-      if (seq !== requestSeq) return;
-      thinking.remove();
-      sending = false;
-      const message = e && e.message === "timeout"
-        ? "That's taking too long to answer. Check your connection and try again."
-        : "[no response: background worker may be offline]";
-      showRetryableError(messagesEl, message, text);
-      return;
-    }
-
-    if (seq !== requestSeq) return;
-
-    if (!resp) {
-      thinking.remove();
-      sending = false;
-      showRetryableError(messagesEl, "[no response: background worker may be offline]", text);
-      return;
-    }
-    if (resp.error) {
-      thinking.remove();
-      sending = false;
-      if (resp.locked) {
-        renderAccessNeededUI();
-        return;
-      }
-      const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
-      showRetryableError(messagesEl, message, text, resp.errorCode);
-      return;
-    }
-    // Reuse the "…" placeholder and reveal the reply gradually so it reads
-    // as if the coach is speaking, rather than snapping in all at once.
-    thinking.classList.remove("int-thinking");
-    typeMessage(
-      thinking,
-      messagesEl,
-      resp.assistantText || "(no reply)",
-      () => {
-        sending = false;
-        if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-        if (resp.grantedSession) {
-          // The reveal above has already finished — just long enough to
-          // register the grant line before the pass starts.
-          setTimeout(() => window.location.reload(), 600);
-        }
-      },
-    );
-  }
-
   // The hardcoded greetings the gate used to open with, kept as the offline
   // fallback: if the LLM opener can't be fetched, this line still stands the
-  // gate up. No retry row — the composer stays live, so the user's first
-  // reply retries naturally through attemptSend.
+  // gate up.
   const OPENER_FALLBACK =
     mode === "gate"
       ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
       : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
 
-  // attemptSend minus the user bubble: asks the background for the coach's
-  // opening line. No userMessage — the background records its own marker turn.
-  async function attemptOpenOverlay() {
-    const seq = ++requestSeq;
-    sending = true;
-    const thinking = addMessage(messagesEl, "assistant", "…", true);
-
-    const fallBack = () => {
-      thinking.remove();
-      addMessage(messagesEl, "assistant", OPENER_FALLBACK);
-      sending = false;
-    };
-
-    let resp;
-    try {
-      // Same merge as attemptSend, so the opener sees the page the user was
-      // actually reaching for.
-      const pageContext = capturePageContext();
-      resp = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("timeout")), CHAT_TIMEOUT_MS);
-        chrome.runtime.sendMessage(
-          {
-            action: "chat",
-            mode,
-            domain,
-            pageContext,
-          },
-          (response) => {
-            clearTimeout(timer);
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(response);
-          },
-        );
-      });
-    } catch (e) {
-      if (seq !== requestSeq) return;
-      fallBack();
-      return;
-    }
-
-    if (seq !== requestSeq) return;
-
-    if (!resp || resp.error) {
-      if (resp && resp.locked) {
-        renderAccessNeededUI();
-        return;
-      }
-      fallBack();
-      return;
-    }
-    thinking.classList.remove("int-thinking");
-    typeMessage(
-      thinking,
-      messagesEl,
-      resp.assistantText || OPENER_FALLBACK,
-      () => {
-        sending = false;
-        if (resp.systemNote) addSystemNote(messagesEl, resp.systemNote);
-        if (resp.grantedSession) {
-          setTimeout(() => window.location.reload(), 600);
-        }
-      },
-    );
-  }
-
-  function showRetryableError(container, message, text, errorCode) {
-    const errorEl = addMessage(container, "assistant", message);
-    const actions = [];
-    if (errorCode === "auth") {
-      // Left open (not dismissed on click) so the user can still hit "Try
-      // again" here after fixing the key in the settings tab this opens.
-      actions.push({
-        label: "Fix API key",
-        keepOpen: true,
-        onClick: () => chrome.runtime.sendMessage({ action: "openOptions", section: "settings" }),
-      });
-    }
-    actions.push({
-      label: "Try again",
-      onClick: () => {
-        errorEl.remove();
-        attemptSend(text);
-      },
-    });
-    addActionRow(container, actions);
-  }
-
-  function addActionRow(container, actions) {
-    const row = document.createElement("div");
-    row.className = "int-retry-row";
-    for (const action of actions) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "int-retry-btn";
-      btn.textContent = action.label;
-      btn.addEventListener("click", () => {
-        if (!action.keepOpen) row.remove();
-        action.onClick();
-      });
-      row.appendChild(btn);
-    }
-    container.appendChild(row);
-    container.scrollTop = container.scrollHeight;
-    return row;
-  }
-
-  sendBtn.addEventListener("click", send);
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") send();
+  // The loop itself is gate-ui.js's, shared with coaching.js. What is
+  // host-specific is here: the transport — this gate is injected into the page
+  // it is standing on, so it has a page worth describing and a real
+  // sender.tab, and needs neither the tab-id dance nor an app label — and what
+  // a locked account or a granted pass means from inside that page.
+  const conversation = createGateConversation({
+    messages: messagesEl,
+    input: inputEl,
+    sendButton: sendBtn,
+    openerFallback: OPENER_FALLBACK,
+    sendChat: (userMessage) =>
+      sendChatMessage({
+        action: "chat",
+        mode,
+        domain,
+        // capturePageContext() merges rather than replaces, so this picks up
+        // anything the page has revealed since — at check-in the page ran
+        // fully — without discarding what was captured before the overlay
+        // wiped it.
+        pageContext: capturePageContext(),
+        // Absent rather than empty when opening the conversation: the
+        // background reads the missing key as "no user turn yet" and records
+        // its own marker turn instead.
+        ...(userMessage ? { userMessage } : {}),
+      }),
+    onLocked: renderAccessNeededUI,
+    // The gate is drawn over the page it is gating, so getting the user
+    // through is a reload: the check runs again, finds the pass, and stands
+    // down.
+    onGranted: () => setTimeout(() => window.location.reload(), 600),
+    onOpenSettings: () =>
+      chrome.runtime.sendMessage({ action: "openOptions", section: "settings" }),
   });
+
+  conversation.wireComposer();
+
   closeBtn.addEventListener("click", () => {
     if (mode === "checkin") {
       chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
@@ -1136,18 +965,18 @@ function renderChatUI({ mode, domain, blockConfig }) {
     chrome.runtime.sendMessage({ action: "getHistory", domain }, (resp) => {
       if (chrome.runtime.lastError) {
         console.warn(INT_LOG, "getHistory lastError:", chrome.runtime.lastError.message);
-        attemptOpenOverlay();
+        conversation.attemptOpen();
         return;
       }
       const turns = (resp && resp.turns) || [];
       for (const turn of turns) {
         addMessage(messagesEl, turn.role === "user" ? "user" : "assistant", turn.content);
       }
-      if (mode === "checkin" || turns.length === 0) attemptOpenOverlay();
+      if (mode === "checkin" || turns.length === 0) conversation.attemptOpen();
     });
   } catch (e) {
     console.warn(INT_LOG, "getHistory message threw:", e);
-    attemptOpenOverlay();
+    conversation.attemptOpen();
   }
 }
 

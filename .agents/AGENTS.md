@@ -56,7 +56,7 @@ intention/
 | `options-lists.js` | Recommendation grids, app search, the wizard's own site/app lists. |
 | `options-access.js` | Coaching credit: purchase, restore, paywall. |
 | `coaching.html` / `coaching.js` | Standalone coaching chat page (Android, iOS, and the gate backstop). Has **inline `<style>` block** that duplicates some overlay CSS. |
-| `gate-ui.js` | The parts of the gate conversation both hosts share: message bubble, typing reveal, walk-away moment, stats strip. Loaded by the content script AND `coaching.html`. |
+| `gate-ui.js` | The whole gate conversation both hosts share: message bubble, typing reveal, walk-away moment, stats strip, and `createGateConversation` — the request loop itself. Loaded by the content script AND `coaching.html`. The hosts supply only the transport and what a locked account / granted pass means locally. |
 | `rules.js` | Resolves a blocked target's rules (mode, behaviour, pass length, lenient window) — pure functions, loaded into **every** context. |
 | `prompts.js` | System prompt construction for the AI coach. |
 | `providers.js` | LLM provider adapters (Intention's hosted backend, Anthropic, OpenAI, Groq, Gemini) plus `entitlementIsActive()`. |
@@ -99,7 +99,8 @@ Rules to keep that intact:
 - **`npm run lint` before you finish.** ESLint derives each shared file's allowed globals from the manifests and pages, so `no-undef` is what catches a call into a file your context does not load — the failure mode this architecture makes easy and the browser only reports at runtime. A new shared file must be added to the manifest / page that loads it, or nothing can call it.
 - **Resolve a target's rules through `rules.js`, never inline.** Which mode applies to a site, and when the coach turns strict, was once written out in four files held together by "change one, change all three" comments. They had drifted. `tests/rules.test.js` now fails if a copy comes back.
 - **CSS duplication awareness.** `content.js` contains a full copy of the overlay CSS as the `OVERLAY_CSS` string constant. `coaching.html` contains inline `<style>` blocks with similar styles. When modifying overlay styles, update **both** `content.css` and the `OVERLAY_CSS` constant in `content.js`, and check `coaching.html` inline styles. `tests/parity.test.js` fails the build if the two copies drift.
-- **Shared gate UI.** The message bubble, typing reveal, walk-away moment and stats strip live in `gate-ui.js` and are used by both gate hosts. Change them there, not in `content.js` or `coaching.js` — parity.test.js fails if either redeclares one.
+- **Shared gate UI.** The message bubble, typing reveal, walk-away moment, stats strip and the conversation loop all live in `gate-ui.js`, and both gate hosts use them. Change them there, not in `content.js` or `coaching.js` — `tests/parity.test.js` fails if either redeclares one or grows a second copy of the loop, and `tests/gate-conversation.test.js` pins what the loop does.
+- **A host passes edges, not steps.** `createGateConversation` takes the transport (`sendChat`) and the three local meanings (`onLocked`, `onGranted`, `onOpenSettings`). If something host-specific seems to belong *inside* the loop, it is a new edge on `host`, not a branch on which host is running.
 
 ## Styling Conventions
 
@@ -114,7 +115,7 @@ Rules to keep that intact:
 | Command | What it checks |
 |---------|----------------|
 | `npm run lint` | ESLint. `no-undef` is the load-bearing rule: each shared file's allowed globals come from the manifests and pages, so calling something the manifest does not load alongside you fails here rather than at runtime. |
-| `npm test` | The vitest suite (~730 tests, ~3s). |
+| `npm test` | The vitest suite (~750 tests, ~3s). |
 | `npm run test:smoke` | Playwright against a real Chromium with the extension loaded. Slower, and the only thing that catches a broken page load — run it after touching `content.js`, `coaching.js`, `options*.js` or a `<script>` list. |
 | `scripts/sync.sh --check` | Platform copies match `shared/`. |
 

@@ -12,15 +12,19 @@
 // identical only after one of them had been fixed and the other followed by
 // hand. That is the shape of a bug waiting: the next fix reaches one home.
 //
-// What is NOT here is the request loop each host wraps around these. Those
-// differ in more than transport (one lives in a closure inside renderChatUI
-// and talks to the background about a tab, the other is module-level and has
-// no tab at all), and merging them would be a rewrite of the gate rather than
-// a de-duplication of it. That is a separate change with a separate risk.
+// The request loop each host wrapped around them is here too, as
+// createGateConversation. It resisted the first pass because the two copies
+// differ in more than transport — one lives in a closure inside renderChatUI
+// and talks to the background about a tab, the other is module-level with no
+// tab at all — but every one of those differences turned out to be an *edge*
+// of the loop rather than a step inside it: where the request goes, and what
+// a locked account, a granted pass or a "Fix API key" click mean locally. So
+// the loop takes them as a `host` and keeps the rest.
 //
-// Everything here is a pure DOM helper: no chrome.* beyond the one stats
-// message, no page-specific ids beyond `int-stats-row`, which both hosts
-// render.
+// Nothing here reaches for anything only one host has: no window.intention*,
+// no tab id, no page context, and no ids beyond `int-stats-row`, which both
+// hosts render. chrome.runtime.sendMessage is the one exception — it is the
+// only way to ask the background anything, and it exists in both.
 
 // Above providers.js's 30s per-request fetch timeout, so the background
 // worker's own timeout/error classification wins the race and reaches the UI
@@ -168,4 +172,177 @@ function loadStatsRow(domain, onStats) {
   } catch (e) {
     console.warn('[Intention]', 'getStatsForDomain message threw:', e);
   }
+}
+
+// One round-trip to the background, as a promise with a deadline. The reply
+// arrives on a callback and `lastError` has to be read inside it, so this is
+// the shape both hosts need; the timeout is the outer bound described above.
+// A throw from sendMessage itself (a torn-down worker on some ports) rejects
+// like any other failure rather than escaping as a synchronous error.
+function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    try {
+      chrome.runtime.sendMessage(message, (resp) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(resp);
+      });
+    } catch (e) {
+      clearTimeout(timer);
+      reject(e);
+    }
+  });
+}
+
+// The conversation itself: a thinking bubble, a request, and a reply typed
+// into that same bubble — plus everything that can go wrong on the way.
+//
+// Both hosts run exactly this loop. What they don't share is where the
+// request goes and what a result means locally, so those arrive as `host`:
+//
+//   messages / input / sendButton  the elements, already in the document
+//   openerFallback                 the line to speak if the opener can't be fetched
+//   sendChat(userMessage|null)     one round-trip; null means "open the conversation"
+//   onLocked()                     no coaching credit left — the host takes the screen
+//   onGranted(session)             a pass was granted; the host gets the user through
+//   onOpenSettings()               the "Fix API key" route
+//
+// Everything else — the retry row, the stale-response guard, the phrasing of
+// each failure — is the same conversation wherever it is shown, and lives
+// here so that fixing it once fixes it in both places.
+function createGateConversation(host) {
+  const messages = host.messages;
+  let sending = false;
+  // Only the most recent request's result is allowed to touch the DOM, so a
+  // stale response arriving after a timeout and a retry can't double-render.
+  let requestSeq = 0;
+
+  function addActionRow(actions) {
+    const row = document.createElement('div');
+    row.className = 'int-retry-row';
+    for (const action of actions) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'int-retry-btn';
+      btn.textContent = action.label;
+      btn.addEventListener('click', () => {
+        if (!action.keepOpen) row.remove();
+        action.onClick();
+      });
+      row.appendChild(btn);
+    }
+    messages.appendChild(row);
+    messages.scrollTop = messages.scrollHeight;
+    return row;
+  }
+
+  function showRetryableError(message, text, errorCode) {
+    const errorEl = addMessage(messages, 'assistant', message);
+    const actions = [];
+    if (errorCode === 'auth') {
+      // Left open (not dismissed on click) so the user can still hit "Try
+      // again" here after fixing the key in the settings tab this opens.
+      actions.push({ label: 'Fix API key', keepOpen: true, onClick: () => host.onOpenSettings() });
+    }
+    actions.push({
+      label: 'Try again',
+      onClick: () => {
+        errorEl.remove();
+        attemptSend(text);
+      }
+    });
+    addActionRow(actions);
+  }
+
+  // The turn both entry points share. `onFailure` receives a message that is
+  // already user-facing; by the time it runs the thinking bubble is gone and
+  // the composer is live again.
+  async function run(userMessage, fallbackText, onFailure) {
+    const seq = ++requestSeq;
+    sending = true;
+    const thinking = addMessage(messages, 'assistant', '…', true);
+
+    const stop = () => {
+      thinking.remove();
+      sending = false;
+    };
+    const fail = (message, errorCode) => {
+      stop();
+      onFailure(message, errorCode);
+    };
+
+    let resp;
+    try {
+      resp = await host.sendChat(userMessage);
+    } catch (e) {
+      if (seq !== requestSeq) return;
+      fail(e && e.message === 'timeout'
+        ? "That's taking too long to answer. Check your connection and try again."
+        : '[no response: background worker may be offline]');
+      return;
+    }
+
+    if (seq !== requestSeq) return;
+
+    if (!resp || resp.error) {
+      if (resp && resp.locked) {
+        stop();
+        host.onLocked();
+        return;
+      }
+      if (!resp) {
+        fail('[no response: background worker may be offline]');
+        return;
+      }
+      fail(resp.networkError ? "Can't reach the coach — check your connection." : resp.error,
+        resp.errorCode);
+      return;
+    }
+
+    // Reuse the "…" placeholder and reveal the reply gradually so it reads as
+    // if the coach is speaking, rather than snapping in all at once.
+    thinking.classList.remove('int-thinking');
+    typeMessage(thinking, messages, resp.assistantText || fallbackText, () => {
+      if (seq !== requestSeq) return;
+      sending = false;
+      if (resp.systemNote) addSystemNote(messages, resp.systemNote);
+      // The reveal above has already finished, so the host's hand-off pause is
+      // just long enough to register the grant line before the pass starts.
+      if (resp.grantedSession) host.onGranted(resp.grantedSession);
+    });
+  }
+
+  function attemptSend(text) {
+    return run(text, '(no reply)', (message, errorCode) =>
+      showRetryableError(message, text, errorCode));
+  }
+
+  // attemptSend minus the user bubble: asks the background for the coach's
+  // opening line. No userMessage — the background records its own marker turn.
+  // No retry row either: the composer stays live, so the user's first reply
+  // retries naturally through attemptSend.
+  function attemptOpen() {
+    return run(null, host.openerFallback, () => {
+      addMessage(messages, 'assistant', host.openerFallback);
+    });
+  }
+
+  function send() {
+    const text = host.input.value.trim();
+    if (!text || sending) return;
+    addMessage(messages, 'user', text);
+    host.input.value = '';
+    attemptSend(text);
+  }
+
+  function wireComposer() {
+    host.sendButton.addEventListener('click', send);
+    host.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  }
+
+  return { send, attemptSend, attemptOpen, wireComposer };
 }
