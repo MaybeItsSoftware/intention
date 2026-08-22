@@ -1036,9 +1036,12 @@ describe('coarse clock', () => {
 
   // 23:59 used to reach the coach as 23:45 — the hour where being wrong reads
   // worst, since "nearly midnight" is most of what the coach does with it.
+  // Asserted on the minute and the weekday, not the hour: the hour is
+  // toLocaleTimeString's to format, and a runner defaulting to en-US renders
+  // this same instant as "11:59 PM". That is correct output, not a failure.
   it('renderNowLine says the right day at the end of the night', () => {
     const line = P.renderNowLine(new Date(2026, 7, 15, 23, 59));
-    expect(line).toContain('23:59');
+    expect(line).toContain(':59');
     expect(line).toContain('Saturday');
   });
 
@@ -1050,7 +1053,9 @@ describe('coarse clock', () => {
       grantsToday: 0, grantsCap: 3, minutesCap: 0, minutesTodaySite: 0,
       reasonsToday: [], sessionsToday: [], recentDays: []
     });
-    expect(prompt).toMatch(/It is \d\d:(00|15|30|45) on \w+day\./);
+    // Hour left unanchored for the same locale reason as above; what is being
+    // pinned here is that the MINUTES never leave the quarter hour.
+    expect(prompt).toMatch(/It is \d{1,2}:(00|15|30|45)(:\d\d)?( ?[AaPp]\.?[Mm]\.?)? on \w+day\./);
   });
 });
 
