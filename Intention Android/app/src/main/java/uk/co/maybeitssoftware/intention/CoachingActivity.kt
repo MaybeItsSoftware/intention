@@ -108,6 +108,15 @@ class CoachingActivity : AppCompatActivity() {
         // Initialize background helper
         BackgroundJsHelper.init(applicationContext)
 
+        // The gate is usually the first thing to run in the process — the
+        // accessibility service launches it the moment a blocked app opens,
+        // with MainActivity never having been touched. BillingManager is an
+        // object, so without this its client stayed null here and connect()
+        // short-circuited to onReady(false): the paywall reported "Google Play
+        // billing is unavailable on this device" and could sell nothing, at
+        // the exact moment someone was being asked to buy.
+        BillingManager.init(applicationContext)
+
         // Set up bridge. When closeCurrentTab is called, it triggers the callback
         webView.addJavascriptInterface(WebAppInterface(this, webView) {
             closeBlockedTab()

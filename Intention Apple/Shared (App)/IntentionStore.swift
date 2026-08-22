@@ -19,6 +19,9 @@
 import Foundation
 import StoreKit
 import Security
+#if os(macOS)
+import AppKit
+#endif
 
 @available(iOS 15.0, macOS 12.0, *)
 enum IntentionProduct {
@@ -222,8 +225,33 @@ actor IntentionStore {
         // Not a failure — App Store grants can land minutes later. The next
         // launch's start() sweep will credit it.
         return ["status": "none", "error": "No redeemed code has come through yet. It can take a moment — the credit will appear on its own."]
+#elseif os(macOS)
+        // No presentCodeRedemptionSheet on macOS, so the nearest real thing is
+        // the App Store's own redeem page. Opening it beats the message that
+        // used to stand here: the button rendered on this build either way, so
+        // telling someone to go and find the App Store themselves was a dead
+        // end dressed as a control.
+        lastCreditedJWS = nil
+        if let url = URL(string: "macappstore://apps.apple.com/redeem") {
+            await MainActor.run { NSWorkspace.shared.open(url) }
+        } else {
+            return ["status": "failed", "error": "Couldn't open the App Store to redeem a code."]
+        }
+
+        // Same race as on iOS — start()'s listener and this call both want the
+        // granted transaction — so watch both places for it.
+        for _ in 0..<30 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if let jws = lastCreditedJWS {
+                return ["status": "purchased", "platform": "apple", "receipt": jws]
+            }
+            if let jws = await recoverUnfinishedTransactions(), !jws.isEmpty {
+                return ["status": "purchased", "platform": "apple", "receipt": jws]
+            }
+        }
+        return ["status": "none", "error": "No redeemed code has come through yet. It can take a moment — the credit will appear on its own."]
 #else
-        return ["status": "failed", "error": "Redeem your code in the App Store app; the credit will appear here."]
+        return ["status": "failed", "error": "Codes can't be redeemed on this device."]
 #endif
     }
 

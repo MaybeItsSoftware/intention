@@ -562,6 +562,52 @@ describe('Refund webhooks & clawback', () => {
     expect(repeat.body.refund.alreadyRefunded).toBe(true);
   });
 
+  // The case promo redemption introduced: the credit record's subject came
+  // from a token the client asserted, not one the store signed, so the refund
+  // notification has no appAccountToken to identify whose balance to deduct.
+  // refundTopUp has to recover the subject from the credit record itself, or a
+  // revoked code would leave its credit spent-but-unclawed forever.
+  it('claws back a promo-redeemed grant, whose notification names no account', async () => {
+    const d = deps({ verifyApple: async () => ({ ...appleResult, appAccountToken: '', isPromo: true }) });
+    const verified = await post('/v1/entitlement/verify',
+      { platform: 'apple', receipt: 'jws', accountToken: 'acct-apple-1' }, {}, d);
+    expect(verified.body.balanceMicros).toBe(CREDIT1);
+
+    // No appAccountToken on the transaction — exactly as Apple sends it for a
+    // code that was redeemed outside the app.
+    const signedPayload = fakeJWS({
+      notificationType: 'REFUND',
+      data: {
+        signedTransactionInfo: fakeJWS({
+          transactionId: 'txn-1',
+          productId: 'uk.co.maybeitssoftware.intention.coach.credit1'
+        })
+      }
+    });
+
+    const res = await post('/v1/webhooks/apple', { signedPayload }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body.refund.deductedMicros).toBe(CREDIT1);
+    expect(getBalanceMicros(subjectFor('apple', 'acct-apple-1'), d.store)).toBe(0);
+  });
+
+  // Same shape on the Play side: a voided promo purchase arrives with no
+  // obfuscatedAccountId either.
+  it('claws back a promo-redeemed Play grant the same way', async () => {
+    const d = deps({
+      verifyGoogle: async () => ({ ...googleResult, obfuscatedExternalAccountId: '', isPromo: true })
+    });
+    await post('/v1/entitlement/verify',
+      { platform: 'google', receipt: { purchaseToken: 'ptoken-1' }, accountToken: 'acct-google-1' }, {}, d);
+    const sub = subjectFor('google', 'acct-google-1');
+    expect(getBalanceMicros(sub, d.store)).toBe(creditMicrosForTopUp('google', 1));
+
+    const result = refundTopUp('google', 'order-1', {}, d.store);
+    expect(result.refunded).toBe(true);
+    expect(result.subject).toBe(sub);
+    expect(getBalanceMicros(sub, d.store)).toBe(0);
+  });
+
   it('handles non-refund Apple notifications gracefully', async () => {
     const d = deps();
     const signedPayload = fakeJWS({ notificationType: 'TEST' });
