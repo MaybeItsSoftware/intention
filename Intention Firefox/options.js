@@ -424,6 +424,18 @@ async function renderCoachObservations() {
 // (buildRowModeToggle) lets individual sites/apps override this global default
 // — and picking the mode that already matches it drops the override again.
 function wireBlockingModeCard(state) {
+  // Mirrors the wizard's mode step (options-wizard.js): where a store sells
+  // coaching credit, an API key is not what turns the coach on — on Apple it
+  // isn't even an option — so describing the alternative as "no API key
+  // needed" would send people hunting for a key they can't use and read, to a
+  // reviewer, as the app expecting one.
+  document.getElementById('blocking-mode-blurb').textContent = BYOK_IS_PRIMARY
+    ? 'Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.'
+    : 'Coach mode talks you through a block and approves changes, running on coaching credit you buy in the app. Simple mode needs no AI — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.';
+  document.getElementById('settings-mode-simple-desc').textContent = BYOK_IS_PRIMARY
+    ? 'No API key needed.'
+    : 'No AI, no credit used.';
+
   const coachBtn = document.getElementById('settings-mode-coach-btn');
   const simpleBtn = document.getElementById('settings-mode-simple-btn');
   const simpleOptions = document.getElementById('settings-simple-options');
@@ -483,6 +495,81 @@ function bindOnce(id, event, handler) {
   if (boundOnce.has(key)) return;
   boundOnce.add(key);
   document.getElementById(id)?.addEventListener(event, handler);
+}
+
+// The custom-key override, on the builds that may have one.
+//
+// Where a store sells credit this really is a developer override and is
+// described as one. On Chrome and Firefox it is one of the two ordinary ways
+// to turn the coach on — offered as such in the AI access card — so calling it
+// "developer mode" down here would only make people think they'd taken a
+// wrong turn. Same fields either way; this is where you change or clear one.
+//
+// On Apple there is no such build. The card is removed from the DOM rather
+// than hidden, so there is nothing a reviewer can open — or a user can find
+// — that enables the coach outside In-App Purchase (guideline 3.1.1; see
+// IS_APPLE_BUILD in providers.js, and resolveAIRoute() in background.js for
+// the routing half, which is what actually makes a stored key inert).
+function wireCustomKeySection(state) {
+  if (IS_APPLE_BUILD) {
+    document.getElementById('advanced-card')?.remove();
+    return;
+  }
+
+  document.getElementById('custom-key-summary-note').textContent =
+    BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
+  document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
+    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here switches the coach back to coaching credit.'
+    : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
+
+  const provSel = document.getElementById('provider-select-2');
+  const modelInput = document.getElementById('model-input-2');
+  const keyInput = document.getElementById('api-key-input-2');
+  provSel.value = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : 'anthropic';
+  modelInput.value = state.model || '';
+  keyInput.value = state.apiKey || '';
+
+  const syncPlaceholder = () => {
+    const p = PROVIDERS[provSel.value];
+    modelInput.placeholder = p ? p.modelPlaceholder : '';
+  };
+
+  const syncEnvSettings = (parsedEnv) => {
+    const provider = provSel.value;
+    const providerKey = `${provider.toUpperCase()}_API_KEY`;
+    const modelKey = `${provider.toUpperCase()}_MODEL`;
+
+    if (!keyInput.value && (parsedEnv[providerKey] || parsedEnv.API_KEY)) {
+      keyInput.value = parsedEnv[providerKey] || parsedEnv.API_KEY;
+    }
+    if (!modelInput.value && (parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL)) {
+      modelInput.value = parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL;
+    }
+  };
+
+  provSel.addEventListener('change', () => {
+    syncPlaceholder();
+    loadEnv().then(syncEnvSettings);
+  });
+  syncPlaceholder();
+  loadEnv().then(syncEnvSettings);
+
+  bindOnce('save-provider-btn', 'click', async () => {
+    const provider = provSel.value;
+    const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
+    const apiKey = keyInput.value.trim();
+    await sendBg({ action: 'saveSettings', config: { provider, model, apiKey } });
+    setStatus('provider-status', apiKey ? 'Saved. Custom key is now in use.' : 'Saved.', 'success');
+    await refreshAccessUI('access-paywall');
+  });
+
+  // Clearing the override drops straight back to the hosted/credit route.
+  bindOnce('clear-provider-btn', 'click', async () => {
+    keyInput.value = '';
+    await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
+    setStatus('provider-status', 'Custom key cleared.', 'success');
+    await refreshAccessUI('access-paywall');
+  });
 }
 
 async function showSettingsView(state) {
@@ -547,66 +634,7 @@ async function showSettingsView(state) {
   await refreshAccessUI('access-paywall');
 
   // ---- Advanced: custom API key ----
-  //
-  // Where a store sells credit this really is a developer override and is
-  // described as one. On Chrome and Firefox it is one of the two ordinary ways
-  // to turn the coach on — offered as such in AI access above — so calling it
-  // "developer mode" down here would only make people think they'd taken a
-  // wrong turn. Same fields either way; this is where you change or clear one.
-  document.getElementById('custom-key-summary-note').textContent =
-    BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
-  document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
-    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here switches the coach back to coaching credit.'
-    : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
-
-  const provSel = document.getElementById('provider-select-2');
-  const modelInput = document.getElementById('model-input-2');
-  const keyInput = document.getElementById('api-key-input-2');
-  provSel.value = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : 'anthropic';
-  modelInput.value = state.model || '';
-  keyInput.value = state.apiKey || '';
-
-  const syncPlaceholder = () => {
-    const p = PROVIDERS[provSel.value];
-    modelInput.placeholder = p ? p.modelPlaceholder : '';
-  };
-
-  const syncEnvSettings = (parsedEnv) => {
-    const provider = provSel.value;
-    const providerKey = `${provider.toUpperCase()}_API_KEY`;
-    const modelKey = `${provider.toUpperCase()}_MODEL`;
-
-    if (!keyInput.value && (parsedEnv[providerKey] || parsedEnv.API_KEY)) {
-      keyInput.value = parsedEnv[providerKey] || parsedEnv.API_KEY;
-    }
-    if (!modelInput.value && (parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL)) {
-      modelInput.value = parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL;
-    }
-  };
-
-  provSel.addEventListener('change', () => {
-    syncPlaceholder();
-    loadEnv().then(syncEnvSettings);
-  });
-  syncPlaceholder();
-  loadEnv().then(syncEnvSettings);
-
-  bindOnce('save-provider-btn', 'click', async () => {
-    const provider = provSel.value;
-    const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
-    const apiKey = keyInput.value.trim();
-    await sendBg({ action: 'saveSettings', config: { provider, model, apiKey } });
-    setStatus('provider-status', apiKey ? 'Saved. Custom key is now in use.' : 'Saved.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
-
-  // Clearing the override drops straight back to the hosted/credit route.
-  bindOnce('clear-provider-btn', 'click', async () => {
-    keyInput.value = '';
-    await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
-    setStatus('provider-status', 'Custom key cleared.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
+  wireCustomKeySection(state);
 
   wireBlockingModeCard(state);
 

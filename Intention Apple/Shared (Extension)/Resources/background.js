@@ -942,7 +942,13 @@ async function getLimitsForDomain(domain) {
 //
 //   byok    a custom provider key is configured (Settings -> Advanced). Calls
 //           go straight from this device to that provider, and the hosted
-//           coaching-credit balance doesn't apply.
+//           coaching-credit balance doesn't apply. Never reachable on Apple
+//           builds (IS_APPLE_BUILD in providers.js): App Store guideline 3.1.1
+//           forbids unlocking paid functionality with anything bought outside
+//           In-App Purchase, and a provider key is exactly that. The check is
+//           here and not only in the settings UI so that a key left behind by
+//           an older install, or restored from a backup, still can't bypass
+//           the credit balance.
 //   hosted  a coaching-credit balance is available. Calls go to Intention's
 //           backend, which holds the provider key. This is the default path.
 //   locked  neither — every coaching entry point shows the paywall instead of
@@ -955,7 +961,7 @@ async function resolveAIRoute() {
     'provider', 'apiKey', 'model', 'entitlement', 'backendUrl'
   ]);
 
-  if (provider && provider !== HOSTED_PROVIDER && apiKey) {
+  if (!IS_APPLE_BUILD && provider && provider !== HOSTED_PROVIDER && apiKey) {
     return { route: 'byok', provider, apiKey, model: model || '' };
   }
   if (entitlementIsActive(entitlement)) {

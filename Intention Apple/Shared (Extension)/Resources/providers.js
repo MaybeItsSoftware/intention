@@ -6,6 +6,31 @@
 const HOSTED_PROVIDER = 'intention';
 const DEFAULT_INTENTION_BACKEND_URL = 'https://api.intention.maybeitssoftware.co.uk';
 
+// Whether this build ships inside an App Store binary: the iOS and macOS apps,
+// and the Safari web extension that ships within them.
+//
+// App Store Review guideline 3.1.1 lets an API key unlock functionality only
+// when that key is itself purchasable with In-App Purchase, in this app or in
+// the provider's own App Store app. None of Anthropic, OpenAI, Groq or Gemini
+// sells one that way, so no carve-out applies and the custom-key route does not
+// exist on Apple at all: it is never offered, the settings field is removed
+// rather than hidden, and resolveAIRoute() below ignores a key that survived
+// from an older install. Hiding the UI alone is what gets rejected twice.
+//
+// This lives here rather than in billing.js because the background worker has
+// to answer the same question and never loads a UI module. It is user-agent
+// based rather than bridge based on purpose: window.intentionBilling exists
+// only in the app's visible WKWebView, while this must hold in the hidden
+// BackgroundJSHost web view and in the Safari extension's own contexts too.
+//
+// AppleWebKit-without-Chrome covers all of those — including the app's web
+// views, whose default user agent carries neither "Safari" nor "Version/" —
+// and excludes Chrome, Edge, Firefox and the Android app's Chromium WebView.
+const IS_APPLE_BUILD = (() => {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  return /AppleWebKit/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
+})();
+
 // A coaching-credit entitlement never expires (the balance is the only
 // limit), so the server never sends `expiresAt` and the branch below always
 // takes the "active forever" path. The grace window only matters for the

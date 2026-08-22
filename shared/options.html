@@ -187,7 +187,7 @@
 
         <section class="card" id="blocking-mode-card" data-section="blocking">
           <h2>Blocking mode</h2>
-          <p class="subtitle">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
+          <p class="subtitle" id="blocking-mode-blurb">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
           <div class="mode-choice-grid">
             <button type="button" class="mode-choice-card" id="settings-mode-coach-btn" data-mode="coach">
               <strong>Coach (AI-guided)</strong>
@@ -195,7 +195,7 @@
             </button>
             <button type="button" class="mode-choice-card" id="settings-mode-simple-btn" data-mode="simple">
               <strong>Simple (no AI)</strong>
-              <span>No API key needed.</span>
+              <span id="settings-mode-simple-desc">No API key needed.</span>
             </button>
           </div>
           <div id="settings-simple-options" hidden>

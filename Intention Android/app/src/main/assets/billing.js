@@ -25,19 +25,22 @@
 //   'byok'    — Chrome / Firefox. There is no store to buy through in a
 //               browser extension, so a user-supplied provider key stays a
 //               first-class, visible option on these builds.
+//
+// The Apple half of this is IS_APPLE_BUILD (providers.js), which both the
+// 'store' and 'managed' cases fall under and which the background worker
+// shares — a mode computed here would be page-side only.
 function detectBillingMode() {
   if (typeof window !== 'undefined' && window.intentionBilling) return 'store';
-  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-  const isApple = /Safari/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
-  return isApple ? 'managed' : 'byok';
+  return IS_APPLE_BUILD ? 'managed' : 'byok';
 }
 
 const BILLING_MODE = detectBillingMode();
 
 // Whether a user-supplied provider key may be offered as a starting option —
 // the first thing a new user is asked to do. Nowhere a store reviews the build
-// may it be that, so on 'store'/'managed' the purchase route leads and the key
-// is reachable only from Settings -> Advanced.
+// may it be that, so on 'store'/'managed' the purchase route leads. Where a key
+// may exist at all it then lives in Settings -> Advanced; on Apple that section
+// isn't rendered and the route isn't honoured (see below).
 const STORE_MODES = ['store', 'managed'];
 const BYOK_IS_PRIMARY = !STORE_MODES.includes(BILLING_MODE);
 
@@ -45,8 +48,12 @@ const BYOK_IS_PRIMARY = !STORE_MODES.includes(BILLING_MODE);
 // route beneath the purchase buttons. This is a weaker thing than being
 // primary, and the two stores differ on it:
 //
-//   Apple  — no. 3.1.1 reads unlocking app functionality against anything
-//            bought outside IAP, so the field stays unadvertised.
+//   Apple  — no, and stronger than no. 3.1.1 reads unlocking app functionality
+//            against anything bought outside IAP, and a key bought on a
+//            provider's website is exactly that: Apple rejected the build that
+//            merely left it unadvertised in Settings -> Advanced. So on Apple
+//            the field is absent and resolveAIRoute() ignores a stored key —
+//            this flag governs the paywall, not whether BYOK exists.
 //   Google — yes. Play's Payments policy governs digital goods *you* sell; a
 //            key the user already holds with Anthropic or Groq was never a
 //            purchase from us, so it never engages. Hiding it there was only

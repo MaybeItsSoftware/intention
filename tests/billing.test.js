@@ -22,6 +22,33 @@ const bridge = () => ({
   }
 });
 
+// WebKit's default user agent for an app-hosted web view — no "Safari", no
+// "Version/". The iOS/macOS app's options page and its hidden background host
+// both run under this, so a /Safari/ test would have missed the App Store
+// binary itself and left the custom-key route live exactly where 3.1.1 bites.
+const APPLE_APP_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+const FIREFOX_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0';
+
+describe('Apple build detection', () => {
+  // Everything 3.1.1 turns on: this flag is what removes the custom-key field
+  // and what makes resolveAIRoute() refuse a stored key.
+  const isApple = (userAgent) => loadBilling({ userAgent }).ctx.IS_APPLE_BUILD;
+
+  it('covers the Safari web extension', () => {
+    expect(isApple(SAFARI_UA)).toBe(true);
+  });
+
+  it("covers the app's own web views, which don't say Safari", () => {
+    expect(isApple(APPLE_APP_UA)).toBe(true);
+  });
+
+  it('excludes Chrome, Firefox and the Android app WebView', () => {
+    expect(isApple(CHROME_UA)).toBe(false);
+    expect(isApple(FIREFOX_UA)).toBe(false);
+    expect(isApple(ANDROID_UA)).toBe(false);
+  });
+});
+
 describe('billing mode detection', () => {
   // What a build may show is decided entirely here, so each case is a rule
   // Apple or Google would check.

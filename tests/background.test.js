@@ -465,6 +465,13 @@ const ACTIVE_ENTITLEMENT = {
   source: 'apple'
 };
 
+// The two Apple contexts this code runs in, and they don't look alike: the
+// Safari web extension carries a normal Safari user agent, while the app's own
+// web views (the visible options page and the hidden BackgroundJSHost) get
+// WebKit's default, which names neither "Safari" nor "Version/".
+const APPLE_APP_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148';
+const APPLE_SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+
 describe('resolveAIRoute', () => {
   it('locks a fresh install — no key, no subscription', async () => {
     const { ctx } = loadBackground();
@@ -485,6 +492,23 @@ describe('resolveAIRoute', () => {
     expect(route.route).toBe('byok');
     expect(route.provider).toBe('anthropic');
     expect(route.apiKey).toBe('test-key');
+  });
+
+  // App Store guideline 3.1.1: nothing bought outside In-App Purchase may
+  // enable paid functionality, and no provider sells an API key through IAP.
+  // Dropping the settings field isn't enough on its own — a key written by an
+  // older build is still sitting in storage — so the route refuses it here.
+  it('ignores a custom key on an Apple build, falling back to bought credit', async () => {
+    const { ctx } = loadBackground({
+      seed: { entitlement: ACTIVE_ENTITLEMENT, ...CONFIGURED },
+      userAgent: APPLE_APP_UA
+    });
+    expect((await ctx.resolveAIRoute()).route).toBe('hosted');
+  });
+
+  it('locks an Apple build holding nothing but a custom key', async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED, userAgent: APPLE_SAFARI_UA });
+    expect((await ctx.resolveAIRoute()).route).toBe('locked');
   });
 
   it('locks when the entitlement has lapsed beyond its grace period', async () => {

@@ -311,7 +311,7 @@ export function loadTracking({ variant = 'chrome', seed = {} } = {}) {
 // the way the browser would. Call ctx.handleMessage(msg, sender) to drive the
 // message API — `sender` is {tab:{id}} in the extensions and {} on the native
 // ports, which is exactly what the session keying turns on.
-export function loadBackground({ seed = {}, fetch, sessionArea = false, native = false } = {}) {
+export function loadBackground({ seed = {}, fetch, sessionArea = false, native = false, userAgent } = {}) {
   const chrome = makeMockChrome(seed);
   const mockFetch = fetch || makeMockFetch({ content: [{ type: 'text', text: 'ok' }] });
 
@@ -392,6 +392,11 @@ export function loadBackground({ seed = {}, fetch, sessionArea = false, native =
   const extraGlobals = native
     ? { browser: { runtime: { sendNativeMessage: async () => ({}) } } }
     : {};
+
+  // The worker reads navigator.userAgent for one thing only: IS_APPLE_BUILD in
+  // providers.js, which decides whether a stored provider key may be honoured.
+  // Left absent by default, so the unspecified case is a non-Apple build.
+  if (userAgent) extraGlobals.navigator = { userAgent };
 
   const ctx = loadSource(filesForContext('background'), {
     chrome,
