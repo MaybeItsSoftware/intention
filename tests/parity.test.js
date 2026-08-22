@@ -393,3 +393,40 @@ describe('the overlay CSS copy does not drift from content.css', () => {
     expect(diverged).toEqual([]);
   });
 });
+
+// The backend URL is written out in three languages — JS for the extension,
+// Kotlin for Android's BillingManager, Swift for Apple's IntentionStore — and
+// the two native copies are the ONLY path a real store purchase takes. They
+// drifted: a bare-.uk typo was fixed across the JS in v0.22.1 and missed in
+// both, so every native verify went to a host that does not resolve, the
+// failure was swallowed into a log line, and no purchase on either store was
+// ever credited. Three copies of a constant with comments claiming they match
+// is exactly the thing a test has to hold, because a comment cannot.
+describe('the native billing clients agree with shared/providers.js on the backend', () => {
+  const sharedUrl = /const DEFAULT_INTENTION_BACKEND_URL = '([^']+)'/
+    .exec(readFileSync(join(REPO_ROOT, 'shared', 'providers.js'), 'utf8'))[1];
+
+  const NATIVE = [
+    {
+      name: 'Android BillingManager.kt',
+      path: join(REPO_ROOT, 'Intention Android', 'app', 'src', 'main', 'java',
+        'uk', 'co', 'maybeitssoftware', 'intention', 'BillingManager.kt'),
+      re: /DEFAULT_BACKEND_URL = "([^"]+)"/
+    },
+    {
+      name: 'Apple IntentionStore.swift',
+      path: join(REPO_ROOT, 'Intention Apple', 'Shared (App)', 'IntentionStore.swift'),
+      re: /defaultBackendURL = URL\(string: "([^"]+)"\)!/
+    }
+  ];
+
+  it('reads a sane URL out of shared/providers.js to compare against', () => {
+    expect(sharedUrl).toMatch(/^https:\/\/\S+$/);
+  });
+
+  it.each(NATIVE)('$name points at the same host', ({ path, re }) => {
+    const found = re.exec(readFileSync(path, 'utf8'));
+    expect(found, 'backend URL constant not found — did it get renamed?').toBeTruthy();
+    expect(found[1]).toBe(sharedUrl);
+  });
+});

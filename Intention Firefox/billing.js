@@ -348,6 +348,18 @@ async function renderPaywall(container, opts = {}) {
     errorEl.hidden = !msg;
   };
 
+  // Not everything worth saying is a failure. Redeeming hands the user to
+  // another app and the result arrives later, out of band — reporting that as
+  // an error (which is what happened before, once the wait timed out) tells
+  // someone their code didn't work when it may be about to.
+  const noticeEl = el('div', 'int-pw-notice');
+  noticeEl.hidden = true;
+
+  const setNotice = (msg) => {
+    noticeEl.textContent = msg || '';
+    noticeEl.hidden = !msg;
+  };
+
   // Plan buttons stack their price and description in child elements, so their
   // label can't be swapped for "Working…" without flattening them — those just
   // grey out instead.
@@ -417,6 +429,7 @@ async function renderPaywall(container, opts = {}) {
       container.appendChild(el('p', 'int-pw-note',
         'Open the Intention app on this device to buy coaching credit. It applies here automatically.'));
     }
+    container.appendChild(noticeEl);
     container.appendChild(errorEl);
     return;
   }
@@ -457,6 +470,7 @@ async function renderPaywall(container, opts = {}) {
         'Already pay for an AI provider? Point the coach at that account instead and skip the credit.'));
     }
 
+    container.appendChild(noticeEl);
     container.appendChild(errorEl);
 
     restoreBtn.addEventListener('click', async () => {
@@ -474,9 +488,14 @@ async function renderPaywall(container, opts = {}) {
     if (redeemBtn) {
       redeemBtn.addEventListener('click', async () => {
         setError('');
+        setNotice('');
         busy(redeemBtn, true, 'Opening…');
         try {
-          await onRedeemStoreCode();
+          // May return a notice instead of throwing: on Android the redemption
+          // is finished in another app, so "we've sent you there" is the whole
+          // of what this can honestly report.
+          const notice = await onRedeemStoreCode();
+          if (notice) setNotice(notice);
         } catch (e) {
           setError(String(e.message || e));
         } finally {
@@ -525,6 +544,7 @@ async function renderPaywall(container, opts = {}) {
   // 'byok' — Chrome / Firefox. Already-linked credit has nothing further to
   // show here; there's no purchase path in a browser extension either way.
   if (active) {
+    container.appendChild(noticeEl);
     container.appendChild(errorEl);
     return;
   }
@@ -537,6 +557,7 @@ async function renderPaywall(container, opts = {}) {
     status.appendChild(el('p', 'int-pw-sub',
       'Coach requests go straight from this device to your provider. Change or remove the key in Settings → Advanced.'));
     container.appendChild(status);
+    container.appendChild(noticeEl);
     container.appendChild(errorEl);
     return;
   }
@@ -552,6 +573,7 @@ async function renderPaywall(container, opts = {}) {
   routes.appendChild(buildCodeRoute({ el, busy, setError, onRedeem }));
 
   container.appendChild(routes);
+  container.appendChild(noticeEl);
   container.appendChild(errorEl);
 }
 

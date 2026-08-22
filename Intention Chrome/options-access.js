@@ -111,6 +111,21 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
     onRedeemStoreCode: async () => {
       const result = await redeemStoreCode();
       if (!result || result.status === 'cancelled') return;
+      // Android hands off to another app and answers as soon as it has done
+      // so — the grant arrives later, credited by the sweep that runs when the
+      // user comes back. Returning a notice rather than throwing is the point:
+      // this used to block until a two-minute poll expired and then report a
+      // failure, for a code that was very often about to work.
+      //
+      // The route matters enough to say out loud. A browser is usually signed
+      // into a different Google account than the device's Play Store, and a
+      // code redeemed there is granted to an account this app will never see —
+      // which looks, from here, exactly like a code that did nothing.
+      if (result.status === 'opened') {
+        return result.route === 'browser'
+          ? 'Google Play opened in your browser. Make sure it\'s the same Google account as the Play Store on this device, or the credit will land somewhere Intention can\'t see it. It\'ll appear here once redeemed.'
+          : 'Finish redeeming in Google Play. Your credit will appear here when it lands.';
+      }
       if (result.status === 'none') {
         throw new Error('No redeemed code was found. If you have just redeemed one, give it a moment and try again.');
       }
@@ -152,6 +167,23 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
 
 function storePlatform() {
   return HAS_APP_BLOCKING ? 'google' : 'apple';
+}
+
+// Returning to the app is the one moment a redemption finished elsewhere can
+// have landed — the host sweeps for the grant and then fires this event
+// (MainActivity.onResume on Android, ViewController.appDidBecomeActive on
+// iOS). Without it the paywall keeps showing whatever balance it was rendered
+// with, and a credit that arrived seconds ago stays invisible until the page
+// is reopened, which reads as the code having failed.
+let accessRefreshOnReturnWired = false;
+
+function wireAccessRefreshOnReturn(containerId) {
+  if (accessRefreshOnReturnWired) return;
+  accessRefreshOnReturnWired = true;
+  window.addEventListener('intention-app-active', async () => {
+    await refreshAccessUI(containerId);
+    await onAccessChanged();
+  });
 }
 
 // Called after any change that can flip the access route, so the settings view

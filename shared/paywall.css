@@ -131,6 +131,13 @@
   font-size: 13px;
 }
 
+/* A handoff in progress, not a failure — the redemption finishes in another
+   app and lands back here later, so this must not read as an error. */
+.int-pw-notice {
+  color: var(--primary-text);
+  font-size: 13px;
+}
+
 .int-paywall button[disabled] {
   opacity: 0.6;
   cursor: default;

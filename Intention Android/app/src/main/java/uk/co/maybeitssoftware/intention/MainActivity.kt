@@ -325,8 +325,35 @@ class MainActivity : AppCompatActivity() {
         return card
     }
 
+    /**
+     * Coming back from the Play Store is the one moment a redeemed code can
+     * have landed, and nothing used to look. The redeem poll gave up after two
+     * minutes; a user who took longer than that — or who redeemed on the web
+     * and came back later — had a granted purchase sitting in their Play
+     * account that the app would only notice if they thought to press
+     * "Recover an interrupted purchase" by hand.
+     *
+     * This is the same sweep that button runs, so a grant is credited whenever
+     * the user returns, however long it took. It is cheap when there is
+     * nothing to find: queryPurchasesAsync answers from Play's local cache and
+     * no backend call happens unless an actual purchase turns up.
+     *
+     * The WebView is told either way, because the paywall it is showing was
+     * rendered before any of this and has a stale balance on it.
+     */
+    private fun sweepForPurchasesOnReturn() {
+        BillingManager.restore {
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new Event('intention-app-active'))", null
+                )
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        sweepForPurchasesOnReturn()
         if (!isAccessibilityServiceEnabled()) {
             accessibilityGate.visibility = View.VISIBLE
             webView.visibility = View.GONE

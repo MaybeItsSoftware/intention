@@ -40,11 +40,16 @@ actor IntentionStore {
 
     static let shared = IntentionStore()
 
-    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL. Purchases
+    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL — pinned by
+    // tests/parity.test.js, because it did NOT match for months and nothing
+    // noticed. The registered domain is maybeitssoftware.co.uk; a bare .uk
+    // variant was fixed across the JS in v0.22.1 and missed here, so every
+    // verify from this file went to a host that does not resolve. Purchases
     // are verified-and-credited from here directly (not routed through the
     // JS layer first) so a transaction can be finished as soon as the credit
-    // is durably recorded server-side, per Apple's consumable guidance.
-    private let defaultBackendURL = URL(string: "https://api.intention.maybeitssoftware.uk")!
+    // is durably recorded server-side, per Apple's consumable guidance —
+    // which also means this file is the ONLY path a StoreKit purchase takes.
+    private let defaultBackendURL = URL(string: "https://api.intention.maybeitssoftware.co.uk")!
 
     private var cachedProducts: [Product] = []
     private var updatesTask: Task<Void, Never>?

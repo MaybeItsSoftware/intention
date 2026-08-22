@@ -39,8 +39,14 @@ object BillingManager : PurchasesUpdatedListener {
 
     private const val TAG = "IntentionBilling"
 
-    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL.
-    private const val DEFAULT_BACKEND_URL = "https://api.intention.maybeitssoftware.uk"
+    // Matches shared/providers.js's DEFAULT_INTENTION_BACKEND_URL — pinned by
+    // tests/parity.test.js, because it did NOT match for months and nothing
+    // noticed. The registered domain is maybeitssoftware.co.uk; a bare .uk
+    // variant was fixed across the JS in v0.22.1 and missed here, so every
+    // verify from this file died at DNS resolution and was swallowed into a
+    // warn log by the catch in verifyWithBackend. No Android purchase or
+    // redeemed code has ever been credited.
+    private const val DEFAULT_BACKEND_URL = "https://api.intention.maybeitssoftware.co.uk"
 
     // Must match server/src/config.js's topUps table and the Play Console
     // product IDs.
@@ -48,6 +54,8 @@ object BillingManager : PurchasesUpdatedListener {
     const val PRODUCT_CREDIT_2 = "intention2pound"
     const val PRODUCT_CREDIT_5 = "intention5pound"
     private val PRODUCT_IDS = listOf(PRODUCT_CREDIT_1, PRODUCT_CREDIT_2, PRODUCT_CREDIT_5)
+
+    private const val PLAY_STORE_PACKAGE = "com.android.vending"
 
     // How long redeem() waits for a Play-side grant to show up (~2 minutes).
     private const val REDEEM_POLL_INTERVAL_MS = 2_000L
@@ -269,36 +277,81 @@ object BillingManager : PurchasesUpdatedListener {
      * interrupted purchase and credits it identically.
      */
     fun redeem(activity: Activity, callback: (JSONObject) -> Unit) {
-        if (!openRedeemScreen(activity)) {
+        val route = openRedeemScreen(activity)
+        if (route == null) {
             callback(failed("Couldn't open Google Play to redeem a code."))
             return
         }
-        pollForRedeemedPurchase(0, callback)
+        // Resolves as soon as the redemption screen is up, NOT when a grant
+        // arrives. It used to wait for the poll below to finish, which meant
+        // the paywall's button sat on "Opening…" for the poll's full two
+        // minutes and then reported failure — while the user was in another
+        // app entirely, and long after anything had finished opening. The
+        // grant is picked up by the poll and by the sweep on resume; the UI's
+        // job here is only to say where the user has been sent.
+        callback(JSONObject().put("status", "opened").put("route", route))
+        pollForRedeemedPurchase(0) { }
     }
 
-    private fun openRedeemScreen(activity: Activity): Boolean {
+    // Where the user actually ended up. The redemption itself happens in
+    // another app, so this is the only thing we can tell them for certain.
+    private const val ROUTE_PLAY_APP = "play"
+    private const val ROUTE_BROWSER = "browser"
+
+    /**
+     * Opens Play's redemption screen, preferring the Play Store app, and
+     * reports which route was taken (null if neither could be opened).
+     *
+     * This used to try the Play-scoped intent and, on ANY exception, silently
+     * retry unscoped — so a device that has the Play Store but whose Play
+     * Store doesn't claim the /redeem URL landed in a web browser without a
+     * word. That is worse than it sounds: the browser is often signed into a
+     * different Google account than the device's Play Store, so the code is
+     * granted to an account the app will never see, and queryPurchasesAsync
+     * stays empty forever.
+     *
+     * Resolved deliberately rather than by catching ActivityNotFoundException,
+     * so the fallback is a decision we report instead of an accident. Safe
+     * against Android 11 package-visibility filtering because the app already
+     * holds QUERY_ALL_PACKAGES (see AndroidManifest).
+     */
+    private fun openRedeemScreen(activity: Activity): String? {
         val uri = Uri.parse("https://play.google.com/redeem")
-        return try {
-            activity.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.android.vending"))
-            true
-        } catch (e: Exception) {
-            // No Play Store app, or it can't handle the deep link — fall back
-            // to whatever browser is available rather than failing outright.
+        val pm = activity.packageManager
+
+        val playIntent = Intent(Intent.ACTION_VIEW, uri).setPackage(PLAY_STORE_PACKAGE)
+        if (playIntent.resolveActivity(pm) != null) {
             try {
-                activity.startActivity(Intent(Intent.ACTION_VIEW, uri))
-                true
-            } catch (e2: Exception) {
-                Log.w(TAG, "Couldn't open Play redemption: ${e2.message}")
-                false
+                activity.startActivity(playIntent)
+                return ROUTE_PLAY_APP
+            } catch (e: Exception) {
+                Log.w(TAG, "Play Store resolved the redeem URL but wouldn't start: ${e.message}")
             }
         }
+
+        val webIntent = Intent(Intent.ACTION_VIEW, uri)
+        if (webIntent.resolveActivity(pm) != null) {
+            try {
+                activity.startActivity(webIntent)
+                return ROUTE_BROWSER
+            } catch (e: Exception) {
+                Log.w(TAG, "Couldn't open Play redemption in a browser: ${e.message}")
+            }
+        }
+        return null
     }
 
     // The redemption happens in the Play Store, in another process, so there
     // is nothing to await — the granted purchase just turns up in
-    // queryPurchasesAsync some time after the user taps Redeem. Poll for it
-    // so the paywall can report a result when they come back, rather than
-    // leaving them looking at an unchanged balance.
+    // queryPurchasesAsync some time after the user taps Redeem. Poll for it so
+    // a grant that lands while the app is still alive is credited without the
+    // user doing anything.
+    //
+    // Nothing waits on this any more: redeem() answers the UI immediately and
+    // this runs on for its own two minutes underneath. It is a convenience,
+    // not the guarantee — the guarantee is the sweep MainActivity.onResume
+    // runs when the user comes back, which has no time limit and catches a
+    // grant that lands after this has given up.
     private fun pollForRedeemedPurchase(attempt: Int, callback: (JSONObject) -> Unit) {
         if (attempt >= REDEEM_POLL_ATTEMPTS) {
             // Not a failure — a Play grant can land later, and the next

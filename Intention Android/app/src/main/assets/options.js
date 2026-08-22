@@ -632,6 +632,7 @@ async function showSettingsView(state) {
   });
 
   await refreshAccessUI('access-paywall');
+  wireAccessRefreshOnReturn('access-paywall');
 
   // ---- Advanced: custom API key ----
   wireCustomKeySection(state);
