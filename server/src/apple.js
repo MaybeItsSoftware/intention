@@ -96,10 +96,27 @@ export function verifyAppleJWS(jws, { rootFingerprints = APPLE_ROOT_FINGERPRINTS
 
 // ---- App Store Server API -------------------------------------------------
 
-function appStoreBaseUrl() {
+const PRODUCTION_BASE_URL = 'https://api.storekit.itunes.apple.com';
+const SANDBOX_BASE_URL = 'https://api.storekit-sandbox.itunes.apple.com';
+
+// Which App Store to ask, and in what order.
+//
+// Apple gives you no way to know which environment a transaction belongs to
+// before asking: both environments sign the same payload shape and chain to
+// the same roots. App Review always transacts in sandbox — as does TestFlight
+// — so a production-only lookup 404s on every receipt a reviewer produces,
+// which is what a purchase failing review looks like from the inside.
+//
+// Apple's own guidance is therefore to try one environment and fall back to
+// the other on the 404 (4040010 TransactionIdNotFoundError) that means "not
+// here". APPLE_ENVIRONMENT now only picks which to try FIRST — a dev or
+// staging deployment saves a round trip, and no deployment is ever blind to
+// half of Apple. What the answer is worth is a separate question, decided by
+// the environment the winning lookup reports: see config.apple.sandboxCreditCapGbp.
+function appStoreBaseUrls() {
   return config.apple.environment === 'sandbox'
-    ? 'https://api.storekit-sandbox.itunes.apple.com'
-    : 'https://api.storekit.itunes.apple.com';
+    ? [SANDBOX_BASE_URL, PRODUCTION_BASE_URL]
+    : [PRODUCTION_BASE_URL, SANDBOX_BASE_URL];
 }
 
 function appStoreJWT() {
@@ -126,34 +143,63 @@ function appStoreJWT() {
 // Get Transaction Info — the consumable-appropriate authoritative check.
 // Returns a single transaction record; no ongoing status/renewal/grace
 // concept applies, unlike the subscription-status-group endpoint.
+//
+// A 404 from one environment is not an answer, only an absence, so it moves on
+// to the next. Running out of environments is the real "no such transaction".
+// Anything other than 404 — Apple down, credentials wrong — stops immediately:
+// retrying the other environment would turn one outage into two and still tell
+// us nothing.
 async function fetchTransactionInfo(transactionId) {
-  const res = await fetch(
-    `${appStoreBaseUrl()}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
-    { headers: { authorization: `Bearer ${appStoreJWT()}` } }
-  );
-  if (res.status === 404) throw new VerificationError('Apple has no record of that transaction');
-  if (!res.ok) {
-    // Apple being unavailable must not read as "this purchase doesn't exist".
-    throw new VerificationError(`App Store Server API ${res.status}`, 'upstream_unavailable');
+  const bases = appStoreBaseUrls();
+  for (let i = 0; i < bases.length; i++) {
+    const res = await fetch(
+      `${bases[i]}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
+      { headers: { authorization: `Bearer ${appStoreJWT()}` } }
+    );
+    if (res.status === 404) {
+      if (i === bases.length - 1) {
+        throw new VerificationError('Apple has no record of that transaction');
+      }
+      continue;
+    }
+    if (!res.ok) {
+      // Apple being unavailable must not read as "this purchase doesn't exist".
+      throw new VerificationError(`App Store Server API ${res.status}`, 'upstream_unavailable');
+    }
+    return res.json();
   }
-  return res.json();
+  throw new VerificationError('Apple has no record of that transaction');
 }
 
 /**
  * Verifies an Apple consumable-purchase receipt and returns what's needed to
  * credit it.
- * @returns {{ productId, creditId, appAccountToken }}
+ * @returns {{ productId, creditId, appAccountToken, environment }}
  */
-// Sandbox transactions chain to the same pinned Apple roots as production
-// ones, so signature verification alone lets a free sandbox Apple account
-// mint unlimited "valid" receipts. The payload's own environment field is the
-// discriminator; sandbox is only creditable when the server itself is
-// configured against the sandbox App Store (dev/staging).
-export function assertCreditableEnvironment(environment) {
-  if (!environment) return; // pre-StoreKit-2 payloads; the field is otherwise always stamped
+// Which environment a verified transaction came from — 'production' or
+// 'sandbox' — normalised, and rejected outright if it is neither.
+//
+// This used to throw on sandbox altogether, and the reasoning behind that is
+// still sound as far as it goes: sandbox transactions chain to the same pinned
+// Apple roots as production ones, so signature verification alone lets a free
+// sandbox Apple Account mint unlimited genuinely-valid receipts. What it got
+// wrong was the remedy. Refusing them outright also refuses App Review, which
+// transacts in sandbox exactly like TestFlight does, so the app could never
+// demonstrate a working purchase and the in-app purchases could never be
+// approved — which is the state they have been stuck in.
+//
+// So the environment is no longer a gate, it is a price: a sandbox purchase
+// verifies and credits like any other, up to a lifetime ceiling per subject
+// (creditTopUp in app.js). Enough for a reviewer to walk the whole loop — buy,
+// see the balance, talk to the coach — while a leaked sandbox account is worth
+// one top-up of tokens rather than an open tap.
+export function creditableEnvironment(environment) {
+  // Pre-StoreKit-2 payloads don't carry the field at all; StoreKit 2 always
+  // stamps it, so anything arriving without one predates the sandbox question
+  // and is treated as production, exactly as it always has been.
+  if (!environment) return 'production';
   const env = String(environment).toLowerCase();
-  if (env === 'production') return;
-  if (env === 'sandbox' && config.apple.environment === 'sandbox') return;
+  if (env === 'production' || env === 'sandbox') return env;
   throw new VerificationError(`receipt is from the ${environment} environment`);
 }
 
@@ -168,7 +214,7 @@ export async function verifyAppleReceipt(jws) {
   if (payload.bundleId && payload.bundleId !== config.apple.bundleId) {
     throw new VerificationError('receipt is for a different app');
   }
-  assertCreditableEnvironment(payload.environment);
+  let environment = creditableEnvironment(payload.environment);
   if (payload.productId && !findTopUp('apple', payload.productId)) {
     throw new VerificationError('receipt is for an unknown product');
   }
@@ -188,7 +234,9 @@ export async function verifyAppleReceipt(jws) {
       ? decodeJWS(record.signedTransactionInfo).payload
       : verifyAppleJWS(record.signedTransactionInfo);
     if (info.revocationDate) throw new VerificationError('that purchase was refunded');
-    assertCreditableEnvironment(info.environment);
+    // The authoritative record wins over the client's copy: it is what Apple
+    // says now, and it is what the credit cap gets priced on.
+    environment = creditableEnvironment(info.environment);
     productId = info.productId || productId;
     appAccountToken = info.appAccountToken || appAccountToken;
   }
@@ -207,6 +255,7 @@ export async function verifyAppleReceipt(jws) {
     productId,
     creditId: transactionId,
     appAccountToken,
+    environment,
     isPromo: !appAccountToken
   };
 }

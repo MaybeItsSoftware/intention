@@ -134,6 +134,66 @@ describe('POST /v1/entitlement/verify', () => {
     expect(res.body.balanceMicros).toBe(CREDIT1); // not 2x — same creditId
   });
 
+  // ---- Sandbox purchases: capped, not refused -----------------------------
+  //
+  // App Review and TestFlight both transact in sandbox, so a server that
+  // refuses sandbox credit is a server whose in-app purchases can never be
+  // approved — that is the state these tests exist to keep us out of. The
+  // countervailing risk is that sandbox purchases are free and endlessly
+  // repeatable, so the ceiling is what stands between one leaked sandbox
+  // Apple Account and an unlimited supply of credit at our token cost.
+
+  const sandboxResult = (over = {}) => ({ ...appleResult, environment: 'sandbox', ...over });
+
+  it('credits a sandbox purchase, so a reviewer can see one work', async () => {
+    const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {},
+      deps({ verifyApple: async () => sandboxResult() }));
+    expect(res.body.active).toBe(true);
+    expect(res.body.balanceMicros).toBe(CREDIT1);
+  });
+
+  it('stops crediting sandbox purchases once the cap is spent', async () => {
+    const d = deps({ verifyApple: async () => sandboxResult() });
+    await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+    const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-2' }, {},
+      deps({ store: d.store, verifyApple: async () => sandboxResult({ creditId: 'txn-2' }) }));
+    expect(res.body.balanceMicros).toBe(CREDIT1); // the second one added nothing
+  });
+
+  // The ceiling is a total, not a per-purchase allowance, so a tier worth more
+  // than what's left credits the remainder rather than all-or-nothing.
+  it('clamps a sandbox purchase larger than the cap down to it', async () => {
+    const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {},
+      deps({
+        verifyApple: async () => sandboxResult({
+          productId: 'uk.co.maybeitssoftware.intention.coach.credit2',
+          creditId: 'txn-big'
+        })
+      }));
+    expect(res.body.balanceMicros).toBe(CREDIT1); // the £1 cap, not the £2 face value
+  });
+
+  // Still a 200 with a live entitlement: a reviewer who buys twice must not be
+  // shown a failure, or the purchase itself looks broken.
+  it('still reports success for a sandbox purchase past the cap', async () => {
+    const d = deps({ verifyApple: async () => sandboxResult() });
+    await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+    const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-2' }, {},
+      deps({ store: d.store, verifyApple: async () => sandboxResult({ creditId: 'txn-2' }) }));
+    expect(res.status).toBe(200);
+    expect(res.body.active).toBe(true);
+  });
+
+  // The ledger is sandbox-only. Exhausting it must not touch what a paying
+  // customer gets — the cap is about free money, not about this account.
+  it('leaves a real purchase at full value after the sandbox cap is spent', async () => {
+    const d = deps({ verifyApple: async () => sandboxResult() });
+    await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
+    const res = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-2' }, {},
+      deps({ store: d.store, verifyApple: async () => ({ ...appleResult, creditId: 'txn-2', environment: 'production' }) }));
+    expect(res.body.balanceMicros).toBe(CREDIT1 * 2);
+  });
+
   it('accumulates balance across different purchases from the same account', async () => {
     const d = deps();
     await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws-1' }, {}, d);
@@ -425,6 +485,7 @@ describe('Apple transaction info (consumable verification)', () => {
       productId: 'uk.co.maybeitssoftware.intention.coach.credit1',
       creditId: 'txn-100',
       appAccountToken: 'acct-100',
+      environment: 'production',
       isPromo: false
     });
   });
@@ -458,17 +519,28 @@ describe('Apple transaction info (consumable verification)', () => {
     expect(result.creditId).toBe('txn-100');
   });
 
-  // Sandbox transactions chain to the same pinned Apple roots, so a free
-  // sandbox account could mint unlimited signature-valid receipts. The
-  // server is configured for production here, so sandbox must not credit.
-  it('rejects a sandbox receipt on a production deployment', async () => {
-    await expect(verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Sandbox' })))
-      .rejects.toThrow(/environment/i);
+  // Sandbox used to be refused outright here. It can't be: App Review and
+  // TestFlight both transact in sandbox, so refusing it meant no reviewer
+  // could ever see a purchase work. It verifies like anything else and is
+  // reported as sandbox, and what that is worth is decided at credit time
+  // (see "sandbox purchases are capped, not refused" below).
+  it('verifies a sandbox receipt and says so', async () => {
+    const result = await verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Sandbox' }));
+    expect(result.creditId).toBe('txn-100');
+    expect(result.environment).toBe('sandbox');
   });
 
   it('accepts a production receipt with the environment stamped', async () => {
     const result = await verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Production' }));
     expect(result.creditId).toBe('txn-100');
+    expect(result.environment).toBe('production');
+  });
+
+  // Neither environment, so not something to price — a payload claiming one
+  // is a payload we don't understand, and guessing would be guessing about money.
+  it('rejects an environment that is neither', async () => {
+    await expect(verifyAppleReceipt(fakeJWS({ ...basePayload(), environment: 'Xcode' })))
+      .rejects.toThrow(/environment/i);
   });
 });
 

@@ -105,7 +105,25 @@ export const config = {
     issuerId: process.env.APPLE_ISSUER_ID || '',
     keyId: process.env.APPLE_KEY_ID || '',
     privateKey: (process.env.APPLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    environment: process.env.APPLE_ENVIRONMENT || 'production' // or 'sandbox'
+    // Which App Store Server API to try FIRST. Both are always tried — a
+    // transaction that isn't in one is looked up in the other (see
+    // appStoreBaseUrls in apple.js) — so this is a round-trip saving for
+    // dev/staging, not a gate. It no longer decides what sandbox is worth.
+    environment: process.env.APPLE_ENVIRONMENT || 'production', // or 'sandbox'
+
+    // What a sandbox purchase may ever be worth to one subject, as a face
+    // price in GBP put through the same commission and skim as a real top-up.
+    //
+    // Sandbox purchases are free and endlessly repeatable, so this is the only
+    // thing standing between a sandbox Apple Account and an unlimited supply
+    // of coaching credit at our token cost. It is a lifetime total, not a
+    // per-purchase limit: further sandbox purchases still verify and still
+    // report success to the client, they just credit nothing once it's spent.
+    //
+    // One tier's worth by default — enough for App Review, and for a
+    // TestFlight tester, to exercise the whole loop end to end. Set to 0 to
+    // refuse sandbox credit entirely, which is the behaviour this replaced.
+    sandboxCreditCapGbp: Number(process.env.INTENTION_SANDBOX_CREDIT_CAP_GBP ?? 1)
   },
 
   google: {
@@ -146,6 +164,15 @@ export function creditMicrosForTopUp(platform, priceGbp) {
   const netProceedsGbp = priceGbp * (1 - commissionRate);
   const spendableGbp = netProceedsGbp * (1 - config.topUpSkimRate);
   return Math.round(spendableGbp * 1_000_000);
+}
+
+// The lifetime ceiling on sandbox-sourced credit for one subject, in the same
+// microGBP unit the ledger keeps. Priced through creditMicrosForTopUp so that
+// "one tier's worth" means exactly what a bought tier at that price is worth,
+// commission and skim included, rather than a number that drifts from it.
+export function sandboxCreditCapMicros(platform = 'apple') {
+  const capGbp = Number(config.apple.sandboxCreditCapGbp) || 0;
+  return capGbp > 0 ? creditMicrosForTopUp(platform, capGbp) : 0;
 }
 
 // Display-only conversion from the ledger's microGBP-equivalent balance to
@@ -191,8 +218,12 @@ export function assertBootConfig(log = console) {
   if (config.google.allowTestPurchases) {
     log.warn('[intention] INTENTION_ALLOW_TEST_PURCHASES is on — Play licence-tester and rewarded purchases will mint real credit. Never use this in production.');
   }
-  if (config.apple.environment === 'sandbox') {
-    log.warn('[intention] APPLE_ENVIRONMENT=sandbox — sandbox receipts will mint real credit. Never use this in production.');
+  // Both environments are always consulted now, so this is only a preference
+  // and no longer worth warning about. What is worth saying out loud is the
+  // ceiling, because it is the only bound on free credit: a sandbox Apple
+  // Account costs nothing and can buy forever.
+  if (config.apple.sandboxCreditCapGbp > 0) {
+    log.warn(`[intention] Sandbox purchases credit up to £${config.apple.sandboxCreditCapGbp} per account, for App Review and TestFlight. Set INTENTION_SANDBOX_CREDIT_CAP_GBP=0 to refuse them.`);
   }
   return true;
 }

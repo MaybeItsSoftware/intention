@@ -182,6 +182,30 @@ export function adjustBalance(subject, deltaMicros, backing = store) {
   return next;
 }
 
+// ---- Sandbox credit ledger --------------------------------------------------
+//
+// How much of a subject's balance came from sandbox purchases, which are free
+// and repeatable and so have to be capped (config.sandboxCreditCapMicros). Its
+// own counter rather than a scan of the credit records: the cap is a running
+// total consulted on every top-up, and it must not quietly reset if a record
+// is ever pruned. Deliberately never decremented on refund — a sandbox refund
+// costs the buyer nothing, so letting it restore headroom would hand back an
+// unlimited faucet one refund at a time.
+
+export function sandboxCreditKey(subject) {
+  return `sandboxCredit:${subject}`;
+}
+
+export function getSandboxCreditMicros(subject, backing = store) {
+  return Number(backing.get(sandboxCreditKey(subject)) || 0);
+}
+
+export function addSandboxCreditMicros(subject, micros, backing = store) {
+  const next = getSandboxCreditMicros(subject, backing) + micros;
+  backing.set(sandboxCreditKey(subject), next, null);
+  return next;
+}
+
 // ---- Purchase idempotency & refund tracking --------------------------------
 //
 // Keyed by the store transaction/order id alone, never combined with subject:

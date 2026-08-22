@@ -95,8 +95,21 @@ It is ignored unless `NODE_ENV=development`, and it is logged loudly at boot.
 
 Promo codes, minted in the stores' own consoles, are the supported way to put
 real credit on a real account without money changing hands — they work against
-production, unlike the `INTENTION_ALLOW_TEST_PURCHASES` / `APPLE_ENVIRONMENT`
-escape hatches, which exist only for dev and staging deployments.
+production, unlike the `INTENTION_ALLOW_TEST_PURCHASES` escape hatch, which
+exists only for dev and staging deployments.
+
+They have one hard prerequisite that is easy to discover too late: **Apple only
+issues promo codes for in-app purchases that are already approved.** Until the
+IAPs clear review there are no iOS codes to mint, and no amount of console
+hunting will produce one. Google has no such restriction.
+
+That gap is what the sandbox allowance covers. App Review and TestFlight both
+transact in Apple's *sandbox* environment, and sandbox purchases are verified
+and credited like any other — up to `INTENTION_SANDBOX_CREDIT_CAP_GBP` (default
+£1) per account, for life. Enough for a reviewer or a tester to buy once, watch
+the balance appear and talk to the coach; not enough for a free sandbox Apple
+Account to become an unlimited supply of tokens. Set it to `0` to refuse
+sandbox credit altogether.
 
 - **App Store Connect** → your app → *Promo Codes*, or the in-app purchase's
   own promo code section. The tester redeems in the app (Settings → AI access →

@@ -1,11 +1,11 @@
-import { config, findTopUp, creditMicrosForTopUp, microsToCredits } from './config.js';
+import { config, findTopUp, creditMicrosForTopUp, microsToCredits, sandboxCreditCapMicros } from './config.js';
 import { verifyAppleReceipt, verifyAppleJWS, decodeJWS, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, safeEqualString, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, alreadyCredited, markCredited,
   getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode,
-  getTokenVersion, store
+  getTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
@@ -224,7 +224,21 @@ function refreshEndpoint(body, backing) {
 async function creditTopUp(platform, subject, result, backing, deps = {}) {
   if (!alreadyCredited(platform, result.creditId, backing)) {
     const topUp = findTopUp(platform, result.productId);
-    const creditMicros = topUp ? creditMicrosForTopUp(platform, topUp.priceGbp) : 0;
+    const faceMicros = topUp ? creditMicrosForTopUp(platform, topUp.priceGbp) : 0;
+
+    // A sandbox purchase is genuine — Apple signed it, the bundle matches, the
+    // transaction id dedupes — but it moved no money and can be repeated for
+    // free, so it credits only up to a lifetime ceiling per subject. Beyond
+    // that it still verifies and still reports success, which is what keeps
+    // App Review's own repeat purchases from looking broken; it just adds
+    // nothing. Production purchases never touch any of this.
+    const sandbox = result.environment === 'sandbox';
+    let creditMicros = faceMicros;
+    if (sandbox) {
+      const headroom = Math.max(0, sandboxCreditCapMicros(platform) - getSandboxCreditMicros(subject, backing));
+      creditMicros = Math.min(faceMicros, headroom);
+    }
+
     const record = {
       subject,
       productId: result.productId,
@@ -233,13 +247,20 @@ async function creditTopUp(platform, subject, result, backing, deps = {}) {
       refunded: false,
       creditId: result.creditId,
       purchaseToken: result.purchaseToken || null,
-      orderId: result.creditId
+      orderId: result.creditId,
+      // Kept on the record so a refund clawback deducts what was actually
+      // credited, and so a capped purchase is legible in an audit rather than
+      // looking like a pricing bug.
+      ...(sandbox ? { environment: 'sandbox', faceMicros } : {})
     };
     markCredited(platform, result.creditId, record, backing);
     if (result.purchaseToken && result.purchaseToken !== result.creditId) {
       markCredited(platform, result.purchaseToken, record, backing);
     }
-    if (creditMicros > 0) adjustBalance(subject, creditMicros, backing);
+    if (creditMicros > 0) {
+      if (sandbox) addSandboxCreditMicros(subject, creditMicros, backing);
+      adjustBalance(subject, creditMicros, backing);
+    }
   }
   if (platform === 'google') {
     // Google's own authoritative "this token is spent" record — insurance
