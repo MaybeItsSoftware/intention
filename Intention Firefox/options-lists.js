@@ -103,7 +103,7 @@ function renderRecommendGrid(container, more, ordered, seenCount, buildCard, rer
 function currentAddSiteLimit() {
   const el = document.getElementById('domain-limit-input');
   const val = parseInt(el ? el.value : '', 10);
-  return !isNaN(val) && val > 0 ? val : 10;
+  return !isNaN(val) && val > 0 ? val : DEFAULT_DAILY_MAX_MINUTES;
 }
 
 async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
@@ -248,7 +248,7 @@ function renderSetupDomains() {
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
-    const limitInfo = setupDomainLimits[d] || { maxGrants: 3, maxMinutes: 10 };
+    const limitInfo = setupDomainLimits[d] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
 
     // No badge: the wizard hasn't asked about blocking mode yet at this step,
     // so there is nothing true to put there.
@@ -266,21 +266,38 @@ function renderSetupDomains() {
     fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, d, (e) => {
       const val = parseInt(e.target.value, 10);
       if (!isNaN(val) && val > 0) {
-        if (!setupDomainLimits[d]) {
-          setupDomainLimits[d] = { maxGrants: 3 };
-        }
-        setupDomainLimits[d].maxMinutes = val;
+        entryFor(setupDomainLimits, d).maxMinutes = val;
+        // The lenient window is measured against the daily max, so the slider's
+        // track just changed length under it. Repaint rather than leave a split
+        // sitting at a position that now means something else.
+        renderSetupDomains();
       }
     }));
+
+    // Coach-only, matching the settings row: a simple-mode target never turns
+    // strict, so a lenient/strict split has nothing to say there.
+    if (setupBlockingMode !== 'simple') {
+      li.appendChild(buildSetupTimelineField(d, limitInfo.maxMinutes, limitInfo.looseUntilMinutes, (value) => {
+        entryFor(setupDomainLimits, d).looseUntilMinutes = value;
+        saveSetupDraft();
+      }));
+    }
 
     list.appendChild(li);
   }
 }
 
+// The limits entry for a target in a draft map, created if this is the first
+// thing written about it. Both setup lists grew the same four lines inline.
+function entryFor(limits, target) {
+  if (!limits[target]) limits[target] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
+  return limits[target];
+}
+
 function addSetupApp(app) {
   if (setupBlockedApps.includes(app.packageName)) return;
   setupBlockedApps.push(app.packageName);
-  setupAppLimits[app.packageName] = { maxGrants: 3, maxMinutes: 10 };
+  setupAppLimits[app.packageName] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
   setupAppLabels[app.packageName] = app.label;
   renderSetupApps();
 }
@@ -293,7 +310,7 @@ function renderSetupApps() {
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
     const name = setupAppLabels[pkg] || pkg;
-    const limitInfo = setupAppLimits[pkg] || { maxGrants: 3, maxMinutes: 10 };
+    const limitInfo = setupAppLimits[pkg] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
 
     const { li, fields } = buildBlockedRow({
       target: pkg,
@@ -310,12 +327,17 @@ function renderSetupApps() {
     fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, name, (e) => {
       const val = parseInt(e.target.value, 10);
       if (!isNaN(val) && val > 0) {
-        if (!setupAppLimits[pkg]) {
-          setupAppLimits[pkg] = { maxGrants: 3 };
-        }
-        setupAppLimits[pkg].maxMinutes = val;
+        entryFor(setupAppLimits, pkg).maxMinutes = val;
+        renderSetupApps();
       }
     }));
+
+    if (setupBlockingMode !== 'simple') {
+      li.appendChild(buildSetupTimelineField(name, limitInfo.maxMinutes, limitInfo.looseUntilMinutes, (value) => {
+        entryFor(setupAppLimits, pkg).looseUntilMinutes = value;
+        saveSetupDraft();
+      }));
+    }
 
     list.appendChild(li);
   }

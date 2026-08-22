@@ -834,7 +834,7 @@ async function addDomain() {
   }
 
   const limitVal = parseInt(limitInput.value, 10);
-  const limit = !isNaN(limitVal) && limitVal > 0 ? limitVal : 10;
+  const limit = !isNaN(limitVal) && limitVal > 0 ? limitVal : DEFAULT_DAILY_MAX_MINUTES;
 
   const added = await addDomainToBlocklist(domain, limit);
   if (!added) {
@@ -903,7 +903,7 @@ async function addApp(app) {
   const labels = state.appLabels || {};
   if (!apps.includes(app.packageName)) {
     apps.push(app.packageName);
-    limits[app.packageName] = { maxGrants: 3, maxMinutes: 10 };
+    limits[app.packageName] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
     labels[app.packageName] = app.label;
     await sendBg({ action: 'saveSettings', config: { blockedApps: apps, appLimits: limits, appLabels: labels } });
     renderApps(apps, limits, labels, state.blockingMode, state.serviceReasons || {});
@@ -942,7 +942,7 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
   };
   for (const pkg of apps) {
     const name = labels[pkg] || pkg;
-    const limitInfo = limits[pkg] || { maxGrants: 3, maxMinutes: 10 };
+    const limitInfo = limits[pkg] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
 
     const { li, fields } = buildBlockedRow({
       target: pkg,

@@ -281,11 +281,19 @@ const ROW_KINDS = {
 // The band and the number update on `input` — live, as you drag — but nothing
 // is saved until `change`, which for a range fires on release. Otherwise
 // dragging left to right would open a coach gate for every pixel on the way.
-function buildLooseTimelineField(target, label, limitInfo, kind, maxMinutes, rerender) {
-  const stored = looseUntilFor(limitInfo);
-  // A max that has since been lowered can leave a split beyond the end of the
-  // track. Past the end and absent mean the same thing here — lenient all day.
-  const effective = stored == null ? maxMinutes : Math.min(stored, maxMinutes);
+// The widget on its own: band, slider, number box, scale, note. It knows how
+// to paint a value and how to report one that was committed, and nothing about
+// where that value goes.
+//
+// Split out because setup needs the same control under a completely different
+// rule. In settings, lengthening the lenient window is a loosening and has to
+// be argued past the coach (see buildLooseTimelineField below). In the wizard
+// there is nothing to argue with and nothing saved yet — you are choosing the
+// rule, not relaxing one you already set — so the same drag just writes to the
+// draft. Sharing the markup rather than the policy is the whole point: the two
+// sliders must look and read identically, and must not behave identically.
+function buildTimelineWidget({ label, maxMinutes, value, onCommit }) {
+  const effective = value;
 
   const field = document.createElement('div');
   field.className = 'row-field row-timeline-field';
@@ -359,49 +367,26 @@ function buildLooseTimelineField(target, label, limitInfo, kind, maxMinutes, rer
   };
   paint(effective);
 
-  const persist = async (value) => {
-    const state = await getConfig();
-    const currentLimits = state[kind.persistKey] || {};
-    if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
-    currentLimits[target].looseUntilMinutes = value;
-    await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
-  };
-
-  // Direction is the whole of the rule here, exactly as it is for the daily
-  // max above: a SHORTER lenient window is a tightening and saves itself, a
-  // LONGER one is a loosening and has to be argued for.
-  const commit = async (raw) => {
+  // Parsing and clamping belong to the widget; deciding what a committed value
+  // means belongs to the caller. `paint` goes with it so a caller that refuses
+  // the change can put the control back where it was.
+  //
+  // Returns onCommit's result, which for the settings policy is a promise that
+  // only settles once the write has landed. Swallowing it here would make every
+  // save fire-and-forget: nothing could await one, and a caller that reloaded
+  // the row afterwards would race its own write.
+  const commit = (raw) => {
     const parsed = parseInt(raw, 10);
     if (isNaN(parsed)) {
       paint(effective);
-      return;
+      return undefined;
     }
     const value = Math.max(0, Math.min(maxMinutes, parsed));
     if (value === effective) {
       paint(effective);
-      return;
+      return undefined;
     }
-    if (value < effective) {
-      paint(value);
-      await persist(value);
-      return;
-    }
-    paint(effective); // revert until/unless approved
-    applyOrGate({
-      // Only ever reachable in coach mode — the whole band is coach-only, so
-      // there is no simple-mode branch to take here. Passed anyway, and read
-      // from the row, so the day this moves it does the right thing.
-      isSimple: false,
-      isApp: kind.isApp,
-      appLabel: kind.isApp ? label : undefined,
-      changeType: kind.increaseLoose,
-      domain: target,
-      currentValue: effective,
-      newValue: value,
-      title: `Stay lenient for longer on ${label}?`,
-      subtitle: `Right now your coach goes strict after ${effective} min a day on ${label}. You're asking for ${value}. Convince your coach.`,
-      onApproved: rerender
-    });
+    return onCommit(value, { paint, effective });
   };
 
   range.addEventListener('input', () => paint(parseInt(range.value, 10) || 0));
@@ -412,6 +397,74 @@ function buildLooseTimelineField(target, label, limitInfo, kind, maxMinutes, rer
   timeline.append(track, scale, note);
   field.appendChild(timeline);
   return field;
+}
+
+// Settings: the coach-gated slider. Shortening the lenient window tightens the
+// rule and saves itself; lengthening it loosens the rule and has to be argued
+// past the coach — the same direction test the daily max above uses.
+function buildLooseTimelineField(target, label, limitInfo, kind, maxMinutes, rerender) {
+  const stored = looseUntilFor(limitInfo);
+  // A max that has since been lowered can leave a split beyond the end of the
+  // track. Past the end and absent mean the same thing here — lenient all day.
+  const effective = stored == null ? maxMinutes : Math.min(stored, maxMinutes);
+
+  const persist = async (value) => {
+    const state = await getConfig();
+    const currentLimits = state[kind.persistKey] || {};
+    if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
+    currentLimits[target].looseUntilMinutes = value;
+    await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
+  };
+
+  return buildTimelineWidget({
+    label,
+    maxMinutes,
+    value: effective,
+    onCommit: async (value, { paint }) => {
+      if (value < effective) {
+        paint(value);
+        await persist(value);
+        return;
+      }
+      paint(effective); // revert until/unless approved
+      applyOrGate({
+        // Only ever reachable in coach mode — the whole band is coach-only, so
+        // there is no simple-mode branch to take here. Passed anyway, and read
+        // from the row, so the day this moves it does the right thing.
+        isSimple: false,
+        isApp: kind.isApp,
+        appLabel: kind.isApp ? label : undefined,
+        changeType: kind.increaseLoose,
+        domain: target,
+        currentValue: effective,
+        newValue: value,
+        title: `Stay lenient for longer on ${label}?`,
+        subtitle: `Right now your coach goes strict after ${effective} min a day on ${label}. You're asking for ${value}. Convince your coach.`,
+        onApproved: rerender
+      });
+    }
+  });
+}
+
+// Setup: the same control, ungated, writing to the in-memory draft. Nothing is
+// committed until Finish, so there is no rule yet to loosen and no coach yet to
+// loosen it past — every move is just the user choosing, in either direction.
+//
+// An unset window means lenient all day, so the slider opens at the far end
+// rather than at 0: starting at 0 would mean "strict from the first minute",
+// which is the opposite of what an untouched control should say.
+function buildSetupTimelineField(label, maxMinutes, looseUntilMinutes, onChange) {
+  const stored = normalizeLooseUntil(looseUntilMinutes);
+  const effective = stored == null ? maxMinutes : Math.min(stored, maxMinutes);
+  return buildTimelineWidget({
+    label,
+    maxMinutes,
+    value: effective,
+    onCommit: (value, { paint }) => {
+      paint(value);
+      onChange(value);
+    }
+  });
 }
 
 // ---- The two site-specific answers (buildRowReasonFields) ------------------
@@ -579,10 +632,10 @@ function buildRowBody({ li, fields, target, label, limitInfo, globalMode, kind, 
   const isSimple = effectiveModeFor(limitInfo, globalMode) === 'simple';
   const stored = limitInfo.maxMinutes !== undefined
     ? limitInfo.maxMinutes
-    : (limitInfo.max_minutes_per_day ?? 10);
+    : (limitInfo.max_minutes_per_day ?? DEFAULT_DAILY_MAX_MINUTES);
   // A non-positive maxMinutes means unlimited; the box still has to show a
-  // number you can edit, and 10 is what every other default here is.
-  const currentMins = stored > 0 ? stored : 10;
+  // number you can edit, and the add-default is what every other one here is.
+  const currentMins = stored > 0 ? stored : DEFAULT_DAILY_MAX_MINUTES;
 
   fields.appendChild(buildDailyLimitField(currentMins, label, async (e) => {
     const val = parseInt(e.target.value, 10);
@@ -644,7 +697,7 @@ function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReason
     renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
   };
   for (const d of domains) {
-    const limitInfo = limits[d] || { maxGrants: 3, maxMinutes: 10 };
+    const limitInfo = limits[d] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
 
     const { li, fields } = buildBlockedRow({
       target: d,

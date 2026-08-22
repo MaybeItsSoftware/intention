@@ -23,6 +23,18 @@ const BLOCK_DEFAULTS = { mode: 'coach', behavior: 'pass', passMinutes: 10 };
 // maxMinutes -1 means "no daily ceiling", which is not the same as 0.
 const LIMIT_DEFAULTS = { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: null };
 
+// What a newly added site or app gets as its absolute daily max, and what the
+// UI shows in a minutes box that has nothing real to show. Distinct from
+// LIMIT_DEFAULTS.maxMinutes above, which is the rule engine's answer for a
+// target carrying no entry at all — that stays -1 (uncapped), because changing
+// it would silently put a ceiling on every target an existing user has left
+// unlimited. This one only ever decides what a *new* entry starts at.
+//
+// Was 10, which turned out to be short enough that the first thing a lot of
+// people did was argue with the coach to raise it — an argument the coach is
+// designed to make hard, aimed at a number nobody had actually chosen.
+const DEFAULT_DAILY_MAX_MINUTES = 30;
+
 // `looseUntilMinutes`: how many of today's minutes on a target the coach spends
 // in its lenient phase before it turns strict (see renderPhaseLine in
 // prompts.js). Absent is a real answer, not a missing one — it means no split,

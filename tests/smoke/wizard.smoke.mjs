@@ -85,19 +85,32 @@ async function main() {
     });
     await page.waitForTimeout(60);
 
+    // ── The lenient/strict slider is now settable here, not only in settings.
+    // It shares its markup with the settings row but not its rule: there is no
+    // coach to argue past yet, so a drag in either direction just takes.
+    const sliders = await page.locator('#setup-websites-list .row-timeline-range').count();
+    record('every setup row carries the loose/strict slider', sliders === 2, `found ${sliders}`);
+
+    const sliderMax = await page.locator('#setup-websites-list .row-timeline-range').first().getAttribute('max');
+    record('the slider spans the row\'s own daily max', sliderMax === '10', sliderMax);
+
+    // Lengthening the window is the direction settings makes you argue for.
+    // Here it must simply apply, and survive into the draft.
+    await page.locator('#setup-websites-list .row-timeline-number').first().fill('3');
+    await page.locator('#setup-websites-list .row-timeline-number').first().dispatchEvent('change');
+    await page.waitForTimeout(80);
+    const drafted = await page.evaluate(() => setupDomainLimits['instagram.com']?.looseUntilMinutes);
+    record('a change on it lands in the draft with no coach gate', drafted === 3, String(drafted));
+
     // The counter has to grow the moment the list does — the whole point of
     // recomputing the order inside refreshSetupNav. A browser build is
-    // welcome + sites + why + mode + access + done, so two sites make eight.
+    // welcome + sites + mode + access + done, so two sites make seven.
     step = await visibleStep(page);
     record('the step count grows with the blocklist',
-      step.label === 'Step 2 of 8', step.label);
+      step.label === 'Step 2 of 7', step.label);
 
-    // ── Global why, then one screen per service.
-    await next(page);
-    step = await visibleStep(page);
-    record('the global why step still comes first',
-      step.ids.join() === 'setup-step-why', JSON.stringify(step));
-
+    // ── Straight from the sites list into one screen per service. The general
+    // "what are you protecting" step used to sit in between.
     await next(page);
     step = await visibleStep(page);
     record('the first per-service screen is Instagram, named from the catalogue',
@@ -108,7 +121,7 @@ async function main() {
     record('the question names the service',
       whyLabel.includes('Instagram'), whyLabel);
 
-    // "Step 4 of 8" says where you are in the wizard but not how much of the
+    // "Step 3 of 7" says where you are in the wizard but not how much of the
     // per-service run is left, which is the bit that reads as endless.
     record('the run says how long it is',
       step.members.startsWith('1 of 2'), step.members);

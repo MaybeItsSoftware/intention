@@ -71,7 +71,7 @@
 
       <section class="card setup-step" id="setup-step-apps" hidden>
         <h3 id="setup-apps-title">Which apps pull you in?</h3>
-        <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 10 min/day absolute max you can adjust.</p>
+        <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 30 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
         <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
         <button type="button" id="setup-apps-recommend-more" class="recommend-more" hidden></button>
@@ -82,7 +82,7 @@
 
       <section class="card setup-step" id="setup-step-sites" hidden>
         <h3>Which websites pull you in?</h3>
-        <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 10 min/day absolute max you can adjust.</p>
+        <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 30 min/day absolute max you can adjust.</p>
         <button type="button" id="setup-open-add-site-btn" class="primary add-row-btn">+ Add website</button>
         <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
         <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
@@ -90,19 +90,14 @@
         <p class="setup-check" id="setup-sites-empty-hint">Nothing picked yet. Add at least one site or app before you finish — you can change the list any time.</p>
       </section>
 
-      <section class="card setup-step" id="setup-step-why" hidden>
-        <h3>What are you protecting?</h3>
-        <p class="subtitle" id="setup-projects-subtitle">Two questions, both optional. Your coach uses these to argue your own case back to you when you try to get past a block.</p>
-        <label for="setup-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
-        <div class="input-group">
-          <textarea id="setup-projects-input" rows="4" placeholder="e.g. Coding my side project, writing, reading, exercising, or being present with family..."></textarea>
-        </div>
-        <label for="setup-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
-        <div class="input-group">
-          <textarea id="setup-reasons-input" rows="4" placeholder="e.g. They make me feel anxious and scattered, I scroll mindlessly to procrastinate on hard tasks, and I want to reclaim my focus..."></textarea>
-        </div>
-        <p class="subtitle">Leave either blank if you'd rather not say — your coach will just have less to go on.</p>
-      </section>
+      <!-- The two general questions that used to stand here — "what are you
+           protecting" and "how do these sites make you feel" — are gone. They
+           asked in the abstract what the per-service step below now asks
+           concretely, once per thing you actually blocked, and a concrete
+           answer is both easier to give and better material for the coach. The
+           general pair mostly got skipped or filled with a sentence the coach
+           could do nothing with. What the coach knows about you in general is
+           now built through conversation instead (the update_context tool). -->
 
       <!-- One section, repainted once per service. Generating a section per
            selection would break the wizard guard in tests/options-wizard.test.js,
@@ -374,7 +369,7 @@
         <label for="domain-input">Website address</label>
         <div class="input-group">
           <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
-          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="10" aria-label="Absolute daily max in minutes">
+          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="30" aria-label="Absolute daily max in minutes">
           <button id="add-btn" class="primary">Add</button>
         </div>
         <p class="int-pw-error" id="add-site-error" hidden></p>

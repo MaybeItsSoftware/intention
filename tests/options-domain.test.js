@@ -130,12 +130,13 @@ const orderFor = (state) => vm.runInContext(`
 `, ctx);
 
 describe('computeStepOrder', () => {
-  it('adds one purpose step per service, between the global why and the mode', () => {
+  // The general "what are you protecting" step used to sit between the sites
+  // step and these, asking in the abstract what each of these asks concretely.
+  it('adds one purpose step per service, straight after the sites step', () => {
     const order = JSON.parse(orderFor({ domains: ['reddit.com', 'x.com'] }));
     expect(order.map(s => s.id)).toEqual([
       'setup-step-welcome',
       'setup-step-sites',
-      'setup-step-why',
       'setup-step-purpose',
       'setup-step-purpose',
       'setup-step-mode',
@@ -247,16 +248,16 @@ describe('currentAddSiteLimit', () => {
 
   // The same fallback addDomain() applies on the typed path, so the two routes
   // into the blocklist can't disagree about what an empty box means.
-  it('falls back to 10 on anything blank, junk or non-positive', () => {
+  it('falls back to the add-default on anything blank, junk or non-positive', () => {
     for (const value of ['', '   ', 'abc', '0', '-5']) {
-      expect(withField(value), value).toBe(10);
+      expect(withField(value), value).toBe(ctx.DEFAULT_DAILY_MAX_MINUTES);
     }
   });
 
   // The setup wizard renders its own chip grid inline, and the dialog's field
   // is not always in the document the wizard is looking at; reading a missing
   // field must not throw there.
-  it('falls back to 10 when the field is not on the page at all', () => {
-    expect(ctx.currentAddSiteLimit()).toBe(10);
+  it('falls back to the add-default when the field is not on the page at all', () => {
+    expect(ctx.currentAddSiteLimit()).toBe(ctx.DEFAULT_DAILY_MAX_MINUTES);
   });
 });

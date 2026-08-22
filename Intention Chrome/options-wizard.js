@@ -130,11 +130,6 @@ function showSetupView() {
     onModeEdited();
   };
 
-  // Same for the two free-text answers, which someone can spend a while on.
-  for (const id of ['setup-projects-input', 'setup-reasons-input']) {
-    document.getElementById(id).addEventListener('change', saveSetupDraft);
-  }
-
   // ---- Step: per-service questions ----
   wirePurposeStep();
 
@@ -266,7 +261,7 @@ function computeStepOrder() {
   const order = ['setup-step-welcome'];
   if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
   if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
-  order.push('setup-step-sites', 'setup-step-why');
+  order.push('setup-step-sites');
   const steps = order.map(id => ({ id, group: null }));
   for (const group of currentServiceGroups()) {
     steps.push({ id: 'setup-step-purpose', group: group.key });
@@ -326,8 +321,6 @@ let setupDraftReady = false;
 
 function saveSetupDraft() {
   if (!setupDraftReady) return;
-  const projects = document.getElementById('setup-projects-input');
-  const reasons = document.getElementById('setup-reasons-input');
   // The step is stored as an id plus a service key rather than an index: the
   // order's length now depends on the selection, so an index saved before a
   // site was added points somewhere else entirely when it is read back.
@@ -343,9 +336,7 @@ function saveSetupDraft() {
     serviceReasons: setupServiceReasons,
     blockingMode: setupBlockingMode,
     simpleBehavior: setupSimpleBehavior,
-    simplePassMinutes: setupSimplePassMinutes,
-    projects: projects ? projects.value : '',
-    reasons: reasons ? reasons.value : ''
+    simplePassMinutes: setupSimplePassMinutes
   };
   try { chrome.storage.local.set({ [SETUP_DRAFT_KEY]: draft }); } catch (e) {}
 }
@@ -379,10 +370,9 @@ async function restoreSetupDraft() {
   if (draft.simpleBehavior === 'hard' || draft.simpleBehavior === 'pass') setupSimpleBehavior = draft.simpleBehavior;
   if (Number(draft.simplePassMinutes) > 0) setupSimplePassMinutes = Number(draft.simplePassMinutes);
 
-  const projects = document.getElementById('setup-projects-input');
-  const reasons = document.getElementById('setup-reasons-input');
-  if (projects) projects.value = draft.projects || '';
-  if (reasons) reasons.value = draft.reasons || '';
+  // draft.projects / draft.reasons may still be present in a draft written
+  // before the general questions were dropped. Nothing reads them now; they go
+  // when the draft is cleared at Finish.
 
   setupDraftReady = true;
   // These rebuild the step order off the restored selection, which is what the
@@ -660,16 +650,6 @@ function collectServiceReasons() {
 async function finishSetup() {
   const isSimple = setupBlockingMode === 'simple';
 
-  const projectsAns = document.getElementById('setup-projects-input').value.trim();
-  const reasonsAns = document.getElementById('setup-reasons-input').value.trim();
-
-  // Create user context
-  const userContext = `Goals and activities I want to focus on:
-${projectsAns || '(not configured)'}
-
-How distracting sites make me feel and why I want to step away:
-${reasonsAns || '(not configured)'}`;
-
   const simpleOverrides = isSimple ? { behavior: setupSimpleBehavior, passMinutes: setupSimplePassMinutes } : {};
 
   // Build domain limits object
@@ -677,7 +657,7 @@ ${reasonsAns || '(not configured)'}`;
   for (const d of setupBlockedDomains) {
     domainLimits[d] = setupDomainLimits[d] || {
       maxGrants: 3,
-      maxMinutes: 10,
+      maxMinutes: DEFAULT_DAILY_MAX_MINUTES,
       ...simpleOverrides
     };
   }
@@ -687,7 +667,7 @@ ${reasonsAns || '(not configured)'}`;
   for (const p of setupBlockedApps) {
     appLimits[p] = setupAppLimits[p] || {
       maxGrants: 3,
-      maxMinutes: 10,
+      maxMinutes: DEFAULT_DAILY_MAX_MINUTES,
       ...simpleOverrides
     };
   }
@@ -705,9 +685,11 @@ ${reasonsAns || '(not configured)'}`;
       provider: existing?.provider || '',
       apiKey: existing?.apiKey || '',
       model: existing?.model || '',
-      userContext,
-      contextProjects: projectsAns,
-      contextReasons: reasonsAns,
+      // No userContext / contextProjects / contextReasons: setup no longer asks
+      // the two general questions, and these keys are deliberately absent
+      // rather than empty. saveSetup writes every field it is given, so sending
+      // '' here would wipe context an existing user had built up with the coach
+      // — the same trap the provider key above is carried through to avoid.
       blockedDomains: setupBlockedDomains,
       domainLimits,
       blockedApps: setupBlockedApps,
