@@ -995,21 +995,62 @@ describe('prompt cache split', () => {
 // Minute precision in the now-line made every message's volatile block unique;
 // a coach gains nothing from knowing it is 11:41 rather than 11:30.
 describe('coarse clock', () => {
-  it('floors to the previous quarter hour and zeroes the seconds', () => {
+  it('rounds to the nearest quarter hour and zeroes the seconds', () => {
     const d = P.coarseClock(new Date(2026, 7, 15, 13, 47, 33, 900));
     expect(d.getHours()).toBe(13);
     expect(d.getMinutes()).toBe(45);
     expect(d.getSeconds()).toBe(0);
     expect(d.getMilliseconds()).toBe(0);
-    expect(P.coarseClock(new Date(2026, 7, 15, 13, 14, 59)).getMinutes()).toBe(0);
+    expect(P.coarseClock(new Date(2026, 7, 15, 13, 14, 59)).getMinutes()).toBe(15);
   });
 
-  it('renderNowLine only ever shows quarter-hour minutes', () => {
+  // Flooring was a quarter of an hour stale at worst while calling itself
+  // "the nearest quarter hour". Rounding is never more than 7 minutes out.
+  it('is never more than seven and a half minutes from the real time', () => {
+    for (let m = 0; m < 60; m++) {
+      const real = new Date(2026, 7, 15, 9, m);
+      const drift = Math.abs(P.coarseClock(real).getTime() - real.getTime());
+      expect(drift).toBeLessThanOrEqual(8 * 60 * 1000);
+    }
+  });
+
+  // Rounding up out of the last quarter of an hour has to carry the date with
+  // it, or {{day}} would name yesterday for a template rendered at 23:53.
+  it('rolls the hour and date when it rounds up past midnight', () => {
+    const d = P.coarseClock(new Date(2026, 7, 15, 23, 53));
+    expect(d.getHours()).toBe(0);
+    expect(d.getMinutes()).toBe(0);
+    expect(d.getDate()).toBe(16);
+  });
+
+  // The now-line renders below CACHE_BREAK_MARKER, in the segment that is
+  // re-sent every turn whatever it says, so it costs nothing to be exact —
+  // and its neighbours there (minutes used today) already move faster.
+  it('renderNowLine reports the real minute, not a quarter hour', () => {
     for (const m of [0, 7, 22, 38, 59]) {
       const line = P.renderNowLine(new Date(2026, 7, 15, 9, m));
-      expect(line).toMatch(/:(00|15|30|45)\b/);
-      expect(line).toContain('(to the nearest quarter hour)');
+      expect(line).toContain(`:${String(m).padStart(2, '0')}`);
+      expect(line).not.toContain('quarter hour');
     }
+  });
+
+  // 23:59 used to reach the coach as 23:45 — the hour where being wrong reads
+  // worst, since "nearly midnight" is most of what the coach does with it.
+  it('renderNowLine says the right day at the end of the night', () => {
+    const line = P.renderNowLine(new Date(2026, 7, 15, 23, 59));
+    expect(line).toContain('23:59');
+    expect(line).toContain('Saturday');
+  });
+
+  // The template variable is the one that still has to stay coarse: it is
+  // substituted into the user's instructions, above the cache break.
+  it('keeps {{time}} on the quarter hour so a template cannot bust the cache', () => {
+    const prompt = P.buildGateSystemPrompt({
+      domain: 'x.com', coachInstructions: 'It is {{time}} on {{day}}.',
+      grantsToday: 0, grantsCap: 3, minutesCap: 0, minutesTodaySite: 0,
+      reasonsToday: [], sessionsToday: [], recentDays: []
+    });
+    expect(prompt).toMatch(/It is \d\d:(00|15|30|45) on \w+day\./);
   });
 });
 

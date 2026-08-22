@@ -275,23 +275,43 @@ function renderReasonsToday(reasonsToday) {
 // instructions never referenced one, so in practice the coach was time-blind.
 // Stating it in the usage block means it is always there.
 //
-// The clock is floored to the previous quarter hour on purpose: a coach gains
-// nothing from knowing it is 11:41 rather than 11:30, but a minute-precision
-// timestamp makes every message's volatile block unique — which, for hosted
-// users, means the prompt cache re-writes the suffix on every single turn.
-// Fifteen minutes is coarse enough to cache across a short conversation and
-// fine enough that "nearly midnight" still reads as nearly midnight.
+// Coarsened to a quarter hour, and used for the {{time}}/{{day}} template
+// variables ONLY — not for the now-line below.
+//
+// The distinction is the cache break, not the clock. A user's instructions are
+// where {{time}} gets substituted, and those sit ABOVE CACHE_BREAK_MARKER, in
+// the segment splitSystemForCache flags for cache_control. Minute precision
+// there would invalidate the cached prefix once a minute for anyone whose
+// template mentions the time, which is exactly the cache miss the break was
+// introduced to stop. Four values an hour is the compromise that keeps such a
+// template usable.
 function coarseClock(now) {
   const d = new Date(now || Date.now());
-  d.setMinutes(Math.floor(d.getMinutes() / 15) * 15, 0, 0);
+  d.setMinutes(Math.round(d.getMinutes() / 15) * 15, 0, 0);
   return d;
 }
 
+// Accurate to the minute, deliberately. This line renders inside the usage
+// block, which BEGINS with CACHE_BREAK_MARKER — so it lands in the volatile
+// segment that carries no cache_control and is re-sent in full on every turn
+// whatever it says. Its neighbours there already move faster than any clock:
+// minutes-used-today changes between one message and the next.
+//
+// So the quarter-hour coarsening that used to apply here bought nothing. It
+// predates the cache break — back when the clock sat near the top of one long
+// string, minute precision really did cost a full cache miss, and splitting
+// the prompt is what actually fixed that. Coarsening the line was the older,
+// blunter half of the same fix, left in place after the better half landed.
+//
+// It was also wrong in the direction that reads worst: floored, then described
+// as "the nearest quarter hour", so 23:59 reached the coach as 23:45 — an hour
+// that was nearly tomorrow reported as still yesterday, in the part of the day
+// where a coach leans hardest on the clock.
 function renderNowLine(now) {
-  const d = coarseClock(now);
+  const d = new Date(now || Date.now());
   const day = d.toLocaleDateString([], { weekday: 'long' });
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return `Right now it is ${day}, ${time} their local time (to the nearest quarter hour).`;
+  return `Right now it is ${day}, ${time} their local time.`;
 }
 
 function formatClock(timestamp) {
