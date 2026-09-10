@@ -80,6 +80,7 @@ function setBillingError(message) {
 async function refreshBilling() {
     const statusEl = document.getElementById("billing-status");
     const plansEl = document.getElementById("billing-plans");
+    const redeemBtn = document.getElementById("billing-redeem");
     const restoreBtn = document.getElementById("billing-restore");
     setBillingError("");
     plansEl.innerHTML = "";
@@ -87,11 +88,13 @@ async function refreshBilling() {
     const result = await billingCall("products");
     if (result && result.available === false) {
         statusEl.textContent = result.error || "In-app purchases aren't available on this Mac.";
+        redeemBtn.hidden = true;
         restoreBtn.hidden = true;
         return;
     }
 
     statusEl.textContent = "Buy coaching credit to turn on your coach in Safari.";
+    redeemBtn.hidden = false;
     restoreBtn.hidden = false;
 
     const list = (result && result.products) || [];
@@ -183,6 +186,28 @@ document.getElementById("billing-restore").addEventListener("click", async (even
         return;
     }
     await refreshBilling();
+});
+
+document.getElementById("billing-redeem").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const statusEl = document.getElementById("billing-status");
+    setBillingError("");
+    const idleLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Opening App Store…";
+    const result = await billingCall("redeem");
+    button.textContent = idleLabel;
+    button.disabled = false;
+    if (!result || result.status === "cancelled") return;
+    if (result.status === "purchased") {
+        statusEl.textContent = "Code redeemed — your coaching credit is ready in Safari.";
+        return;
+    }
+    if (result.status === "none") {
+        statusEl.textContent = result.error || "Finish redeeming in the App Store. Your credit will appear automatically.";
+        return;
+    }
+    setBillingError(result.error || "That code couldn't be redeemed.");
 });
 
 refreshBilling();

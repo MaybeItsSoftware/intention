@@ -28,7 +28,12 @@ enum AppGroupConfig {
         // The In-App Purchase entitlement. StoreKit only runs in the app, so
         // this is how a subscription bought there reaches the Safari extension.
         "entitlement",
-        "setupComplete"
+        "setupComplete",
+        // Kept in lockstep with tracking.js. These are declarative blocking
+        // configuration, never usage/activity data; an encrypted restore made
+        // in the app must be visible to Safari too.
+        "serviceReasons", "blockingMode", "simpleBehavior", "simplePassMinutes",
+        "leaveDelayMinutes"
     ]
 
     static let extensionLastSeenAtKey = "extensionLastSeenAt"

@@ -959,8 +959,8 @@ function renderDoneStep() {
   }
 
   document.getElementById('setup-done-note').textContent = setupBlockingMode === 'simple'
-    ? 'You can switch to a coach any time from Settings.'
-    : 'If you skipped turning your coach on, your sites stay blocked — you just can\'t talk your way past them until you set that up in Settings → AI access.';
+    ? 'You can switch to a coach any time from Settings. Adding another device later? AI access uses a recovery code; settings sync uses a separate sync key. Both are optional and live in Settings.'
+    : 'If you skipped turning your coach on, your sites stay blocked — you just can\'t talk your way past them until you set that up in Settings → AI access. Adding another device later? AI access uses a recovery code; settings sync uses a separate sync key.';
 }
 
 // The welcome step's checklist doubles as an agenda. It matters most on iOS,

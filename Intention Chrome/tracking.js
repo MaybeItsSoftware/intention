@@ -81,6 +81,10 @@ const CONFIG_KEYS = [
   // extension through this bridge or the extension's coach stays locked.
   'entitlement',
   'setupComplete',
+  // These are configuration, not activity data. They have to cross the App
+  // Group too: otherwise an encrypted restore in the native app updates its
+  // WebView but leaves Safari using the previous coaching mode and reasons.
+  'serviceReasons', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
   // The cool-off the user put on removing Intention. It rides this bridge
   // because on Apple platforms the settings page the user changes it on is the
   // one inside the app, not the one inside the extension, and the two have to

@@ -49,6 +49,27 @@ enum AppGroupStorage {
         defaults.set(data, forKey: storageKey)
     }
 
+    // Mirrors chrome.storage.local.remove: removes keys from the store.
+    static func remove(_ keys: [String]) {
+        guard let defaults, !keys.isEmpty else { return }
+        var all = readAll()
+        var changed = false
+        for key in keys {
+            if all.removeValue(forKey: key) != nil {
+                changed = true
+            }
+        }
+        guard changed, let data = try? JSONSerialization.data(withJSONObject: all, options: []) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    // Mirrors chrome.storage.local.clear: clears all items.
+    static func clear() {
+        guard let defaults else { return }
+        guard let data = try? JSONSerialization.data(withJSONObject: [String: Any](), options: []) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
     // Extension-facing: only the keys in AppGroupConfig.configKeys.
     static func configSubset() -> [String: Any] {
         get(AppGroupConfig.configKeys)

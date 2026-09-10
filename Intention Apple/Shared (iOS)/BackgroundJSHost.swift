@@ -62,6 +62,9 @@ final class BackgroundJSHost: NSObject {
 
         let hostedWebView = WKWebView(frame: .zero, configuration: configuration)
         hostedWebView.navigationDelegate = self
+        if #available(iOS 16.4, macOS 13.3, *) {
+            hostedWebView.isInspectable = true
+        }
         webView = hostedWebView
 
         guard let url = Bundle.main.url(forResource: "background", withExtension: "html") else {
@@ -240,6 +243,15 @@ extension BackgroundJSHost: WKScriptMessageHandler {
         case "setStorage":
             let items = body["items"] as? [String: Any] ?? [:]
             AppGroupStorage.set(items)
+            invokeJSCallback(callbackId, result: [String: Any]())
+
+        case "removeStorage":
+            let keys = body["keys"] as? [String] ?? []
+            AppGroupStorage.remove(keys)
+            invokeJSCallback(callbackId, result: [String: Any]())
+
+        case "clearStorage":
+            AppGroupStorage.clear()
             invokeJSCallback(callbackId, result: [String: Any]())
 
         case "messageResponse":

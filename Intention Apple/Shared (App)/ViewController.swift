@@ -59,6 +59,9 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         super.viewDidLoad()
 
         self.webView.navigationDelegate = self
+        if #available(iOS 16.4, macOS 13.3, *) {
+            self.webView.isInspectable = true
+        }
 
 #if os(iOS)
         self.webView.scrollView.isScrollEnabled = true
@@ -171,6 +174,14 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 #endif
     }
 
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        NSLog("[Intention] webView didFail navigation: %@", String(describing: error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        NSLog("[Intention] webView didFailProvisionalNavigation: %@", String(describing: error))
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
 #if os(macOS)
         webView.evaluateJavaScript("show('mac')")
@@ -270,6 +281,24 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             let action = dict["action"] as? String ?? ""
             let callbackId = dict["callbackId"] as? String ?? ""
             handleExtensionMessage(action: action, dict: dict, callbackId: callbackId)
+        case "getStorage":
+            let keys = dict["keys"] as? [String] ?? []
+            let callbackId = dict["callbackId"] as? String ?? ""
+            invokeBridgeCallback(callbackId, result: AppGroupStorage.get(keys))
+        case "setStorage":
+            let items = dict["items"] as? [String: Any] ?? [:]
+            let callbackId = dict["callbackId"] as? String ?? ""
+            AppGroupStorage.set(items)
+            invokeBridgeCallback(callbackId, result: [String: Any]())
+        case "removeStorage":
+            let keys = dict["keys"] as? [String] ?? []
+            let callbackId = dict["callbackId"] as? String ?? ""
+            AppGroupStorage.remove(keys)
+            invokeBridgeCallback(callbackId, result: [String: Any]())
+        case "clearStorage":
+            let callbackId = dict["callbackId"] as? String ?? ""
+            AppGroupStorage.clear()
+            invokeBridgeCallback(callbackId, result: [String: Any]())
         default:
             break
         }

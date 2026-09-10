@@ -88,6 +88,7 @@
       "tracking.js",
       "page_context.js",
       "rules.js",
+      "sync-background.js",
       "background.js"
     ]
   }

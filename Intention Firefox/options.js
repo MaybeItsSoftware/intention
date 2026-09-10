@@ -680,19 +680,11 @@ async function showSettingsView(state) {
     setStatus('prompt-status', 'Reset to default.', 'success');
   });
 
-  await refreshAccessUI('access-paywall');
-  wireAccessRefreshOnReturn('access-paywall');
-  await refreshCreditChip();
-  bindOnce('credit-chip', 'click', () => {
-    setSettingsSection('settings');
-    document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  // ---- Advanced: custom API key ----
-  wireCustomKeySection(state);
-
+  // The actual protection controls must not wait behind the optional
+  // paywall/credit refreshes below. On a fresh install those can involve a
+  // native bridge or a slow backend check; showing Settings while its lists
+  // are still empty looks like the rules vanished just after setup.
   wireBlockingModeCard(state);
-
   renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
   wireAddModals();
 
@@ -702,6 +694,18 @@ async function showSettingsView(state) {
   } else if (HAS_IOS_APP_BLOCKING) {
     wireIOSAppsCard();
   }
+
+  await refreshAccessUI('access-paywall');
+  wireAccessRefreshOnReturn('access-paywall');
+  setupEncryptedSync();
+  await refreshCreditChip();
+  bindOnce('credit-chip', 'click', () => {
+    setSettingsSection('settings');
+    document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // ---- Advanced: custom API key ----
+  wireCustomKeySection(state);
 
   initSettingsTabs();
   initSectionTabs();
@@ -938,6 +942,8 @@ function wireLeavingCard() {
   });
 
   bindOnce('export-list-btn', 'click', exportBlocklistFile);
+  bindOnce('import-list-btn', 'click', () => document.getElementById('import-list-input')?.click());
+  bindOnce('import-list-input', 'change', importBlocklistFile);
 
   bindOnce('leave-remove-row', 'click', (e) => {
     if (!e.target.closest || !e.target.closest('#leave-now-btn')) return;
@@ -1026,7 +1032,13 @@ function applyLeaveDeepLink() {
 // themselves. What is deliberately NOT in here — the API key, the coaching
 // entitlement, every stat, every transcript, the coach's observations — is as
 // much a part of the format as what is.
-const EXPORT_VERSION = 1;
+const EXPORT_VERSION = 2;
+const IMPORTABLE_LIST_KEYS = [
+  'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels',
+  'serviceReasons', 'userContext', 'contextProjects', 'contextReasons',
+  'coachInstructions', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
+  'leaveDelayMinutes'
+];
 
 function buildExportPayload(state) {
   return {
@@ -1041,8 +1053,50 @@ function buildExportPayload(state) {
     userContext: state.userContext || '',
     contextProjects: state.contextProjects || '',
     contextReasons: state.contextReasons || '',
+    coachInstructions: state.coachInstructions || '',
+    blockingMode: state.blockingMode || 'coach',
+    simpleBehavior: state.simpleBehavior || 'pass',
+    simplePassMinutes: Number(state.simplePassMinutes) || 10,
     leaveDelayMinutes: normalizeLeaveDelay(state.leaveDelayMinutes)
   };
+}
+
+function importedListConfig(payload) {
+  if (!payload || typeof payload !== 'object' || ![1, EXPORT_VERSION].includes(payload.v)) {
+    throw new Error('Choose an Intention list backup made by a supported version of the app.');
+  }
+  // A backup is user-provided data, not a trusted config snapshot. Copy only
+  // the explicit format fields; API keys, entitlements, activity and any
+  // surprise property in a JSON file never cross this boundary.
+  const config = {};
+  for (const key of IMPORTABLE_LIST_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) config[key] = payload[key];
+  }
+  if (!Array.isArray(config.blockedDomains) || !Array.isArray(config.blockedApps)
+    || (config.domainLimits !== undefined && typeof config.domainLimits !== 'object')
+    || (config.appLimits !== undefined && typeof config.appLimits !== 'object')) {
+    throw new Error('That file does not contain a valid Intention list.');
+  }
+  return config;
+}
+
+async function importBlocklistFile(event) {
+  const input = event.target;
+  const file = input?.files?.[0];
+  if (!file) return;
+  try {
+    const config = importedListConfig(JSON.parse(await file.text()));
+    if (!window.confirm('Restore this list and replace the blocking rules and coach context currently on this device? API keys, credit and activity history stay untouched.')) return;
+    const result = await sendBg({ action: 'saveSettings', config });
+    if (result?.error) throw new Error(result.error);
+    await renderCurrentView();
+    setStatus('leaving-status', 'List restored. API keys, credit and history were left on this device.', 'success');
+  } catch (e) {
+    setStatus('leaving-status', String(e.message || e), 'error');
+  } finally {
+    // Selecting the same file later must raise another change event.
+    input.value = '';
+  }
 }
 
 async function exportBlocklistFile() {

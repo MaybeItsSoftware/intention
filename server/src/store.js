@@ -169,6 +169,24 @@ export function balanceKey(subject) {
   return `balance:${subject}`;
 }
 
+// The encrypted settings vault is deliberately stored as an opaque value. Its
+// encryption key never reaches this process: the client generates and holds a
+// separate sync key. Keeping the key distinct from the balance/recovery
+// records also makes it possible to revoke a token without deleting somebody's
+// encrypted copy of their own settings.
+export function syncVaultKey(subject) {
+  return `syncVault:${subject}`;
+}
+
+export function getSyncVault(subject, backing = store) {
+  return backing.get(syncVaultKey(subject)) || null;
+}
+
+export function setSyncVault(subject, vault, backing = store) {
+  backing.set(syncVaultKey(subject), vault, null);
+  return vault;
+}
+
 export function getBalanceMicros(subject, backing = store) {
   return Number(backing.get(balanceKey(subject)) || 0);
 }
@@ -507,4 +525,3 @@ export function bumpTokenVersion(subject, backing = store) {
   backing.set(`tv:${subject}`, next, null);
   return next;
 }
-

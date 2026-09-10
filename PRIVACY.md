@@ -1,6 +1,6 @@
 # Privacy Policy — Intention
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-10_
 
 _Published at <https://maybeitssoftware.co.uk/intention/privacy> — that URL is what the App Store and Google Play listings point at, so this file is the source of it and any change here is a change to the published policy._
 
@@ -8,14 +8,14 @@ _Published at <https://maybeitssoftware.co.uk/intention/privacy> — that URL is
 
 There are two ways the coach can run, and they have different data flows:
 
-- **Coaching credit (the default)** — you buy a one-time top-up through the App Store or Google Play, and your conversations go to Intention's own backend, which forwards them to an LLM provider under Intention's key. This is the only case where anything reaches a developer-operated server.
+- **Coaching credit (the default)** — you buy a one-time top-up through the App Store or Google Play, and your conversations go to Intention's own backend, which forwards them to an LLM provider under Intention's key.
 - **Custom API key (Settings → Advanced on Apple builds; also offered during setup on Android and in the browser extensions)** — you supply your own provider key, and your device talks to that provider directly. Intention's backend is not involved in your conversations at all.
 
-There is one deliberate exception to that second path, described under "Reporting a coach message" below: if you choose to report something the coach said, that report is sent to Intention no matter which path you are on. It only ever happens because you asked for it.
+There are two deliberate exceptions to that second path: reporting a coach message, and the optional encrypted settings transfer described below. Each happens only because you press its control; neither sends a conversation.
 
 ## What the developer collects
 
-**On the Custom API key path: nothing, unless you report a message.** No server is contacted for your conversations, and there are no analytics and no crash reports on any path.
+**On the Custom API key path: nothing, unless you report a message or explicitly use Encrypted settings sync.** No server is contacted for your conversations, and there are no analytics and no crash reports on any path.
 
 **On the coaching-credit path**, the backend receives, for the duration of each request:
 
@@ -39,7 +39,9 @@ On your device only — `chrome.storage.local` (or the equivalent Firefox/Safari
 - A visit count for the sites on the extension's built-in suggestion list, used only to put the ones you actually open at the top of that list. It is limited to that fixed list of well-known distracting sites — a site you visit that isn't on it is never counted or written down — and it is not sent anywhere, including to the native app on Apple platforms.
 - If you set a cool-off in front of removing Intention (Settings → Blocking → Leaving Intention), the length you chose, the date you finished setup, and — only while one is outstanding — the fact that you have asked to remove Intention and when the wait ends. On Apple platforms the cool-off length is shared with the native app through the App Group described below, because the settings screen you change it on lives there; the request and the fifteen-minute quiet period after any leaving conversation are per-device and are not shared or synced anywhere.
 
-This data is never synced to a developer-controlled server. If your browser or OS has its own sync feature enabled (browser profile sync, iCloud, etc.), that sync is between your own devices/profiles via your own account with that vendor (Google, Mozilla, Apple), not something Intention initiates.
+This data is never synced to a developer-controlled server, except when you explicitly use **Encrypted settings sync** in Settings. That control sends an AES-GCM encrypted copy of selected blocking rules and coach context to Intention's backend so you can restore it on another of your devices. A separately generated sync key unlocks the copy only on your device; it is never sent or stored by the backend. By default transfers happen only when you press Save or Restore. You may explicitly enable automatic sync on one device; only then is that device's sync key held in its local app/extension storage, so later settings changes can be encrypted and saved without re-entering it. The backend sees only ciphertext, a random encryption nonce, its size, and update time — not the sites, apps, limits, reasons, or context inside it. API keys, coaching credit, browsing/activity history, chat transcripts, and active passes are excluded. There is no account, email address, or device tracking.
+
+If your browser or OS has its own sync feature enabled (browser profile sync, iCloud, etc.), that sync is between your own devices/profiles via your own account with that vendor (Google, Mozilla, Apple), not something Intention initiates.
 
 On Apple platforms, the native app and its Safari Web Extension share this data (including the coaching-credit entitlement and any API key) with each other on-device via an App Group — this is local interprocess storage between the developer's own app and its own extension, not a network transfer.
 
@@ -83,6 +85,8 @@ Coaching credit involves several further requests to Intention's backend. None o
 - **Your recovery code** (`POST /v1/entitlement/recovery-code`). Sent when you press "Show my recovery code", when you ask for a new one, and — on the one screen that appears immediately after a purchase, where writing the code down is the whole point — when that screen opens. It is never sent merely because you opened Settings: the block is shown open on builds where the written-down code is the only way back to your credit, but it holds the code behind that press precisely so that opening Settings is not a request. It is authenticated with the entitlement token above and sends nothing but that request; what the backend keeps as a result is described under "What the developer collects".
 
   If your credit was bought before this feature existed, showing the code for the first time also re-sends your store receipt to `POST /v1/entitlement/verify` — the same receipt, to the same place, as when you bought it. It is how the backend recognises the older session; it grants nothing and buys nothing.
+
+- **Encrypted settings sync** (`POST /v1/sync/vault/read` and `POST /v1/sync/vault/write`). Sent when you press Restore or Save an encrypted copy, or after a settings change only if you explicitly enabled automatic sync on that device. The request is authenticated with your existing coaching-credit token; its body contains an AES-GCM nonce and ciphertext, never your sync key, recovery code, or plaintext settings. The backend rejects a write based on an older revision, so one device cannot silently overwrite a newer copy from another device; automatic sync pauses rather than choosing a winner.
 
 ### The page your browser opens after you remove the extension
 

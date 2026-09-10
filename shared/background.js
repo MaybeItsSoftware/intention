@@ -1,5 +1,7 @@
+/* global scheduleAutomaticSync */
+
 try {
-  importScripts('parts.js', 'sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'rules.js');
+  importScripts('parts.js', 'sites.js', 'providers.js', 'prompts.js', 'tracking.js', 'page_context.js', 'rules.js', 'sync-background.js');
 } catch (e) {
   // Firefox loads these via manifest scripts array; globals already present.
 }
@@ -1132,6 +1134,10 @@ async function handleMessage(message, sender) {
     case 'saveSettings':
       if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
       return saveSettings(message.config);
+    case 'runAutomaticSync':
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      await scheduleAutomaticSync();
+      return { ok: true };
     case 'getAccess': return getAccess(sender);
     case 'saveEntitlement': return saveEntitlement(message.entitlement);
     case 'mergeEntitlement': return mergeEntitlement(message.entitlement);
@@ -1931,6 +1937,7 @@ async function saveSetup(config) {
 
   await setStorage(write);
   await syncBlockingRules();
+  scheduleAutomaticSync();
   return { ok: true };
 }
 
@@ -1978,6 +1985,10 @@ async function saveSettings(partial) {
   if (partial.blockedDomains || partial.domainLimits) {
     await syncBlockingRules();
   }
+  // This is intentionally after local persistence: syncing a half-applied
+  // change would let another device receive a profile this device never did.
+  // The helper is a no-op unless the person opted in and has a local sync key.
+  scheduleAutomaticSync();
   return { ok: true };
 }
 

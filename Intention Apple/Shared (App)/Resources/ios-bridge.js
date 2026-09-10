@@ -31,7 +31,33 @@
     }
   };
 
+  function storageCall(type, payload, callback) {
+    const cbId = window.IntentionCallbacks.register(callback);
+    window.webkit.messageHandlers.intentionNative.postMessage(Object.assign({
+      type: type,
+      callbackId: cbId
+    }, payload || {}));
+  }
+
   window.chrome = {
+    storage: {
+      local: {
+        get: function(keys, callback) {
+          const k = typeof keys === 'string' ? [keys] : (Array.isArray(keys) ? keys : []);
+          storageCall('getStorage', { keys: k }, callback);
+        },
+        set: function(items, callback) {
+          storageCall('setStorage', { items: items || {} }, callback);
+        },
+        remove: function(keys, callback) {
+          const k = typeof keys === 'string' ? [keys] : (Array.isArray(keys) ? keys : []);
+          storageCall('removeStorage', { keys: k }, callback);
+        },
+        clear: function(callback) {
+          storageCall('clearStorage', null, callback);
+        }
+      }
+    },
     runtime: {
       sendMessage: function(message, callback) {
         const cbId = window.IntentionCallbacks.register(callback);
