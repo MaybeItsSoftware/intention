@@ -7,7 +7,7 @@
 const AUTO_SYNC_PROFILE_KEYS = [
   'userContext', 'contextProjects', 'contextReasons', 'coachInstructions',
   'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels',
-  'serviceReasons', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
+  'serviceReasons', 'pendingChanges',
   'leaveDelayMinutes'
 ];
 const AUTO_SYNC_KEY_RE = /^SYNC-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}$/;

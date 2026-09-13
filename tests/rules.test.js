@@ -1,12 +1,10 @@
 // rules.js — how a blocked target's rules are resolved, and the guard that
 // keeps that answer in one place.
 //
-// This resolution used to be written out three times: getEffectiveMode() and
-// normalizeLooseUntil() in background.js, effectiveModeFromStorage() in
-// content.js, and effectiveModeFor()/looseUntilFor() in options.js. Each copy
-// carried a comment saying "change one, change all three", none of them was
-// tested, and they had drifted anyway. The copies are gone; these tests are
-// what stops them coming back.
+// This resolution used to be written out three times, in background.js,
+// content.js and options.js. Each copy carried a comment saying "change one,
+// change all three", none of them was tested, and they had drifted anyway.
+// The copies are gone; these tests are what stops them coming back.
 //
 // Three things are checked here:
 //   1. what the resolution actually answers (nobody tested this before);
@@ -16,7 +14,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadSource, loadBackground, filesForContext, VARIANTS, REPO_ROOT } from './load.js';
+import { loadSource, loadBackground, VARIANTS, REPO_ROOT } from './load.js';
 
 let R;
 beforeAll(() => {
@@ -26,43 +24,6 @@ beforeAll(() => {
 // ---------------------------------------------------------------------------
 // 1. What it answers
 // ---------------------------------------------------------------------------
-
-describe('normalizeLooseUntil', () => {
-  // Absent is a real answer — "no loose/strict split at all" — and the whole
-  // reason this isn't a bare Number(): Number(null) is 0, and 0 would read as
-  // "strict from the very first minute", the exact opposite of unset.
-  it.each([
-    [undefined, 'never written'],
-    [null, 'explicitly cleared'],
-    ['', 'an emptied input field']
-  ])('reads %s (%s) as no split, not as zero', (input) => {
-    expect(R.normalizeLooseUntil(input)).toBe(null);
-  });
-
-  it('keeps a real zero, which means strict immediately', () => {
-    expect(R.normalizeLooseUntil(0)).toBe(0);
-    expect(R.normalizeLooseUntil('0')).toBe(0);
-  });
-
-  it('accepts the string an <input type=number> actually hands over', () => {
-    expect(R.normalizeLooseUntil('15')).toBe(15);
-  });
-
-  it('rounds, because minutes are whole', () => {
-    expect(R.normalizeLooseUntil(15.4)).toBe(15);
-    expect(R.normalizeLooseUntil(15.6)).toBe(16);
-  });
-
-  it.each([
-    [-1, 'negative'],
-    [NaN, 'NaN'],
-    [Infinity, 'infinite'],
-    ['abc', 'unparseable'],
-    [{}, 'an object']
-  ])('rejects %s (%s) rather than inventing a number', (input) => {
-    expect(R.normalizeLooseUntil(input)).toBe(null);
-  });
-});
 
 describe('the leaving cool-off', () => {
   it('offers exactly four rungs, off first and longest last', () => {
@@ -164,79 +125,84 @@ describe('limitEntryFor', () => {
   });
 });
 
-describe('resolveBlockConfig', () => {
-  it('falls back to the global settings when the target has no override', () => {
-    expect(R.resolveBlockConfig(null, {
-      blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25
-    })).toEqual({
-      mode: 'simple', behavior: 'hard', passMinutes: 25, looseUntilMinutes: null
-    });
-  });
-
-  it('falls back to the built-in defaults when there are no globals either', () => {
-    expect(R.resolveBlockConfig(null, {})).toEqual({
-      mode: 'coach', behavior: 'pass', passMinutes: 10, looseUntilMinutes: null
-    });
-  });
-
-  it('lets a per-target override win over the global', () => {
-    expect(R.resolveBlockConfig(
-      { mode: 'simple', behavior: 'hard', passMinutes: 5 },
-      { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 30 }
-    )).toEqual({ mode: 'simple', behavior: 'hard', passMinutes: 5, looseUntilMinutes: null });
-  });
-
-  it('overrides field by field — one set field does not blank the others', () => {
-    expect(R.resolveBlockConfig(
-      { passMinutes: 5 },
-      { blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 30 }
-    )).toEqual({ mode: 'simple', behavior: 'hard', passMinutes: 5, looseUntilMinutes: null });
-  });
-
-  it.each([
-    [0, 'zero'],
-    [-5, 'negative'],
-    ['', 'blank']
-  ])('ignores %s (%s) pass minutes and takes the global instead', (bad) => {
-    expect(R.resolveBlockConfig({ passMinutes: bad }, { simplePassMinutes: 30 }).passMinutes).toBe(30);
-  });
-
-  it('carries looseUntilMinutes through, normalised', () => {
-    expect(R.resolveBlockConfig({ looseUntilMinutes: '20' }, {}).looseUntilMinutes).toBe(20);
-    expect(R.resolveBlockConfig({ looseUntilMinutes: null }, {}).looseUntilMinutes).toBe(null);
-  });
-
-  // There is no global lenient window: it is a per-site line, or it is nothing.
-  it('never takes a lenient window from the globals', () => {
-    expect(R.resolveBlockConfig(null, { looseUntilMinutes: 20 }).looseUntilMinutes).toBe(null);
-  });
-});
-
-describe('resolveLimits', () => {
+describe('resolveIntention', () => {
   it('answers the defaults for a target with no entry', () => {
-    expect(R.resolveLimits(null)).toEqual({ maxGrants: 3, maxMinutes: -1, looseUntilMinutes: null });
+    expect(R.resolveIntention(null)).toEqual({ opens: 3, minutesEach: 10 });
+    expect(R.resolveIntention(undefined)).toEqual({ opens: 3, minutesEach: 10 });
   });
 
-  it('reads the fields an entry does carry', () => {
-    expect(R.resolveLimits({ maxGrants: 1, maxMinutes: 20, looseUntilMinutes: 5 }))
-      .toEqual({ maxGrants: 1, maxMinutes: 20, looseUntilMinutes: 5 });
+  it('reads the fields an entry carries', () => {
+    expect(R.resolveIntention({ maxGrants: 2, passMinutes: 15 })).toEqual({ opens: 2, minutesEach: 15 });
   });
 
-  // -1 is "no daily ceiling", which is emphatically not 0.
-  it('keeps -1 maxMinutes as no ceiling rather than folding it to zero', () => {
-    expect(R.resolveLimits({ maxMinutes: -1 }).maxMinutes).toBe(-1);
-    expect(R.resolveLimits({ maxMinutes: 0 }).maxMinutes).toBe(0);
+  // Zero opens is a hard block. It has to survive as zero — a corrupt or
+  // missing value falls back to the default, but a real zero never does.
+  it('keeps zero opens as a block rather than folding it to the default', () => {
+    expect(R.resolveIntention({ maxGrants: 0 }).opens).toBe(0);
+    expect(R.resolveIntention({ maxGrants: '0' }).opens).toBe(0);
   });
 
   it('falls back per field when a value is unreadable', () => {
-    expect(R.resolveLimits({ maxGrants: 'abc', maxMinutes: 20 }))
-      .toEqual({ maxGrants: 3, maxMinutes: 20, looseUntilMinutes: null });
+    expect(R.resolveIntention({ maxGrants: 'lots', passMinutes: 15 })).toEqual({ opens: 3, minutesEach: 15 });
+    expect(R.resolveIntention({ maxGrants: 2, passMinutes: 'long' })).toEqual({ opens: 2, minutesEach: 10 });
   });
 
-  it('does not hand back the shared defaults object to be mutated', () => {
-    const first = R.resolveLimits(null);
-    first.maxGrants = 99;
-    expect(R.resolveLimits(null).maxGrants).toBe(3);
+  it('clamps opens into range', () => {
+    expect(R.resolveIntention({ maxGrants: -4 }).opens).toBe(0);
+    expect(R.resolveIntention({ maxGrants: 999 }).opens).toBe(R.MAX_OPENS);
+    expect(R.resolveIntention({ maxGrants: 2.9 }).opens).toBe(2);
+  });
+
+  // Snapping down is the only safe direction for a number that decides how
+  // long someone gets: being wrong must only ever mean less time.
+  it('snaps minutes down onto the ladder, never up', () => {
+    expect(R.resolveIntention({ passMinutes: 12 }).minutesEach).toBe(10);
+    expect(R.resolveIntention({ passMinutes: 29 }).minutesEach).toBe(15);
+    expect(R.resolveIntention({ passMinutes: 90 }).minutesEach).toBe(30);
+    expect(R.resolveIntention({ passMinutes: 2 }).minutesEach).toBe(5);
+  });
+
+  it('ignores the fields of the retired model', () => {
+    expect(R.resolveIntention({ maxMinutes: 45, looseUntilMinutes: 10, mode: 'simple', behavior: 'hard' }))
+      .toEqual({ opens: 3, minutesEach: 10 });
+  });
+});
+
+describe('isLoosening', () => {
+  it('reads more opens or longer opens as loosening', () => {
+    expect(R.isLoosening({ maxGrants: 2, passMinutes: 10 }, { maxGrants: 3, passMinutes: 10 })).toBe(true);
+    expect(R.isLoosening({ maxGrants: 2, passMinutes: 10 }, { maxGrants: 2, passMinutes: 15 })).toBe(true);
+  });
+
+  it('reads fewer, shorter or the same as not loosening', () => {
+    expect(R.isLoosening({ maxGrants: 2, passMinutes: 10 }, { maxGrants: 1, passMinutes: 10 })).toBe(false);
+    expect(R.isLoosening({ maxGrants: 2, passMinutes: 10 }, { maxGrants: 2, passMinutes: 5 })).toBe(false);
+    expect(R.isLoosening({ maxGrants: 2, passMinutes: 10 }, { maxGrants: 2, passMinutes: 10 })).toBe(false);
+  });
+
+  // A trade — one fewer open, but each one longer — still gives time back, so
+  // it waits like any other loosening.
+  it('reads a trade that lengthens either number as loosening', () => {
+    expect(R.isLoosening({ maxGrants: 3, passMinutes: 10 }, { maxGrants: 2, passMinutes: 30 })).toBe(true);
+  });
+
+  it('compares a raw stored entry and an edited one like for like', () => {
+    expect(R.isLoosening(null, { maxGrants: 3, passMinutes: 10 })).toBe(false);
+    expect(R.isLoosening({ maxGrants: 0 }, { maxGrants: 1 })).toBe(true);
+  });
+});
+
+describe('nextDayStart', () => {
+  it('is local midnight at the start of the next day', () => {
+    const at = new Date(2026, 8, 13, 23, 55).getTime();
+    const next = new Date(R.nextDayStart(at));
+    expect([next.getFullYear(), next.getMonth(), next.getDate(), next.getHours(), next.getMinutes()])
+      .toEqual([2026, 8, 14, 0, 0]);
+  });
+
+  it('is still tomorrow, not today, from the first minute of a day', () => {
+    const at = new Date(2026, 8, 13, 0, 0).getTime();
+    expect(new Date(R.nextDayStart(at)).getDate()).toBe(14);
   });
 });
 
@@ -244,100 +210,34 @@ describe('resolveLimits', () => {
 // 2. Every context agrees
 // ---------------------------------------------------------------------------
 //
-// The reason the three copies were dangerous was never one of them being wrong
+// The reason the old copies were dangerous was never one of them being wrong
 // on its own — it was two of them disagreeing about the same site. So drive the
-// real entry points, in the real contexts, over one matrix of inputs.
+// real entry points over one matrix of inputs.
 
 describe('every context resolves a target the same way', () => {
   const CASES = [
-    {
-      name: 'no override anywhere',
-      globals: { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 10 },
-      entry: undefined
-    },
-    {
-      name: 'a per-site simple-mode override',
-      globals: { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 10 },
-      entry: { mode: 'simple', behavior: 'hard', passMinutes: 5 }
-    },
-    {
-      name: 'a global simple mode with no per-site entry',
-      globals: { blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25 },
-      entry: undefined
-    },
-    {
-      name: 'a lenient window set on the site',
-      globals: { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 10 },
-      entry: { looseUntilMinutes: '20' }
-    },
-    {
-      name: 'a lenient window explicitly cleared',
-      globals: { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 10 },
-      entry: { looseUntilMinutes: '' }
-    },
-    {
-      name: 'a zero lenient window (strict immediately)',
-      globals: { blockingMode: 'coach', simpleBehavior: 'pass', simplePassMinutes: 10 },
-      entry: { looseUntilMinutes: 0 }
-    }
+    { name: 'no entry', entry: undefined },
+    { name: 'an intention set on the site', entry: { maxGrants: 2, passMinutes: 15 } },
+    { name: 'a hard block', entry: { maxGrants: 0 } },
+    { name: 'an off-ladder minutes value', entry: { maxGrants: 4, passMinutes: 12 } }
   ];
 
   const DOMAIN = 'instagram.com';
 
-  // The options page: given a limits entry it is already rendering a row for.
-  let optionsCtx;
-  beforeAll(() => {
-    optionsCtx = loadSource(filesForContext('options', {
-      only: ['sites.js', 'providers.js', 'rules.js', 'options.js']
-    }), {
-      extraGlobals: {
-        document: { addEventListener() {}, getElementById: () => null },
-        window: {},
-        navigator: { userAgent: 'Chrome/120' },
-        localStorage: { getItem: () => null, setItem() {}, removeItem() {} }
-      }
-    });
+  it.each(CASES)('$name', async ({ entry }) => {
+    const seed = { domainLimits: entry ? { [DOMAIN]: entry } : {} };
+    const { ctx: bg } = loadBackground({ seed });
+    const fromBackground = await bg.getIntention(DOMAIN);
+    const fromRules = R.resolveIntention(R.limitEntryFor(DOMAIN, seed));
+    expect({ opens: fromBackground.opens, minutesEach: fromBackground.minutesEach }).toEqual(fromRules);
   });
 
-  it.each(CASES)('$name', async ({ globals, entry }) => {
-    const seed = {
-      ...globals,
-      domainLimits: entry ? { [DOMAIN]: entry } : {}
-    };
-
-    // The background worker, through its storage-reading wrapper.
+  it('agrees on an app package too', async () => {
+    const seed = { appLimits: { 'com.instagram.android': { maxGrants: 1, passMinutes: 5 } } };
     const { ctx: bg } = loadBackground({ seed });
-    const fromBackground = await bg.getEffectiveMode(DOMAIN);
-
-    // rules.js on its own, which is what the content script's fail-safe runs.
-    const fromRules = R.resolveBlockConfig(R.limitEntryFor(DOMAIN, seed), seed);
-
-    // The options page, through the two aliases its row builders call.
-    const fromOptions = {
-      mode: optionsCtx.effectiveModeFor(entry, globals.blockingMode),
-      looseUntilMinutes: optionsCtx.looseUntilFor(entry)
-    };
-
-    expect(fromRules).toEqual(fromBackground);
-    expect(fromOptions.mode).toBe(fromBackground.mode);
-    expect(fromOptions.looseUntilMinutes).toBe(fromBackground.looseUntilMinutes);
-  });
-
-  it('agrees on an app package too, which only the background and options see', async () => {
-    const seed = {
-      blockingMode: 'coach',
-      appLimits: { 'com.instagram.android': { mode: 'simple', looseUntilMinutes: 12 } }
-    };
-    const { ctx: bg } = loadBackground({ seed });
-    expect(R.resolveBlockConfig(R.limitEntryFor('com.instagram.android', seed), seed))
-      .toEqual(await bg.getEffectiveMode('com.instagram.android'));
-  });
-
-  it('agrees on the daily limits, not just the mode', async () => {
-    const seed = { domainLimits: { [DOMAIN]: { maxGrants: 1, maxMinutes: 20, looseUntilMinutes: '5' } } };
-    const { ctx: bg } = loadBackground({ seed });
-    expect(R.resolveLimits(R.limitEntryFor(DOMAIN, seed)))
-      .toEqual(await bg.getLimitsForDomain(DOMAIN));
+    const fromBackground = await bg.getIntention('com.instagram.android');
+    expect({ opens: fromBackground.opens, minutesEach: fromBackground.minutesEach })
+      .toEqual(R.resolveIntention(R.limitEntryFor('com.instagram.android', seed)));
   });
 });
 
@@ -361,61 +261,27 @@ describe('the resolution lives in exactly one file', () => {
   });
 
   it.each([
-    'normalizeLooseUntil',
     'limitEntryFor',
-    'resolveMode',
-    'resolveBlockConfig',
-    'resolveLimits'
+    'resolveIntention',
+    'isLoosening',
+    'nextDayStart'
   ])('%s is declared only in rules.js', (name) => {
     const declaration = new RegExp(`^\\s*(?:const|let|var|function|async function)\\s+${name}\\b`, 'm');
     const declaring = sources.filter(s => declaration.test(s.code)).map(s => s.file);
     expect(declaring).toEqual(['rules.js']);
   });
 
-  // A re-inlined copy would not reuse the names above, so name the two moves
-  // that give one away instead. Both are what the original mirrors did.
-
-  // Deciding the field is absent. This is the whole trap: `Number(null)` is 0,
-  // and 0 means "strict from the first minute" — so whether a value counts as
-  // absent has to be settled in exactly one place. All four original copies
-  // wrote the same fingerprint: one expression ruling out undefined, null and
-  // the empty string together. Nothing else in the tree does that.
-  const ABSENT_TRIAD = /===\s*undefined[\s\S]{0,120}===\s*null[\s\S]{0,120}===\s*(?:''|"")/;
-
-  it('only rules.js decides whether the field is absent', () => {
-    const offenders = sources
-      .filter(s => s.file !== 'rules.js')
-      .filter(s => ABSENT_TRIAD.test(s.code.replace(/\/\/[^\n]*/g, '')))
-      .map(s => s.file);
-    expect(offenders).toEqual([]);
-  });
-
-  // A guard that cannot fail is not a guard: the fingerprint has to still
-  // match the code it was written against.
-  it('would have caught the copies that used to exist', () => {
-    expect(ABSENT_TRIAD.test(
-      "if (raw === undefined || raw === null || raw === '') return null;"
-    )).toBe(true);
-    expect(ABSENT_TRIAD.test(readFileSync(join(SHARED, 'rules.js'), 'utf8'))).toBe(true);
-  });
-
-  // Coercing it to a number. A caller may pass the field around freely; the
-  // moment it reaches for Number() on something loose-shaped it has started
-  // writing its own parse.
-  it('no other shared file coerces a loose-window value itself', () => {
-    const coercion = /Number\s*\(\s*[A-Za-z_$][\w$.?]*[Ll]oose[\w$]*\s*\)/;
-    const offenders = sources
-      .filter(s => s.file !== 'rules.js')
-      .filter(s => coercion.test(s.code))
-      .map(s => s.file);
-    expect(offenders).toEqual([]);
-  });
-
-  // prompts.js is the fourth context that reads this field — it renders the
-  // loose/strict line for the coach — and it had its own parse too.
-  it('the prompt builder reads the field through rules.js', () => {
-    const prompts = sources.find(s => s.file === 'prompts.js');
-    expect(prompts.code).toMatch(/normalizeLooseUntil\s*\(/);
+  // The retired model must not come back under its old names.
+  it.each([
+    'resolveMode',
+    'resolveBlockConfig',
+    'resolveLimits',
+    'normalizeLooseUntil',
+    'getEffectiveMode',
+    'simpleGrant'
+  ])('%s is declared nowhere', (name) => {
+    const declaration = new RegExp(`^\\s*(?:const|let|var|function|async function)\\s+${name}\\b`, 'm');
+    expect(sources.filter(s => declaration.test(s.code)).map(s => s.file)).toEqual([]);
   });
 
   // Every context that can gate a page has to be able to reach the resolution.

@@ -42,24 +42,26 @@ describe('setup wizard markup and script agree', () => {
     expect(sections.filter(id => !ordered.has(id))).toEqual([]);
   });
 
-  // The wizard grew one step per selected service for a while, which made an
-  // id repeat and made its own length a function of the blocklist. Both are
-  // gone, and this is the assertion that keeps them gone: a duplicate id here
-  // means some section is being reused as N steps again.
-  it('orders every step exactly once, so its length cannot follow the blocklist', () => {
-    const order = js.slice(js.indexOf('function computeStepOrder()'));
-    const ids = [...order.slice(0, order.indexOf('\n}')).matchAll(/'(setup-step-[a-z-]+)'/g)].map(m => m[1]);
-    expect(ids.length).toBeGreaterThan(4);
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(order).not.toMatch(/computeStepOrder\(\)[\s\S]{0,600}currentServiceGroups\(\)/);
+  // The per-target pages share a section each, and their page ids carry the
+  // target after a colon. The section named before the colon has to exist, or
+  // showStep has nothing to show.
+  it('every per-target page id names a real section', () => {
+    const templated = [...new Set([...js.matchAll(/`(setup-step-[a-z-]+):\$\{/g)].map(m => m[1]))];
+    expect(templated.sort()).toEqual(['setup-step-intention', 'setup-step-purpose']);
+    expect(templated.filter(id => !htmlIds.has(id))).toEqual([]);
   });
 
-  // The controls the one purpose screen is driven through. They are looked up
-  // by id from renderPurposeStack and its helpers, which run on arrival — a
-  // missing one throws before the step paints.
-  it('the purpose step carries the stack, its counter and its empty state', () => {
-    for (const id of ['setup-purpose-stack', 'setup-purpose-count', 'setup-purpose-fill',
-                      'setup-purpose-empty', 'setup-purpose-subtitle', 'setup-purpose-skip-btn']) {
+  it('the intention page carries its counter, dots and minutes', () => {
+    for (const id of ['setup-intention-question', 'setup-intention-minus', 'setup-intention-plus',
+                      'setup-intention-opens', 'setup-intention-dots', 'setup-intention-minutes',
+                      'setup-intention-sum', 'setup-intention-same-btn']) {
+      expect(htmlIds.has(id), id).toBe(true);
+    }
+  });
+
+  it('the purpose pages are an offer, with a way past them', () => {
+    for (const id of ['setup-reasons-yes-btn', 'setup-reasons-skip-btn',
+                      'setup-reason-question', 'setup-reason-body', 'setup-purpose-skip-btn']) {
       expect(htmlIds.has(id), id).toBe(true);
     }
   });
@@ -78,7 +80,7 @@ describe('setup wizard markup and script agree', () => {
   it('no step section is left visible for the wizard to fall back onto', () => {
     // showStep() decides what is on screen. A section that ships without
     // `hidden` shows through before it runs, and stays up if it ever throws.
-    const unhidden = [...html.matchAll(/<section class="card setup-step" id="([^"]+)"(?![^>]*hidden)/g)]
+    const unhidden = [...html.matchAll(/<section class="[^"]*\bsetup-step\b[^"]*" id="([^"]+)"(?![^>]*hidden)/g)]
       .map(m => m[1]);
     expect(unhidden).toEqual([]);
   });

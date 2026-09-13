@@ -376,9 +376,6 @@ function wireAddModals() {
   document.getElementById('domain-input').addEventListener('keydown', async e => {
     if (e.key === 'Enter') await submitDomain();
   });
-  document.getElementById('domain-limit-input').addEventListener('keydown', async e => {
-    if (e.key === 'Enter') await submitDomain();
-  });
 
   if (HAS_APP_BLOCKING) {
     document.getElementById('open-add-app-btn')?.addEventListener('click', () => openAddModal('add-app-modal', 'app-search-input'));
@@ -449,69 +446,10 @@ async function renderCoachObservations() {
   }
 }
 
-// Global blocking-mode card in Settings: Coach vs Simple, and (for Simple) the
+
 // default hard/pass behavior + pass length. The per-row Coach/Simple toggle
 // (buildRowModeToggle) lets individual sites/apps override this global default
 // — and picking the mode that already matches it drops the override again.
-function wireBlockingModeCard(state) {
-  // Mirrors the wizard's mode step (options-wizard.js): where a store sells
-  // coaching credit, an API key is not what turns the coach on — on Apple it
-  // isn't even an option — so describing the alternative as "no API key
-  // needed" would send people hunting for a key they can't use and read, to a
-  // reviewer, as the app expecting one.
-  document.getElementById('blocking-mode-blurb').textContent = BYOK_IS_PRIMARY
-    ? 'Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.'
-    : 'Coach mode talks you through a block and approves changes, running on coaching credit you buy in the app. Simple mode needs no AI — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.';
-  document.getElementById('settings-mode-simple-desc').textContent = BYOK_IS_PRIMARY
-    ? 'No API key needed.'
-    : 'No AI, no credit used.';
-
-  const coachBtn = document.getElementById('settings-mode-coach-btn');
-  const simpleBtn = document.getElementById('settings-mode-simple-btn');
-  const simpleOptions = document.getElementById('settings-simple-options');
-  const hardBtn = document.getElementById('settings-simple-hard-btn');
-  const passBtn = document.getElementById('settings-simple-pass-btn');
-  const minutesGroup = document.getElementById('settings-simple-minutes-group');
-  const minutesInput = document.getElementById('settings-simple-minutes-input');
-  const saveBtn = document.getElementById('save-blocking-mode-btn');
-
-  let mode = state.blockingMode || 'coach';
-  let behavior = state.simpleBehavior || 'pass';
-  minutesInput.value = state.simplePassMinutes || 10;
-
-  // These read as a radio group but are plain buttons carrying a .selected
-  // class, so the chosen one has to be announced explicitly.
-  const setChoice = (btn, on) => {
-    btn.classList.toggle('selected', on);
-    btn.setAttribute('aria-pressed', String(on));
-  };
-
-  function render() {
-    setChoice(coachBtn, mode === 'coach');
-    setChoice(simpleBtn, mode === 'simple');
-    simpleOptions.hidden = mode !== 'simple';
-    setChoice(hardBtn, behavior === 'hard');
-    setChoice(passBtn, behavior === 'pass');
-    minutesGroup.hidden = behavior !== 'pass';
-  }
-  render();
-
-  coachBtn.onclick = () => { mode = 'coach'; render(); };
-  simpleBtn.onclick = () => { mode = 'simple'; render(); };
-  hardBtn.onclick = () => { behavior = 'hard'; render(); };
-  passBtn.onclick = () => { behavior = 'pass'; render(); };
-
-  saveBtn.onclick = async () => {
-    const simplePassMinutes = Number(minutesInput.value) > 0 ? Number(minutesInput.value) : 10;
-    await sendBg({ action: 'saveSettings', config: { blockingMode: mode, simpleBehavior: behavior, simplePassMinutes } });
-    setStatus('blocking-mode-status', 'Saved.', 'success');
-    const fresh = await getConfig();
-    renderDomains(fresh.blockedDomains || [], fresh.domainLimits || {}, fresh.blockingMode, fresh.serviceReasons || {});
-    if (HAS_APP_BLOCKING) {
-      renderApps(fresh.blockedApps || [], fresh.appLimits || {}, fresh.appLabels || {}, fresh.blockingMode, fresh.serviceReasons || {});
-    }
-  };
-}
 
 // showSettingsView re-runs whenever the view is re-rendered (finishing the
 // wizard lands here, and so does the paywall's jump to the key field), but the
@@ -684,13 +622,14 @@ async function showSettingsView(state) {
   // paywall/credit refreshes below. On a fresh install those can involve a
   // native bridge or a slow backend check; showing Settings while its lists
   // are still empty looks like the rules vanished just after setup.
-  wireBlockingModeCard(state);
-  renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
+  renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
+  renderPendingChanges(state);
+  refreshStreak();
   wireAddModals();
 
   if (HAS_APP_BLOCKING) {
     document.getElementById('apps-card').hidden = false;
-    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
+    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
   } else if (HAS_IOS_APP_BLOCKING) {
     wireIOSAppsCard();
   }
@@ -734,17 +673,16 @@ async function showSettingsView(state) {
       setStatus('disable-all-status', 'Nothing is blocked right now.', '');
       return;
     }
-    applyOrGate({
-      isSimple: (cfg.blockingMode || 'coach') === 'simple',
+    requestLoosening({
       changeType: 'disable_all',
       domain: null,
       title: 'Turn off all blocking?',
-      subtitle: 'This turns off blocking for every site and app on your list. Convince your coach this is what you really want.',
+      subtitle: 'This turns off blocking for every site and app on your list.',
       onApproved: async () => {
         const state = await getConfig();
-        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
+        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
         if (HAS_APP_BLOCKING) {
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
+          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
         }
         if (HAS_IOS_APP_BLOCKING) {
           window.intentionScreenTime.clear(() => refreshIOSAppsCard());
@@ -913,10 +851,10 @@ function wireLeavingCard() {
     const current = leavingState ? leavingState.leaveDelayMinutes : 0;
     if (next === current) return;
 
-    // Lengthening is a tightening: it saves for free, exactly as lowering a
-    // daily max does. Shortening is a loosening of a rule they set calmly, so
-    // it costs a conversation — the same trade every other control on this
-    // page makes. background.js's saveSettings enforces the same direction, so
+    // Lengthening is a tightening: it saves for free, exactly as lowering an
+    // intention does. Shortening is a loosening of a rule they set calmly, so
+    // it waits — out the current cool-off and the night — unless the coach
+    // allows it sooner, the same trade every other control on this page makes. background.js's saveSettings enforces the same direction, so
     // this branch is the UI half of a rule, not the rule itself.
     if (next > current) {
       await sendBg({ action: 'saveSettings', config: { leaveDelayMinutes: next } });
@@ -925,15 +863,13 @@ function wireLeavingCard() {
       return;
     }
 
-    const cfg = await getConfig();
-    applyOrGate({
-      isSimple: (cfg.blockingMode || 'coach') === 'simple',
+    requestLoosening({
       changeType: 'decrease_leave_delay',
       domain: null,
       currentValue: current,
       newValue: next,
       title: 'Shorten the wait?',
-      subtitle: 'You chose this wait when you were thinking clearly. Talk to your coach about shortening it.',
+      subtitle: 'You chose this wait when you were thinking clearly. A shorter one starts once the current wait would have run out.',
       onApproved: async () => {
         await refreshLeavingCard();
         setStatus('leaving-status', 'Cool-off shortened.', 'success');
@@ -974,8 +910,7 @@ function wireLeavingCard() {
 // ?leave=1 deep link the background's tab interposition opens.
 async function openLeaveConversation() {
   const cfg = await getConfig();
-  applyOrGate({
-    isSimple: (cfg.blockingMode || 'coach') === 'simple',
+  requestLoosening({
     changeType: 'uninstall',
     domain: null,
     // The cool-off, carried through so the exit button inside the modal can
@@ -1036,8 +971,7 @@ const EXPORT_VERSION = 2;
 const IMPORTABLE_LIST_KEYS = [
   'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels',
   'serviceReasons', 'userContext', 'contextProjects', 'contextReasons',
-  'coachInstructions', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
-  'leaveDelayMinutes'
+  'coachInstructions', 'leaveDelayMinutes'
 ];
 
 function buildExportPayload(state) {
@@ -1054,9 +988,6 @@ function buildExportPayload(state) {
     contextProjects: state.contextProjects || '',
     contextReasons: state.contextReasons || '',
     coachInstructions: state.coachInstructions || '',
-    blockingMode: state.blockingMode || 'coach',
-    simpleBehavior: state.simpleBehavior || 'pass',
-    simplePassMinutes: Number(state.simplePassMinutes) || 10,
     leaveDelayMinutes: normalizeLeaveDelay(state.leaveDelayMinutes)
   };
 }
@@ -1192,11 +1123,11 @@ async function refreshIOSAppsCard() {
 // background config.
 // Returns false when the domain was already on the list, so the caller can say
 // so — silently doing nothing reads as the Add button being broken.
-async function addDomainToBlocklist(domain, limit) {
+async function addDomainToBlocklist(domain) {
   if (!document.getElementById('setup-view').hidden) {
     if (setupBlockedDomains.includes(domain)) return false;
     setupBlockedDomains.push(domain);
-    setupDomainLimits[domain] = { maxGrants: 3, maxMinutes: limit };
+    setupDomainLimits[domain] = { ...INTENTION_DEFAULTS };
     renderSetupDomains();
     return true;
   }
@@ -1205,9 +1136,9 @@ async function addDomainToBlocklist(domain, limit) {
   const limits = state.domainLimits || {};
   if (domains.includes(domain)) return false;
   domains.push(domain);
-  limits[domain] = { maxGrants: 3, maxMinutes: limit };
+  limits[domain] = { ...INTENTION_DEFAULTS };
   await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
-  renderDomains(domains, limits, state.blockingMode, state.serviceReasons || {});
+  renderDomains(domains, limits, state.serviceReasons || {});
   return true;
 }
 
@@ -1241,7 +1172,6 @@ function setAddSiteError(message) {
 // Resolves true when the modal should close.
 async function addDomain() {
   const input = document.getElementById('domain-input');
-  const limitInput = document.getElementById('domain-limit-input');
   const raw = input.value.trim();
   if (!raw) {
     setAddSiteError('Type a website address first.');
@@ -1254,55 +1184,139 @@ async function addDomain() {
     return false;
   }
 
-  const limitVal = parseInt(limitInput.value, 10);
-  const limit = !isNaN(limitVal) && limitVal > 0 ? limitVal : DEFAULT_DAILY_MAX_MINUTES;
-
-  const added = await addDomainToBlocklist(domain, limit);
+  const added = await addDomainToBlocklist(domain);
   if (!added) {
     setAddSiteError(`${domain} is already on your list.`);
     return false;
   }
   setAddSiteError('');
   input.value = '';
-  limitInput.value = '10';
   return true;
 }
 
-// Both of these used to be hand-written mirrors of background.js. They now
-// name rules.js's resolution, which every context shares — the row rendering
-// below already holds the limits entry, so it calls the entry-level form
-// rather than the storage-reading wrappers in background.js.
-const effectiveModeFor = resolveMode;
-const looseUntilFor = (entry) => normalizeLooseUntil(entry && entry.looseUntilMinutes);
-
-// Loosening a rule (removing a block, raising a limit, lengthening the lenient
-// window, rewriting what you told the coach a site is for, disabling
-// everything) normally requires convincing the AI coach via openGateModal. In
-// simple mode there's no AI, so the change just applies immediately instead.
+// Loosening a rule — removing a block, more opens or longer ones, blocking
+// less of a site, turning everything off, shortening the cool-off — never
+// applies on the spot. The user chooses between having it tomorrow, for free,
+// and asking the coach for it now. Leaving is the one exception: it is always
+// the leaving conversation, with its exit button live throughout.
 //
 // `isApp`/`appLabel` only say what the target IS, so the coach can call it "the
-// Instagram app" rather than reciting a package name. Most change types give
-// that away by their name; the reason-box edits don't, because one row type
-// isn't enough to tell sites and apps apart there.
-async function applyOrGate({ isSimple, isApp, appLabel, changeType, domain, newValue, currentValue, title, subtitle, onApproved }) {
-  if (isSimple) {
-    await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
-    await onApproved();
+// Instagram app" rather than reciting a package name.
+async function requestLoosening({ isApp, appLabel, changeType, domain, newValue, currentValue, title, subtitle, onApproved }) {
+  if (changeType === 'uninstall') {
+    openGateModal({ changeType, domain, isApp, appLabel, currentValue, newValue, title, subtitle, onApproved });
     return;
   }
-  openGateModal({ changeType, domain, isApp, appLabel, currentValue, newValue, title, subtitle, onApproved });
+  const modal = document.getElementById('loosen-modal');
+  document.getElementById('loosen-title').textContent = title;
+  document.getElementById('loosen-subtitle').textContent = subtitle || '';
+  document.getElementById('loosen-when').textContent = changeType === 'decrease_leave_delay'
+    ? 'Saved changes to the cool-off start once your current wait would have run out.'
+    : 'Saved changes like this start tomorrow.';
+  const close = () => { modal.hidden = true; };
+  const later = document.getElementById('loosen-later-btn');
+  const now = document.getElementById('loosen-now-btn');
+  const cancel = document.getElementById('loosen-cancel-btn');
+  later.onclick = async () => {
+    later.disabled = true;
+    try {
+      await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+    } finally {
+      later.disabled = false;
+    }
+    close();
+    const state = await getConfig();
+    renderPendingChanges(state);
+    await onApproved();
+  };
+  now.onclick = () => {
+    close();
+    openGateModal({ changeType, domain, isApp, appLabel, currentValue, newValue, title, subtitle, onApproved });
+  };
+  cancel.onclick = close;
+  modal.hidden = false;
+  later.focus();
 }
 
-function removeDomain(d, isSimple) {
-  applyOrGate({
-    isSimple,
+// What is waiting for tomorrow, and a way to take it back. Taking one back is
+// a tightening, so it is free and immediate.
+function renderPendingChanges(state) {
+  const card = document.getElementById('pending-card');
+  const list = document.getElementById('pending-list');
+  if (!card || !list) return;
+  const pending = (state && state.pendingChanges) || [];
+  list.textContent = '';
+  card.hidden = pending.length === 0;
+  const labels = (state && state.appLabels) || {};
+  for (const p of pending) {
+    const li = document.createElement('li');
+    const text = document.createElement('span');
+    text.className = 'pending-text';
+    text.textContent = describePendingChange(p, labels);
+    const when = document.createElement('span');
+    when.className = 'micro-label pending-when';
+    when.textContent = formatPendingWhen(p.effectiveAt);
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.className = 'secondary pending-undo';
+    undo.textContent = 'Cancel';
+    undo.addEventListener('click', async () => {
+      await sendBg({ action: 'cancelPendingChange', changeType: p.changeType, domain: p.domain });
+      renderPendingChanges(await getConfig());
+    });
+    li.append(text, when, undo);
+    list.appendChild(li);
+  }
+}
+
+function describePendingChange(p, labels) {
+  const name = (p.domain && labels[p.domain]) || p.domain || '';
+  switch (p.changeType) {
+    case 'remove':
+    case 'remove_app': return `Stop blocking ${name}`;
+    case 'increase_limit':
+    case 'increase_app_limit': return `${name}: ${describeIntention(resolveIntention(p.newValue))}`;
+    case 'narrow_block_scope':
+    case 'narrow_app_block_scope': return `Block less of ${name}`;
+    case 'disable_all': return 'Turn off all blocking';
+    case 'decrease_leave_delay': return `Cool-off: ${formatLeaveDelay(p.newValue) || 'none'}`;
+    default: return 'A change to your rules';
+  }
+}
+
+function formatPendingWhen(effectiveAt) {
+  const at = new Date(Number(effectiveAt) || 0);
+  const tomorrow = new Date(nextDayStart());
+  if (at.getTime() === tomorrow.getTime()) return 'Tomorrow';
+  return at.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' +
+    at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// The streak line in the header of the blocking tab.
+async function refreshStreak() {
+  const el = document.getElementById('streak-line');
+  if (!el) return;
+  let summary = null;
+  try { summary = await sendBg({ action: 'getStatsSummary' }); } catch (e) { summary = null; }
+  const streak = summary && summary.streak;
+  if (!streak) { el.hidden = true; return; }
+  const days = Number(streak.days) || 0;
+  document.getElementById('streak-value').textContent = `${days} ${days === 1 ? 'day' : 'days'}`;
+  document.getElementById('streak-grace').textContent = streak.graceLeft > 0
+    ? 'One slip this week is forgiven'
+    : 'Grace used this week';
+  el.hidden = false;
+}
+
+function removeDomain(d) {
+  requestLoosening({
     changeType: 'remove',
     domain: d,
-    title: `Remove ${d}?`,
-    subtitle: `Removing ${d} means it won't be blocked anymore. Convince your coach this is the right call.`,
+    title: `Stop blocking ${d}?`,
+    subtitle: `${d} won't be blocked any more.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
+      renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
     }
   });
 }
@@ -1324,31 +1338,30 @@ async function addApp(app) {
   const labels = state.appLabels || {};
   if (!apps.includes(app.packageName)) {
     apps.push(app.packageName);
-    limits[app.packageName] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
+    limits[app.packageName] = { ...INTENTION_DEFAULTS };
     labels[app.packageName] = app.label;
     await sendBg({ action: 'saveSettings', config: { blockedApps: apps, appLimits: limits, appLabels: labels } });
-    renderApps(apps, limits, labels, state.blockingMode, state.serviceReasons || {});
+    renderApps(apps, limits, labels, state.serviceReasons || {});
   }
 }
 
-function removeApp(pkg, label, isSimple) {
+function removeApp(pkg, label) {
   const name = label || pkg;
-  applyOrGate({
-    isSimple,
+  requestLoosening({
     isApp: true,
     appLabel: name,
     changeType: 'remove_app',
     domain: pkg,
-    title: `Remove ${name}?`,
-    subtitle: `Removing ${name} means it won't be blocked anymore. Convince your coach this is the right call.`,
+    title: `Stop blocking ${name}?`,
+    subtitle: `${name} won't be blocked any more.`,
     onApproved: async () => {
       const state = await getConfig();
-      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
+      renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
     }
   });
 }
 
-function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', serviceReasons = {}) {
+function renderApps(apps, limits = {}, labels = {}, serviceReasons = {}) {
   settingsBlockedApps = apps;
   renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
@@ -1359,21 +1372,20 @@ function renderApps(apps, limits = {}, labels = {}, globalMode = 'coach', servic
   }
   const rerender = async () => {
     const state = await getConfig();
-    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.blockingMode, state.serviceReasons || {});
+    renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
   };
   for (const pkg of apps) {
     const name = labels[pkg] || pkg;
-    const limitInfo = limits[pkg] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
+    const limitInfo = limits[pkg] || { ...INTENTION_DEFAULTS };
 
     const { li, fields } = buildBlockedRow({
       target: pkg,
       label: name,
-      headExtra: buildRowModeToggle(pkg, name, limitInfo, globalMode, 'appLimits', rerender),
-      onRemove: () => removeApp(pkg, labels[pkg], effectiveModeFor(limitInfo, globalMode) === 'simple')
+      onRemove: () => removeApp(pkg, labels[pkg])
     });
 
     buildRowBody({
-      li, fields, target: pkg, label: name, limitInfo, globalMode,
+      li, fields, target: pkg, label: name, limitInfo,
       kind: ROW_KINDS.app, serviceReasons, rerender
     });
     list.appendChild(li);

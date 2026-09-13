@@ -189,7 +189,6 @@ async function main() {
       await chrome.storage.local.clear();
       await chrome.storage.local.set({
         setupComplete: true,
-        blockingMode: 'coach',
         contextProjects: 'Finish the quarterly report',
         contextReasons: 'I lose whole evenings to the feed',
         backendUrl,
@@ -204,7 +203,8 @@ async function main() {
       // around it leaves the extension configured but not actually blocking.
       await new Promise((done) => {
         chrome.runtime.sendMessage(
-          { action: 'saveSettings', config: { blockedDomains: ['example.com'] } },
+          // One intended open, so the run can take it and then reach the coach.
+          { action: 'saveSettings', config: { blockedDomains: ['example.com'], domainLimits: { 'example.com': { maxGrants: 1, passMinutes: 5 } } } },
           () => done()
         );
       });
@@ -222,14 +222,48 @@ async function main() {
     record('registers a redirect rule for the blocked domain',
       rules.includes('||example.com^'), `rules: ${JSON.stringify(rules)}`);
 
-    // ── Visit 1: the actual moment under test — navigating to a blocked site.
+    // ── Visit 0: an open is left, so the gate offers it — no conversation, no
+    // request to the coach at all.
+    const page0 = await context.newPage();
+    await page0.goto('http://example.com/', { waitUntil: 'domcontentloaded' });
+    await waitFor(() => page0.url().startsWith(gateUrlPrefix), 4000);
+    record('a blocked site with an open left shows the intention gate',
+      page0.url().startsWith(gateUrlPrefix), `url: ${page0.url()}`);
+    const countText = await page0.locator('#int-intention-count').textContent({ timeout: 3000 }).catch(() => '');
+    record('the gate says which open this is and how long it lasts',
+      /Open 1 of 1 today/.test(countText || '') && /5 min/.test(countText || ''), JSON.stringify(countText));
+    await page0.getByRole('button', { name: 'Open for 5 minutes' }).click();
+    await waitFor(() => !page0.url().startsWith(gateUrlPrefix), 5000);
+    record('taking the open lets the page through', !page0.url().startsWith(gateUrlPrefix), `url: ${page0.url()}`);
+    record('a free open never reaches the coach', received.length === 0, `${received.length} request(s)`);
+    const opened0 = await settings.evaluate(async () => {
+      const { dailyStats = {} } = await chrome.storage.local.get('dailyStats');
+      const d = new Date();
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return dailyStats[key]?.['example.com'] || null;
+    });
+    record('the open is counted, and not as negotiated',
+      opened0?.grants === 1 && !opened0?.negotiated, JSON.stringify(opened0));
+    await page0.close();
+    // End the pass so the next visit gates again.
+    await settings.evaluate(async () => {
+      await chrome.storage.local.set({ activeSessions: {} });
+      await new Promise(done => chrome.runtime.sendMessage({ action: 'saveSettings', config: { blockedDomains: ['example.com'] } }, done));
+    });
+    await settings.waitForTimeout(500);
+
+    // ── Visit 1: the intention is spent. The gate offers the coach, and only
+    // tapping it starts a conversation.
     const page = await context.newPage();
     await page.goto('http://example.com/', { waitUntil: 'domcontentloaded' });
     await waitFor(() => page.url().startsWith(gateUrlPrefix), 4000);
 
     const landedOnGate = page.url().startsWith(gateUrlPrefix);
-    record('a blocked site opens the coach instead of the page',
+    record('a blocked site with its intention spent is gated',
       landedOnGate, `url: ${page.url()}`);
+    await page.waitForTimeout(800);
+    record('the spent gate starts no conversation on its own', received.length === 0, `${received.length} request(s)`);
+    await page.getByRole('button', { name: 'Ask the coach' }).click();
 
     // Which path gated it matters for what follows. On the redirect path the
     // blocked page is never loaded, so no content script runs and nothing can
@@ -349,6 +383,7 @@ async function main() {
     await waitFor(() => page2.url().startsWith(gateUrlPrefix), 4000);
     record('the site is gated again after walking away',
       page2.url().startsWith(gateUrlPrefix), `url: ${page2.url()}`);
+    await page2.getByRole('button', { name: 'Ask the coach' }).click({ timeout: 5000 }).catch(() => {});
 
     const reopenAt = Date.now();
     const historyRenderedAt = await watchRendered(page2, OPENER_REPLY, 3000);
@@ -444,7 +479,7 @@ async function main() {
     await settings.evaluate(async () => {
       await new Promise((done) => {
         chrome.runtime.sendMessage(
-          { action: 'saveSettings', config: { blockedDomains: ['example.com', 'localhost'] } },
+          { action: 'saveSettings', config: { blockedDomains: ['example.com', 'localhost'], domainLimits: { 'example.com': { maxGrants: 0 }, localhost: { maxGrants: 0 } } } },
           () => done()
         );
       });
@@ -482,6 +517,7 @@ async function main() {
     await waitFor(() => scopedPage.url().startsWith(gateUrlPrefix), 4000);
     record('the fixture page opens the coach',
       scopedPage.url().startsWith(gateUrlPrefix), `url: ${scopedPage.url()}`);
+    await scopedPage.getByRole('button', { name: 'Ask the coach' }).click({ timeout: 5000 }).catch(() => {});
 
     const scopedOpened = await waitFor(() => received.length >= 5, 15000, 25);
     record('the scoped gate opens a conversation', Boolean(scopedOpened),

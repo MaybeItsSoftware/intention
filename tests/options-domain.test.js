@@ -114,80 +114,73 @@ describe('which entries are accepted onto the blocklist', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The step order. It briefly stopped being a fixed list of section ids — the
-// wizard grew one screen per selected service, so an id repeated, the length
-// depended on the blocklist, and a step had to be stored as an id plus a
-// service key. It is a flat list again, and these are the assertions that say
-// so: the total is now a property of the BUILD and of nothing the user does.
-// ---------------------------------------------------------------------------
-
+// The page order. One question per page: the intention pages follow the
+// blocklist, and the purpose pages exist only once the user says yes to them.
 // HAS_APP_BLOCKING and friends are consts captured at load, so the platform is
 // whatever the stub said (no window.intentionApps → browser build).
-const orderFor = (state) => vm.runInContext(`
-  setupBlockedDomains = ${JSON.stringify(state.domains || [])};
-  setupBlockedApps = ${JSON.stringify(state.apps || [])};
-  setupAppLabels = ${JSON.stringify(state.appLabels || {})};
-  JSON.stringify(computeStepOrder());
-`, ctx);
+// ---------------------------------------------------------------------------
 
 describe('computeStepOrder', () => {
-  const BROWSER_ORDER = [
-    'setup-step-welcome',
-    'setup-step-sites',
-    'setup-step-purpose',
-    'setup-step-mode',
-    'setup-step-access',
-    'setup-step-done'
-  ];
+  const withReasons = (state, wants) => JSON.parse(vm.runInContext(`
+    setupBlockedDomains = ${JSON.stringify(state.domains || [])};
+    setupBlockedApps = ${JSON.stringify(state.apps || [])};
+    setupAppLabels = ${JSON.stringify(state.appLabels || {})};
+    setupWantsReasons = ${JSON.stringify(wants)};
+    JSON.stringify(computeStepOrder());
+  `, ctx));
 
-  it('is a flat list with the purpose step directly after the sites step', () => {
-    expect(JSON.parse(orderFor({ domains: ['reddit.com', 'x.com'] }))).toEqual(BROWSER_ORDER);
+  it('asks one intention per site, then offers the purpose pages', () => {
+    expect(withReasons({ domains: ['reddit.com', 'x.com'] }, null)).toEqual([
+      'setup-step-welcome',
+      'setup-step-sites',
+      'setup-step-intention:reddit.com',
+      'setup-step-intention:x.com',
+      'setup-step-reasons',
+      'setup-step-access',
+      'setup-step-done'
+    ]);
   });
 
-  // The whole point of the change. Six services used to mean six extra steps,
-  // and the denominator of "Step 2 of N" moved every time a site was added on
-  // the step before — under the user's finger, since that is the step the
-  // adding happens on.
-  it('does not grow with the blocklist', () => {
-    const none = orderFor({});
-    const one = orderFor({ domains: ['reddit.com'] });
-    const six = orderFor({
-      domains: ['reddit.com', 'x.com', 'youtube.com', 'tiktok.com', 'instagram.com', 'some-blog.example']
-    });
-    expect(none).toEqual(one);
-    expect(one).toEqual(six);
+  it('adds one purpose page per service only after a yes', () => {
+    const order = withReasons({ domains: ['reddit.com', 'x.com'] }, true);
+    expect(order.filter(id => id.startsWith('setup-step-purpose:'))).toEqual([
+      'setup-step-purpose:reddit.com', 'setup-step-purpose:x.com'
+    ]);
+    expect(order.indexOf('setup-step-purpose:reddit.com')).toBe(order.indexOf('setup-step-reasons') + 1);
+    expect(withReasons({ domains: ['reddit.com'] }, false).some(id => id.startsWith('setup-step-purpose:'))).toBe(false);
   });
 
-  it('never repeats an id, so an id identifies a step again', () => {
-    const order = JSON.parse(orderFor({ domains: ['reddit.com', 'x.com', 'instagram.com'] }));
-    expect(new Set(order).size).toBe(order.length);
-  });
-
-  it('asks once for a site and its app, and does not add a step for either', () => {
-    expect(JSON.parse(orderFor({
+  // A site and its app are two rules (two intentions) but one service, so
+  // the coach is told what it is for once.
+  it('gives a site and its app an intention each and one purpose page', () => {
+    const order = withReasons({
       domains: ['instagram.com'],
       apps: ['com.instagram.android'],
       appLabels: { 'com.instagram.android': 'Instagram' }
-    }))).toEqual(BROWSER_ORDER);
+    }, true);
+    expect(order.filter(id => id.startsWith('setup-step-purpose:'))).toHaveLength(1);
   });
 
-  // The wizard's own guard is that the access step is unconditionally in the
-  // order, so toggling Coach/Simple can't move the denominator. The purpose
-  // step has to hold the same line.
-  it('keeps the questions in simple mode, where nothing will read them', () => {
-    const coach = JSON.parse(vm.runInContext(`
-      setupBlockedDomains = ['reddit.com']; setupBlockedApps = [];
-      setupBlockingMode = 'coach'; JSON.stringify(computeStepOrder());
-    `, ctx));
-    const simple = JSON.parse(vm.runInContext(`
-      setupBlockingMode = 'simple'; JSON.stringify(computeStepOrder());
-    `, ctx));
-    expect(simple).toEqual(coach);
+  it('with nothing picked, skips straight from picking to the end', () => {
+    expect(withReasons({}, null)).toEqual([
+      'setup-step-welcome', 'setup-step-sites', 'setup-step-access', 'setup-step-done'
+    ]);
   });
 
-  it('every id it can emit is one the wizard test already checks exists', () => {
-    const order = JSON.parse(orderFor({ domains: ['reddit.com'] }));
-    for (const id of order) expect(id).toMatch(/^setup-step-[a-z-]+$/);
+  it('never repeats a page id, so an id still identifies a page', () => {
+    const order = withReasons({ domains: ['reddit.com', 'x.com', 'instagram.com'] }, true);
+    expect(new Set(order).size).toBe(order.length);
+  });
+
+  it('labels a run of pages by the part of setup, counting only within it', () => {
+    const label = vm.runInContext(`
+      setupBlockedDomains = ['reddit.com', 'x.com']; setupWantsReasons = null;
+      setupStepOrder = computeStepOrder();
+      JSON.stringify(setupStepOrder.map(setupProgressLabel));
+    `, ctx);
+    expect(JSON.parse(label)).toEqual([
+      'Intention', 'Pick', 'Intentions · 1 of 2', 'Intentions · 2 of 2', 'Purpose', 'More time', 'Ready'
+    ]);
   });
 });
 
@@ -264,39 +257,4 @@ describe('collectServiceReasons', () => {
   });
 });
 
-// The brand suggestion chips used to sit permanently in the Blocked sites
-// card, with no minutes field anywhere near them, so every chip added at a
-// hard-coded 10 min/day. They now live in the Add-website dialog, beside the
-// field the Add button already reads — so a chip and the button have to agree
-// on the number that was just typed.
-describe('currentAddSiteLimit', () => {
-  const withField = (value) => {
-    const previous = ctx.document.getElementById;
-    ctx.document.getElementById = (id) => (id === 'domain-limit-input' ? { value } : null);
-    try {
-      return ctx.currentAddSiteLimit();
-    } finally {
-      ctx.document.getElementById = previous;
-    }
-  };
 
-  it("takes the dialog's minutes field at its word", () => {
-    expect(withField('25')).toBe(25);
-    expect(withField('1')).toBe(1);
-  });
-
-  // The same fallback addDomain() applies on the typed path, so the two routes
-  // into the blocklist can't disagree about what an empty box means.
-  it('falls back to the add-default on anything blank, junk or non-positive', () => {
-    for (const value of ['', '   ', 'abc', '0', '-5']) {
-      expect(withField(value), value).toBe(ctx.DEFAULT_DAILY_MAX_MINUTES);
-    }
-  });
-
-  // The setup wizard renders its own chip grid inline, and the dialog's field
-  // is not always in the document the wizard is looking at; reading a missing
-  // field must not throw there.
-  it('falls back to the add-default when the field is not on the page at all', () => {
-    expect(ctx.currentAddSiteLimit()).toBe(ctx.DEFAULT_DAILY_MAX_MINUTES);
-  });
-});

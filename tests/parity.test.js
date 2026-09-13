@@ -207,33 +207,23 @@ describe('the two gate hosts share one UI', () => {
 // that differently is the one drift the user would feel directly, so it gets
 // the same treatment as prompts.js and tracking.js.
 describe('rules.js parity across variants', () => {
-  const CASES = [
-    [null, {}],
-    [null, { blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25 }],
-    [{ mode: 'simple', passMinutes: 5 }, { blockingMode: 'coach', simplePassMinutes: 30 }],
-    [{ looseUntilMinutes: '20' }, {}],
-    [{ looseUntilMinutes: '' }, {}],
-    [{ looseUntilMinutes: 0 }, {}],
-    [{ maxGrants: 'abc', maxMinutes: -1 }, {}]
+  const ENTRIES = [
+    null,
+    { maxGrants: 2, passMinutes: 15 },
+    { maxGrants: 0 },
+    { maxGrants: 'abc', passMinutes: 12 },
+    { maxGrants: 99, passMinutes: -1 }
   ];
 
-  it('resolveBlockConfig and resolveLimits are identical across variants', () => {
+  it('resolveIntention and isLoosening are identical across variants', () => {
     const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
-    for (const [entry, globals] of CASES) {
-      const block = ctxs.map(c => JSON.stringify(c.resolveBlockConfig(entry, globals)));
-      const limits = ctxs.map(c => JSON.stringify(c.resolveLimits(entry)));
-      expect(block[1], JSON.stringify({ entry, globals })).toBe(block[0]);
-      expect(block[2], JSON.stringify({ entry, globals })).toBe(block[0]);
-      expect(limits[1]).toBe(limits[0]);
-      expect(limits[2]).toBe(limits[0]);
-    }
-  });
-
-  it('normalizeLooseUntil is identical across variants', () => {
-    const ctxs = VARIANT_KEYS.map(v => loadSource('rules.js', { variant: v }));
-    for (const input of [undefined, null, '', 0, '0', '15', 15.6, -1, NaN, 'abc']) {
-      expect(ctxs[1].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
-      expect(ctxs[2].normalizeLooseUntil(input), String(input)).toBe(ctxs[0].normalizeLooseUntil(input));
+    for (const entry of ENTRIES) {
+      const answers = ctxs.map(c => JSON.stringify(c.resolveIntention(entry)));
+      for (const answer of answers.slice(1)) expect(answer, JSON.stringify(entry)).toBe(answers[0]);
+      for (const other of ENTRIES) {
+        const loosens = ctxs.map(c => c.isLoosening(entry, other));
+        for (const l of loosens.slice(1)) expect(l, JSON.stringify({ entry, other })).toBe(loosens[0]);
+      }
     }
   });
 });

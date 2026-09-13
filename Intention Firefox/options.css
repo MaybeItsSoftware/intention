@@ -25,10 +25,6 @@ body {
   padding: 40px 32px 80px;
 }
 
-/* The outermost shell is the only place the large radius is allowed — every
-   card, panel and popover inside it is 8px. */
-#setup-view > .setup-step:first-of-type { border-radius: var(--radius-shell); }
-
 header h1 {
   margin: 0 0 4px;
   font-size: 34px;
@@ -141,8 +137,7 @@ summary:focus-visible,
 a.link-button:focus-visible,
 .pill:focus-visible,
 .recommend-card:focus-visible,
-.tab-btn:focus-visible,
-.mode-choice-card:focus-visible {
+.tab-btn:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
@@ -157,9 +152,6 @@ a.link-button:focus-visible,
 .input-group > button { flex-shrink: 0; }
 
 .input-group .input-domain { flex: 2; }
-
-/* Higher specificity than the global input[type="number"]{width:100%} rule */
-input[type="number"].input-minutes { width: 80px; }
 
 button {
   padding: 10px 16px;
@@ -334,7 +326,9 @@ ul#app-list li, ul#setup-apps-list li {
   padding: 8px 10px;
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-control);
-  background: var(--well);
+  /* --alt rather than --well: muted text on the well was 4.4:1, just under AA
+     at this size. */
+  background: var(--alt);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
@@ -377,12 +371,6 @@ ul#app-list li, ul#setup-apps-list li {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-
-.row-field-unit {
-  font-size: 12px;
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 /* The row selects fell through to the global field rule — full width, 10/12
@@ -429,166 +417,144 @@ ul#usage-log-list li.log-date-heading {
   color: var(--text-dim);
 }
 
-/* ---- The loose -> strict timeline (buildLooseTimelineField) ---------------
+/* ---- The intention (buildIntentionField) ---------------------------------
 
-   The one genuinely new component here, and it stays inside the same rules as
-   everything else: a hairline track, a labelled split, no gradient, no shadow,
-   no thumb pretending to be a physical object. The band says which stretch is
-   which in the micro-label voice the rest of the row uses; the split is a
-   1px rule, the same weight as every other divider on the page.
-
-   The band is decoration (aria-hidden in the markup) — the real control is the
-   <input type="range"> sitting on top of it with a transparent track, so the
-   whole component is keyboard-operable and screen-reader-announced for free. */
-.row-timeline-field {
-  padding: 12px 14px;
-  border-top: 1px solid var(--border-muted);
-  gap: 8px;
-}
-
-.row-timeline {
-  max-width: 34em;
-}
-
-/* The band and the range are one control in two layers, so they get a
-   positioned box to themselves — the scale below has to stay out of it. */
-.row-timeline-track {
-  position: relative;
-}
-
-.row-timeline-band {
+   Two numbers, both on short fixed ranges, so neither is a text box: a stepper
+   for opens a day and a row of chips for minutes each. Hairlines and the
+   6px control radius, like every other control on the row. */
+.intention-field {
   display: flex;
-  height: 22px;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  align-items: flex-end;
+}
+
+.intention-opens {
+  display: inline-flex;
+  align-items: stretch;
   border: 1px solid var(--border-input);
   border-radius: var(--radius-control);
   overflow: hidden;
 }
 
-/* The two stretches. Their flex-basis is set from JS — it IS the value — so
-   nothing here fixes a width. Text centres and clips: at 320px with the split
-   near an end, one of the two captions has almost no room, and a clipped word
-   reads better than a band that refuses to shrink. */
-.row-timeline-phase {
-  display: flex;
+.stepper-btn {
+  min-width: 40px;
+  min-height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 18px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.stepper-btn:hover:not(:disabled) { background: var(--hover); }
+.stepper-btn:disabled { color: var(--text-dim); cursor: default; }
+
+.stepper-value {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  white-space: nowrap;
+  min-width: 9em;
+  padding: 0 10px;
+  border-left: 1px solid var(--border-input);
+  border-right: 1px solid var(--border-input);
+  font-size: 14px;
+  color: var(--ink);
 }
 
-.row-timeline-phase.is-loose {
-  background: var(--primary-fill-soft);
-  color: var(--primary-text);
+.intention-minutes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-/* The split itself: one hairline between the stretches, in the colour of the
-   half it starts. */
-.row-timeline-phase.is-strict {
-  border-left: 1px solid var(--warning-line);
-  background: var(--warning-fill);
-  color: var(--warning-text);
+.intention-minutes .chip {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
 }
 
-/* Laid over the band, not beside it: the handle you drag is the split you see.
-   The track is transparent because the band already drew it. */
-.row-timeline-range {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 22px;
+.intention-minutes .chip:hover:not(:disabled) { background: var(--hover); }
+.intention-minutes .chip.selected {
+  border-color: var(--ink);
+  color: var(--ink);
+  background: var(--well);
+}
+.intention-minutes .chip:disabled { opacity: 0.5; cursor: default; }
+
+@media (pointer: coarse) {
+  .stepper-btn, .intention-minutes .chip { min-height: 44px; }
+  .stepper-btn { min-width: 44px; }
+}
+
+/* Parts and purpose, folded under one hairline disclosure. */
+.row-more {
+  border-top: 1px solid var(--border-muted);
+}
+
+.row-more > summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.row-more > summary::-webkit-details-marker { display: none; }
+.row-more > summary::after { content: ' +'; }
+.row-more[open] > summary::after { content: ' \2212'; }
+
+/* ---- Streak, pending changes, the loosening dialog ------------------------ */
+.streak-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+}
+
+.streak-value { font-size: 22px; color: var(--ink); }
+.streak-grace { font-size: 13px; color: var(--text-muted); }
+
+.pending-list {
+  list-style: none;
   margin: 0;
   padding: 0;
-  background: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-  cursor: ew-resize;
 }
 
-.row-timeline-range::-webkit-slider-runnable-track {
-  height: 22px;
-  background: transparent;
-  border: 0;
-}
-
-.row-timeline-range::-moz-range-track {
-  height: 22px;
-  background: transparent;
-  border: 0;
-}
-
-/* A bar, not a bead: it is standing in for the split line, so it looks like
-   one — the same 8px radius family, a hairline border, and the paper colour so
-   the rule reads through the middle of it. */
-.row-timeline-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 26px;
-  margin-top: -2px;
-  border: 1px solid var(--ink);
-  border-radius: var(--radius-control);
-  background: var(--raised);
-  cursor: ew-resize;
-}
-
-.row-timeline-range::-moz-range-thumb {
-  width: 14px;
-  height: 26px;
-  border: 1px solid var(--ink);
-  border-radius: var(--radius-control);
-  background: var(--raised);
-  cursor: ew-resize;
-}
-
-/* An outline on the whole control rather than a ring around the thumb: a
-   box-shadow ring is the only way to reach a pseudo-element thumb, and this
-   page has no shadows in it — including the ones that are only pretending to
-   be rings. Outlining the band is also the honest answer to "what has focus",
-   since arrow keys move the split anywhere along it. */
-.row-timeline-range:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
-  border-radius: var(--radius-control);
-}
-
-/* The second way in. The ends are the bounds the range announces; the box
-   between them is the same number, typed. */
-.row-timeline-scale {
+.pending-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border-muted);
+}
+
+.pending-text { flex: 1 1 14em; color: var(--ink); }
+.pending-undo { width: auto; }
+
+.loosen-box { width: min(440px, 100%); }
+.loosen-when {
+  margin: 0 0 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--warning-line);
+  border-radius: var(--radius-control);
+  background: var(--warning-fill);
+  color: var(--warning-text);
+  font-size: 14px;
+}
+.loosen-actions {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  margin-top: 6px;
 }
-
-/* --text-muted, not --text-dim: these are the bounds of the control, so they
-   carry meaning on their own and have to clear AA. */
-.row-timeline-end {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-/* Both classes named, because the shared .inline-limit-input rule that sets
-   54px is declared further down this file and would otherwise win the tie. */
-input[type="number"].inline-limit-input.row-timeline-number {
-  width: 62px;
-}
-
-.row-timeline-note {
-  max-width: 34em;
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
+.loosen-actions button { width: 100%; min-height: 44px; }
+.loosen-cancel { border-color: transparent; }
 
 /* ---- Parts of the site (buildRowPartsField) -------------------------------
 
@@ -931,7 +897,7 @@ blockquote {
   background: var(--danger-fill);
 }
 
-#coach-modal, #gate-modal, #add-site-modal, #add-app-modal, #paywall-modal {
+#coach-modal, #gate-modal, #loosen-modal, #add-site-modal, #add-app-modal, #paywall-modal {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -942,7 +908,7 @@ blockquote {
   padding: 20px;
 }
 
-#coach-modal[hidden], #gate-modal[hidden], #add-site-modal[hidden], #add-app-modal[hidden], #paywall-modal[hidden] {
+#coach-modal[hidden], #gate-modal[hidden], #loosen-modal[hidden], #add-site-modal[hidden], #add-app-modal[hidden], #paywall-modal[hidden] {
   display: none;
 }
 
@@ -1133,105 +1099,361 @@ blockquote {
   flex-shrink: 0;
 }
 
+/* ---- Setup: one question per page ---------------------------------------
+
+   No cards. Each page is the paper itself: a large slab-serif question, a
+   line of muted prose, the controls, and a hairline nav pinned to the bottom.
+   Hierarchy is the size of the question against the micro-label above it. */
 #setup-view {
-  max-width: 680px;
+  max-width: 560px;
   margin: 0 auto;
+  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
 }
 
 .setup-progress {
   display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 20px;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 36px;
 }
 
 .setup-progress-track {
-  flex: 1;
-  height: 6px;
-  background: var(--hover);
-  border-radius: var(--radius-pill);
+  height: 2px;
+  background: var(--border);
   overflow: hidden;
 }
 
 .setup-progress-fill {
   height: 100%;
-  width: 25%;
-  background: var(--primary-solid);
-  border-radius: var(--radius-pill);
-  transition: width 0.25s ease;
+  width: 0;
+  background: var(--ink);
+  transition: width 0.35s ease;
 }
 
-/* The counter is a micro-label, not a sentence: it is a marker, and it now has
-   a longer journey to describe (the per-service questions add a screen each),
-   so it should sit quietly beside the bar rather than competing with the
-   heading below it. */
 .setup-progress-label {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.15em;
   color: var(--text-muted);
-  white-space: nowrap;
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  min-height: 1.4em;
 }
 
-.setup-step h3 {
-  margin: 0 0 8px;
-  font-size: 17px;
-  font-weight: 600;
+.setup-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.setup-page[hidden] { display: none; }
+
+.setup-question {
+  margin: 0 0 12px;
+  font-size: 28px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--ink);
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.setup-lede {
+  margin: 0 0 24px;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 44ch;
+}
+
+.setup-aside {
+  margin: 18px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.setup-aside[hidden] { display: none; }
+
+.setup-welcome .setup-question { font-size: 36px; }
+
+/* A numbered agenda on hairlines: the order is the point. */
+.setup-agenda {
+  list-style: none;
+  counter-reset: agenda;
+  margin: 8px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.setup-agenda li {
+  counter-increment: agenda;
+  display: flex;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+  line-height: 1.45;
   color: var(--ink);
 }
 
-/* The setup steps toggle visibility with the `hidden` attribute, and several
-   of the lists below set `display: flex`, which outranks the UA sheet's
-   `[hidden] { display: none }` and leaves them stubbornly on screen. */
-.setup-checklist[hidden],
+.setup-agenda li::before {
+  content: counter(agenda, decimal-leading-zero);
+  flex: 0 0 auto;
+  padding-top: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+/* The mark of the thing a per-target page is about, above its question. */
+.setup-mark {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.setup-mark svg { width: 22px; height: 22px; }
+
+/* The counter: minus, a big number, plus. */
+.setup-counter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0 16px;
+  padding: 18px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.setup-counter-btn {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 26px;
+  line-height: 1;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.setup-counter-btn:hover:not(:disabled) { background: var(--hover); }
+.setup-counter-btn:active:not(:disabled) { transform: scale(0.94); }
+.setup-counter-btn:disabled { color: var(--text-dim); cursor: default; }
+
+.setup-counter-read {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.setup-counter-value {
+  font-size: 64px;
+  line-height: 1;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.setup-counter-unit {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.setup-bump { animation: setup-bump 0.22s ease-out; }
+
+@keyframes setup-bump {
+  0% { transform: scale(0.86); opacity: 0.6; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* One dot per possible open, filled up to the intention. */
+.setup-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 28px;
+}
+
+.setup-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-input);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.setup-dot.on { background: var(--ink); border-color: var(--ink); }
+
+.micro-label.setup-sub { margin: 0 0 10px; }
+
+.setup-minutes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.setup-minute-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 64px;
+  padding: 10px 4px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.setup-minute-chip strong { font-size: 22px; color: var(--ink); }
+.setup-minute-chip span { font-size: 12px; }
+.setup-minute-chip:hover { background: var(--hover); }
+.setup-minute-chip.selected {
+  border-color: var(--ink);
+  background: var(--well);
+  color: var(--ink);
+  outline: 1px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.setup-sum {
+  margin: 22px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+/* A quiet text action: underlined ink, never azure body copy. */
+.setup-link {
+  align-self: flex-start;
+  margin-top: 18px;
+  padding: 10px 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.setup-link[hidden] { display: none; }
+
+.setup-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.setup-choice button { min-height: 52px; font-size: 16px; }
+
+/* What was picked: one hairline-divided list of names, each with a way to take
+   it back off. No card per row — nothing here is a setting yet. */
+ul.setup-picked {
+  margin: 16px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+ul#setup-websites-list.setup-picked li,
+ul#setup-apps-list.setup-picked li {
+  margin: 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+ul.setup-picked li .row-head { flex-wrap: nowrap; padding: 8px 0; }
+ul.setup-picked li .row-fields-inline { display: none; }
+ul.setup-picked li .delete-btn { margin-left: auto; }
+ul.setup-picked:empty { display: none; }
+
+.setup-tick {
+  width: 56px;
+  height: 56px;
+  margin: 0 0 22px;
+  border: 1px solid var(--success-line);
+  border-radius: var(--radius-pill);
+  background: var(--success-fill);
+  color: var(--success-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  animation: setup-bump 0.4s ease-out;
+}
+
+.setup-done-list {
+  list-style: none;
+  margin: 4px 0 22px;
+  padding: 0;
+  border-top: 1px solid var(--border);
+}
+
+.setup-done-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setup-done-name { flex: 1; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+.setup-done-rule {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  white-space: nowrap;
+}
+
+/* Pages arrive from the side they came from. */
+.setup-enter-forward { animation: setup-in-forward 0.28s ease-out; }
+.setup-enter-back { animation: setup-in-back 0.28s ease-out; }
+
+@keyframes setup-in-forward {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes setup-in-back {
+  from { opacity: 0; transform: translateX(-18px); }
+  to { opacity: 1; transform: none; }
+}
+
 .setup-steps-list[hidden] {
   display: none;
 }
 
-/* Welcome-step agenda: what the wizard is about to ask for, and why. */
-.setup-checklist {
-  list-style: none;
-  margin: 14px 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.setup-checklist li {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-left: 22px;
-  position: relative;
-}
-
-.setup-checklist li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 5px;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--primary-line);
-}
-
-.setup-checklist strong {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.setup-checklist span {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-muted);
-}
-
-/* Numbered instructions for steps the user has to carry out in iOS Settings,
-   where Intention can only tell them where to go. */
 .setup-steps-list {
   margin: 14px 0;
   padding-left: 22px;
@@ -1269,7 +1491,7 @@ blockquote {
   margin-top: 12px;
 }
 
-/* ---- Per-service questions (one screen, one card per service) ---- */
+/* ---- Per-service answers (the purpose pages) ---- */
 
 /* The signature micro-label: hierarchy from surface and position, not from
    font size. Section eyebrows, column headers and chip captions all use it. */
@@ -1308,82 +1530,6 @@ blockquote {
 /* The stack: one bordered panel, hairline-divided, rather than a card each.
    Cards-on-cards is the thing this design language does not do, and a list of
    eight services has to read as one list. */
-.setup-service-stack {
-  list-style: none;
-  margin: 14px 0 4px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-}
-
-.setup-service + .setup-service {
-  border-top: 1px solid var(--border);
-}
-
-.setup-service-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  background: none;
-  border: none;
-  text-align: left;
-  color: var(--ink);
-}
-
-.setup-service-name {
-  flex: 1 1 auto;
-  min-width: 6ch;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.setup-service-state {
-  margin: 0;
-  flex: 0 0 auto;
-}
-
-/* Answered is the only state that earns a colour. "Blocked outright" keeps the
-   muted micro-label: it is an answer, not an achievement. */
-.setup-service-state.answered {
-  color: var(--success-text);
-}
-
-/* A CSS-only caret, so the collapsed rows carry no SVG each. */
-.setup-service-chev {
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-right: 1.5px solid var(--text-muted);
-  border-bottom: 1.5px solid var(--text-muted);
-  transform: rotate(45deg);
-  margin: -4px 4px 0 0;
-  transition: transform 0.18s ease;
-}
-
-.setup-service-head[aria-expanded="true"] .setup-service-chev {
-  transform: rotate(225deg);
-  margin: 2px 4px 0 0;
-}
-
-.setup-service-body {
-  padding: 0 14px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-/* .setup-service-body sets display:flex, which outranks the UA sheet's
-   [hidden] { display: none } — the same trap the setup checklists hit. */
-.setup-service-body[hidden] {
-  display: none;
-}
-
 .setup-service-members {
   margin-bottom: 4px;
 }
@@ -1417,8 +1563,13 @@ blockquote {
 /* What the coach will do with the taps, updated as they happen. A well rather
    than a card, with the accent only on the leading edge: it is a consequence
    of what is directly above it, not a second thing to read. */
+.setup-reason-more { margin-top: 18px; }
+.setup-reason-more[hidden] { display: none; }
+.setup-reason-more-toggle { display: block; margin-top: 10px; }
+.setup-service .setup-service-note-toggle { display: block; color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+
 .setup-service-preview {
-  margin: 8px 0 12px;
+  margin: 20px 0 0;
   padding: 10px 12px;
   background: var(--well);
   border: 1px solid var(--border);
@@ -1429,51 +1580,9 @@ blockquote {
   color: var(--ink);
 }
 
-.setup-service-next {
-  align-self: flex-start;
-}
-
-/* The stack's own progress, distinct from the wizard's: that bar says where
-   you are in setup, this says how much of THIS is left. Thinner, because it is
-   the smaller of the two claims. */
-.setup-substep {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 4px;
-}
-
-.setup-substep[hidden] {
-  display: none;
-}
-
-.setup-substep-track {
-  flex: 1;
-  height: 3px;
-  background: var(--hover);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-}
-
-.setup-substep-fill {
-  height: 100%;
-  width: 0;
-  background: var(--primary-solid);
-  border-radius: var(--radius-pill);
-  transition: width 0.25s ease;
-}
-
 /* A step down from the wizard's: a list of twenty of these is a texture, and
    the mark is there to be recognised, not counted. */
 .row-mark svg { width: 15px; height: 15px; }
-
-/* Deliberately quiet, and deliberately not next to Next, so it reads as the
-   way out rather than the way on — saying "these are optional" out loud is
-   what stops a stack of cards reading as a wall to climb. */
-.setup-purpose-skip {
-  margin-top: 4px;
-  font-size: 13px;
-}
 
 /* This one is followed by the button that acts on it, so it needs the gap. */
 #setup-ios-apps-status {
@@ -1565,46 +1674,6 @@ blockquote {
   color: var(--ink);
 }
 
-.mode-choice-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin: 4px 0 14px;
-}
-
-.mode-choice-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px;
-  border-radius: var(--radius-card);
-  background: var(--alt);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  text-align: left;
-  width: 100%;
-}
-
-.mode-choice-card:hover {
-  background: var(--hover);
-}
-
-.mode-choice-card strong {
-  font-size: 14px;
-  color: var(--ink);
-}
-
-.mode-choice-card span {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.mode-choice-card.selected {
-  background: var(--primary-fill);
-  border-color: var(--primary-line);
-}
-
 .model-pills {
   display: flex;
   flex-wrap: wrap;
@@ -1633,15 +1702,24 @@ blockquote {
 }
 
 .setup-nav {
+  position: sticky;
+  bottom: 0;
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 32px;
+  padding: 14px 0 calc(14px + env(safe-area-inset-bottom));
+  background: var(--paper);
+  border-top: 1px solid var(--border);
 }
 
 .setup-nav button {
-  min-width: 110px;
+  min-width: 120px;
+  min-height: 48px;
 }
+
+.setup-nav #setup-next-btn,
+.setup-nav #setup-save-btn { margin-left: auto; }
 
 .setup-nav button:disabled {
   opacity: 0.4;
@@ -1908,28 +1986,6 @@ blockquote {
   margin-top: 14px;
 }
 
-/* Higher specificity than the global input[type="number"]{width:100%} rule.
-   A well and a control radius, like every other field on the page — it was on
-   --hover and the 8px card radius, which is the one reserved for cards. */
-input[type="number"].inline-limit-input {
-  width: 54px;
-  padding: 5px 6px;
-  background: var(--well);
-  border: 1px solid var(--border-input);
-  border-radius: var(--radius-control);
-  color: var(--ink);
-  font-size: 13px;
-  text-align: center;
-  margin: 0;
-  display: inline-block;
-  font-family: inherit;
-}
-
-input[type="number"].inline-limit-input:focus {
-  border-color: var(--primary);
-  outline: none;
-}
-
 /* An explicit `display` beats the `hidden` attribute's UA `display: none`, so
    buildSimpleBehaviorField's minutesInput.hidden = true did nothing and every
    hard-block row carried a stray "minutes per pass" box that controls nothing.
@@ -1944,12 +2000,7 @@ input[type="number"].inline-limit-input:focus {
   }
 
 
-  .setup-progress {
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  .setup-progress-label { font-size: 12px; }
+  .setup-progress { margin-bottom: 24px; }
 
   .card {
     padding: 16px;
@@ -1957,7 +2008,9 @@ input[type="number"].inline-limit-input:focus {
     margin-bottom: 12px;
   }
 
-  .setup-step h3 { font-size: 16px; }
+  .setup-question { font-size: 24px; }
+  .setup-welcome .setup-question { font-size: 30px; }
+  .setup-counter-value { font-size: 56px; }
 
   .card .subtitle {
     font-size: 13px;
@@ -1966,27 +2019,14 @@ input[type="number"].inline-limit-input:focus {
 
   .pill { padding: 6px 12px; }
 
-  /* The head is a 44px row of its own on a phone, and the state chip drops
-     under the name at the narrow end rather than squeezing it — the same
-     treatment .row-head gets, for the same reason. */
-  .setup-service-head { padding: 14px; }
-  .setup-service-name { flex-basis: calc(100% - 46px); }
-
   .recommend-card { padding: 8px 10px 8px 12px; }
-
-  .mode-choice-grid { grid-template-columns: 1fr; }
 
   .input-group { flex-wrap: wrap; }
   .input-group .input-domain { flex: 1 1 100%; }
-  .input-group input[type="number"].input-minutes { flex: 1; }
 
   .setup-nav {
-    position: sticky;
-    bottom: 0;
-    margin: 0 -16px;
+    margin: 24px -16px 0;
     padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-    background: var(--paper);
-    border-top: 1px solid var(--hover);
   }
 
   .setup-nav button {
@@ -2013,13 +2053,6 @@ input[type="number"].inline-limit-input:focus {
      gap — and everything else wraps under them. */
   .row-head .domain-name {
     flex-basis: calc(100% - 46px);
-  }
-
-  /* At 320px the scale's two ends and the number between them stop fitting on
-     one line, and the number is the one that must not shrink. The ends drop
-     under it and keep the bounds readable. */
-  .row-timeline-scale {
-    flex-wrap: wrap;
   }
 
   ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
@@ -2073,35 +2106,10 @@ input[type="number"].inline-limit-input:focus {
      labels, and those rules are more specific than the blanket one above — so
      they beat it, and the two smallest controls on the page were the two that
      zoomed. Named here at their own specificity to put them back. */
-  input[type="number"].inline-limit-input,
   .row-field select,
   .row-reason-input {
     font-size: 16px;
   }
-
-  /* The split is dragged with a finger, and a 22px band is half a target. The
-     painted band keeps its size; the track it sits in grows 11px of padding
-     top and bottom, and the range fills that padded box at 44. Same trick as
-     the ::after overlays above — the control looks the size it was designed at
-     and hits the size a thumb needs — except that the room is made INSIDE the
-     component, so the grown target can't land on the number box below it. */
-  .row-timeline-track {
-    padding: 11px 0;
-  }
-
-  .row-timeline-range {
-    height: 44px;
-  }
-
-  .row-timeline-range::-webkit-slider-runnable-track { height: 44px; }
-  .row-timeline-range::-moz-range-track { height: 44px; }
-
-  .row-timeline-range::-webkit-slider-thumb {
-    height: 30px;
-    margin-top: 7px;
-  }
-
-  .row-timeline-range::-moz-range-thumb { height: 30px; }
 }
 
 /* Durations collapse; the animations themselves stay, so nothing that conveys

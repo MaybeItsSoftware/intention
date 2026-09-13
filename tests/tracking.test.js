@@ -337,3 +337,54 @@ describe('aggregation across days and domains', () => {
     expect(summary.perSiteToday['reddit.com']).toBe(6);
   });
 });
+
+// A streak day is a day every intention was kept: nothing needed a pass
+// negotiated past it. One miss in any seven days is forgiven.
+describe('computeStreak', () => {
+  const key = (ctx, d) => ctx.dateKey(new Date(2026, 8, d));
+  const START = new Date(2026, 8, 1).getTime();
+  const missOn = (ctx, ...days) => Object.fromEntries(days.map(d => [key(ctx, d), { 'x.com': { grants: 4, negotiated: 1 } }]));
+
+  it('counts every clean day since setup, today included', () => {
+    const { ctx } = fresh();
+    expect(ctx.computeStreak({}, key(ctx, 13), START)).toEqual({ days: 13, todayKept: true, graceLeft: 1 });
+  });
+
+  it('does not count a day with free opens as a miss', () => {
+    const { ctx } = fresh();
+    const stats = { [key(ctx, 12)]: { 'x.com': { grants: 3, minutes: 30 } } };
+    expect(ctx.computeStreak(stats, key(ctx, 13), START).days).toBe(13);
+  });
+
+  it('forgives one miss in seven days, and says the grace is used', () => {
+    const { ctx } = fresh();
+    const out = ctx.computeStreak(missOn(ctx, 10), key(ctx, 13), START);
+    expect(out.days).toBe(12);
+    expect(out.graceLeft).toBe(0);
+  });
+
+  it('ends at a second miss inside the same seven days', () => {
+    const { ctx } = fresh();
+    const out = ctx.computeStreak(missOn(ctx, 12, 9), key(ctx, 13), START);
+    // 13 and 11-10 are clean; 12 is forgiven; 9 is the second miss in seven days.
+    expect(out.days).toBe(3);
+  });
+
+  it('forgives misses a week or more apart', () => {
+    const { ctx } = fresh();
+    const out = ctx.computeStreak(missOn(ctx, 12, 4), key(ctx, 13), START);
+    expect(out.days).toBe(11);
+  });
+
+  it('shows today as missed without ending the run', () => {
+    const { ctx } = fresh();
+    const out = ctx.computeStreak(missOn(ctx, 13), key(ctx, 13), START);
+    expect(out.todayKept).toBe(false);
+    expect(out.days).toBe(12);
+  });
+
+  it('counts nothing before setup', () => {
+    const { ctx } = fresh();
+    expect(ctx.computeStreak({}, key(ctx, 13), new Date(2026, 8, 11).getTime()).days).toBe(3);
+  });
+});

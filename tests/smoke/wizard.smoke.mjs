@@ -65,238 +65,192 @@ async function main() {
     await page.reload();
     await page.waitForSelector('#setup-view:not([hidden])');
 
-    // ── The wizard opens on welcome, and announces the per-service run.
+    // ── The wizard opens on welcome, and says what is coming.
     let step = await visibleStep(page);
-    record('opens on the welcome step', step.ids.join() === 'setup-step-welcome', JSON.stringify(step));
+    record('opens on the welcome page', step.ids.join() === 'setup-step-welcome', JSON.stringify(step));
+    record('and labels it with the name, not a step count', step.label === 'Intention', step.label);
+    record('the first button says Begin', (await page.textContent('#setup-next-btn')) === 'Begin');
 
     const agenda = await page.textContent('#setup-welcome-checklist');
-    record('the welcome agenda promises ONE screen for the questions',
-      /one screen for what each one is for/i.test(agenda), agenda.slice(0, 200));
+    record('the agenda says past an intention the coach decides',
+      /Past that, the coach decides/.test(agenda), agenda.slice(0, 200));
 
-    // ── Pick two sites. This is a browser build, so there is no apps step.
+    // ── Pick. Nothing picked means nowhere to go.
     await next(page);
     step = await visibleStep(page);
-    record('reaches the sites step', step.ids.join() === 'setup-step-sites', JSON.stringify(step));
+    record('reaches the pick page', step.ids.join() === 'setup-step-sites', JSON.stringify(step));
+    record('Continue waits for something to be picked',
+      await page.locator('#setup-next-btn').isDisabled());
 
     await page.evaluate(async () => {
-      await addDomainToBlocklist('instagram.com', 10);
-      await addDomainToBlocklist('some-blog.example', 10);
+      await addDomainToBlocklist('instagram.com');
+      await addDomainToBlocklist('some-blog.example');
     });
-    await page.waitForTimeout(60);
-
-    // ── The lenient/strict slider is now settable here, not only in settings.
-    // It shares its markup with the settings row but not its rule: there is no
-    // coach to argue past yet, so a drag in either direction just takes.
-    const sliders = await page.locator('#setup-websites-list .row-timeline-range').count();
-    record('every setup row carries the loose/strict slider', sliders === 2, `found ${sliders}`);
-
-    const sliderMax = await page.locator('#setup-websites-list .row-timeline-range').first().getAttribute('max');
-    record('the slider spans the row\'s own daily max', sliderMax === '10', sliderMax);
-
-    // Lengthening the window is the direction settings makes you argue for.
-    // Here it must simply apply, and survive into the draft.
-    await page.locator('#setup-websites-list .row-timeline-number').first().fill('3');
-    await page.locator('#setup-websites-list .row-timeline-number').first().dispatchEvent('change');
     await page.waitForTimeout(80);
-    const drafted = await page.evaluate(() => setupDomainLimits['instagram.com']?.looseUntilMinutes);
-    record('a change on it lands in the draft with no coach gate', drafted === 3, String(drafted));
-
-    // ── The counter must NOT move when the list does. This is the inverse of
-    // what this test used to assert: the per-service questions were one step
-    // each, so two sites made seven steps and a third made eight — the
-    // denominator moving under the finger of the person adding them. A browser
-    // build is welcome + sites + purpose + mode + access + done, always six.
+    record('the pick rows carry no settings of their own',
+      (await page.locator('#setup-websites-list .intention-field').count()) === 0);
+    record('and Continue is live once something is picked',
+      !(await page.locator('#setup-next-btn').isDisabled()));
     step = await visibleStep(page);
-    record('the step count is a constant six on a browser build',
-      step.label === 'Step 2 of 6', step.label);
+    record('picking does not move the page you are on', step.ids.join() === 'setup-step-sites', JSON.stringify(step));
 
-    await page.evaluate(() => addDomainToBlocklist('example.org', 10));
-    await page.waitForTimeout(80);
-    step = await visibleStep(page);
-    record('and adding a third site does not move it',
-      step.label === 'Step 2 of 6', step.label);
-
-    // Back to two, through the row's own Remove button.
-    await page.click('#setup-websites-list li:last-child .delete-btn');
-    await page.waitForTimeout(80);
-    const remaining = await page.locator('#setup-websites-list li').count();
-    record('removing it leaves the other two', remaining === 2, `found ${remaining}`);
-
-    // ── One screen, one card per service.
+    // ── One intention page per site.
     await next(page);
     step = await visibleStep(page);
-    record('reaches the single purpose step',
-      step.ids.join() === 'setup-step-purpose', JSON.stringify(step));
+    record('the first intention page asks about Instagram by name',
+      step.ids.join() === 'setup-step-intention' && step.title === 'How many times a day do you want to open Instagram?',
+      JSON.stringify(step));
+    record('and counts only the intention pages', step.label === 'Intentions · 1 of 2', step.label);
+    record('it starts at the default of three',
+      (await page.textContent('#setup-intention-opens')) === '3');
 
-    const stack = () => page.evaluate(() => [...document.querySelectorAll('#setup-purpose-stack .setup-service')]
-      .map(li => ({
-        service: li.dataset.service,
-        name: li.querySelector('.setup-service-name').textContent,
-        open: li.querySelector('.setup-service-head').getAttribute('aria-expanded') === 'true',
-        state: li.querySelector('.setup-service-state').textContent,
-        preview: li.querySelector('.setup-service-preview').textContent,
-        next: li.querySelector('.setup-service-next').textContent
-      })));
+    await page.click('#setup-intention-plus');
+    await page.click('[data-minutes="15"]');
+    await page.waitForTimeout(80);
+    const drafted = await page.evaluate(() => setupDomainLimits['instagram.com']);
+    record('plus and a minutes chip land in the draft',
+      drafted?.maxGrants === 4 && drafted?.passMinutes === 15, JSON.stringify(drafted));
+    const sum = await page.textContent('#setup-intention-sum');
+    record('and the line underneath adds it up as a day', /Up to 60 minutes a day, in four visits/.test(sum), sum);
+    record('offers to use it for the last one',
+      (await page.textContent('#setup-intention-same-btn')) === 'Use this for the last one too');
 
-    let cards = await stack();
-    record('one card per service, named from the catalogue',
-      cards.length === 2 && cards[0].name === 'Instagram' && cards[1].name === 'some-blog.example',
-      JSON.stringify(cards.map(c => c.name)));
-    record('the first is open and the rest are collapsed',
-      cards[0].open === true && cards[1].open === false, JSON.stringify(cards.map(c => c.open)));
-    record('the last card does not pretend there is another one after it',
-      cards[0].next === 'Next: some-blog.example' && /that's all of them/.test(cards[1].next),
-      JSON.stringify(cards.map(c => c.next)));
+    await next(page);
+    step = await visibleStep(page);
+    record('the second intention page is the hand-typed site',
+      step.title === 'How many times a day do you want to open some-blog.example?', step.title);
+    record('and its count moved within the run', step.label === 'Intentions · 2 of 2', step.label);
+    record('the last intention page offers no "use this for the rest"',
+      await page.locator('#setup-intention-same-btn').isHidden());
 
-    const counter = () => page.textContent('#setup-purpose-count');
-    record('the run says how long it is, in its own counter',
-      (await counter()) === '0 of 2 answered', await counter());
+    // Zero opens is a block, and the minutes question goes away with it.
+    for (let i = 0; i < 3; i++) await page.click('#setup-intention-minus');
+    await page.waitForTimeout(60);
+    record('down to zero says not at all', (await page.textContent('#setup-intention-unit')) === 'not at all');
+    record('and hides how long each time', await page.locator('#setup-intention-minutes-wrap').isHidden());
+    record('and minus stops there', await page.locator('#setup-intention-minus').isDisabled());
+    await page.click('#setup-intention-plus');
+    await page.waitForTimeout(40);
 
-    // ── A tap is the whole interaction, and the preview is what makes it read
-    // as a consequence rather than a form field.
+    // ── The purpose pages are an offer.
+    await next(page);
+    step = await visibleStep(page);
+    record('then asks whether to say what each one is for',
+      step.ids.join() === 'setup-step-reasons', JSON.stringify(step));
+    record('with the two answers as the only way on', await page.locator('#setup-next-btn').isHidden());
+
+    await page.click('#setup-reasons-yes-btn');
+    await page.waitForTimeout(80);
+    step = await visibleStep(page);
+    record('a yes opens one page per service',
+      step.ids.join() === 'setup-step-purpose' && step.title === 'When is opening Instagram fair enough?',
+      JSON.stringify(step));
+    record('counting only the purpose pages', step.label === 'Purpose · 1 of 2', step.label);
+
     const chip = (service, bucket, id) =>
       page.locator(`[data-service="${service}"] [data-bucket="${bucket}"][data-chip="${id}"]`);
-
-    await chip('instagram.com', 'needs', 'dm').click();
-    await page.waitForTimeout(60);
-    cards = await stack();
-    record('tapping a chip presses it',
-      (await chip('instagram.com', 'needs', 'dm').getAttribute('aria-pressed')) === 'true');
-    record('and rewrites the preview into what the coach will do',
-      cards[0].preview === 'Your coach will hear you out for a DM reply — and push back on the feed, Reels and Explore.',
-      cards[0].preview);
-    record('and marks the card answered', cards[0].state === 'Answered', cards[0].state);
-    record('and moves the stack counter', (await counter()) === '1 of 2 answered', await counter());
-
-    await chip('instagram.com', 'needs', 'sent').click();
-    await page.waitForTimeout(60);
-    cards = await stack();
-    record('a second chip joins the first in the preview',
-      cards[0].preview.includes('a DM reply or a link someone sent you'), cards[0].preview);
-
-    // The free text is a refinement under the chips, not the main event: it
-    // has to be revealed before it can be typed into.
+    const preview = (service) => page.textContent(`[data-service="${service}"] .setup-service-preview`);
     const noteToggle = (service, i) =>
       page.locator(`[data-service="${service}"] .setup-service-note-toggle`).nth(i);
     const note = (service, i) =>
       page.locator(`[data-service="${service}"] .setup-service-note`).nth(i);
 
-    // ── The phone case, and the one that used to lose the answer outright.
-    //
-    // Every chip click repaints the card, and the repaint syncs each textarea
-    // back from the stored answer. On a phone the textarea has not blurred
-    // when that happens: iOS Safari and the Android WebView do not reliably
-    // move focus to a <button> on tap, so no 'change' event has fired and the
-    // stored answer is still empty — which is what the repaint wrote over the
-    // half-typed sentence. A dispatched click reproduces exactly that here: it
-    // runs the chip's handler without moving focus, which a real Playwright
-    // click (Chromium DOES focus a button) would not.
+    await chip('instagram.com', 'needs', 'dm').click();
+    await page.waitForTimeout(60);
+    record('tapping a chip presses it',
+      (await chip('instagram.com', 'needs', 'dm').getAttribute('aria-pressed')) === 'true');
+    record('and rewrites the preview into what the coach will do',
+      (await preview('instagram.com')) === 'Your coach will hear you out for a DM reply — and push back on the feed, Reels and Explore.',
+      await preview('instagram.com'));
+
+    // The phone case that used to lose the answer: a chip tap that does not
+    // move focus off a half-typed note repaints the page around it.
     await noteToggle('instagram.com', 0).click();
     await note('instagram.com', 0).click();
     await note('instagram.com', 0).pressSequentially('Only my sister messages, never the feed');
-    await chip('instagram.com', 'costs', 'hours').dispatchEvent('click');
+    await chip('instagram.com', 'needs', 'sent').dispatchEvent('click');
     await page.waitForTimeout(60);
-    const stillFocused = await page.evaluate(() =>
-      document.activeElement?.classList.contains('setup-service-note'));
-    record('a tap that does not move focus is what the repro needs', stillFocused === true,
-      String(stillFocused));
-    const survived = await note('instagram.com', 0).inputValue();
     record('a chip tapped with the keyboard still up does not wipe the note',
-      survived === 'Only my sister messages, never the feed', JSON.stringify(survived));
-
-    // ...and the keystrokes reached the answer object, so Finish would save
-    // them even if this textarea never blurs at all.
-    const banked = await page.evaluate(() => setupServiceAnswers['instagram.com']?.needsNote);
-    record('and the typed sentence is already banked in the draft answers',
-      banked === 'Only my sister messages, never the feed', JSON.stringify(banked));
-
-    await chip('instagram.com', 'costs', 'hours').dispatchEvent('click');
-    await page.waitForTimeout(60);
-
+      (await note('instagram.com', 0).inputValue()) === 'Only my sister messages, never the feed');
     await note('instagram.com', 0).fill('A specific reply. Never the feed.');
     await note('instagram.com', 0).blur();
-    await page.waitForTimeout(60);
 
-    // The cost side's own note. Left as free text here so the tail of this
-    // file — the settings row, the app pairing, the gated second write — reads
-    // exactly the same prose it always did, which is the proof that the
-    // storage shape did not move when the input did.
+    // The second question is folded away until asked for.
+    record('why it is on the list is folded away at first',
+      await page.locator('[data-service="instagram.com"] .setup-reason-more').isHidden());
+    await page.click('[data-service="instagram.com"] .setup-reason-more-toggle');
     await noteToggle('instagram.com', 1).click();
     await note('instagram.com', 1).fill('DMs from my sister.');
     await note('instagram.com', 1).blur();
     await page.waitForTimeout(60);
 
-    // ── The footer button moves the accordion on, and it is the thing a phone
-    // user actually presses.
-    await page.click('[data-service="instagram.com"] .setup-service-next');
-    await page.waitForTimeout(60);
-    cards = await stack();
-    record('Next collapses the card and opens the following one',
-      cards[0].open === false && cards[1].open === true, JSON.stringify(cards.map(c => c.open)));
-
-    // ── The draft round-trip. This is where the old per-service index bug
-    // lived: the step is stored, and so is which card was open.
+    // ── The draft round-trip lands on the same page, for the same service.
     await page.reload();
     await page.waitForSelector('#setup-view:not([hidden])');
-    await page.waitForTimeout(150);
+    await page.waitForTimeout(200);
     step = await visibleStep(page);
-    cards = await stack();
-    record('a reload returns to the purpose step, not to step 1',
-      step.ids.join() === 'setup-step-purpose', JSON.stringify(step));
-    record('the denominator is the same six it was before the reload',
-      step.label === 'Step 3 of 6', step.label);
+    record('a reload returns to the same purpose page',
+      step.title === 'When is opening Instagram fair enough?', JSON.stringify(step));
     record('the chip tapped before the reload is still pressed',
       (await chip('instagram.com', 'needs', 'dm').getAttribute('aria-pressed')) === 'true');
-    record('and the card that was open is still the open one',
-      cards[1].open === true, JSON.stringify(cards.map(c => c.open)));
+    record('and the folded question stays open because it has an answer',
+      await page.locator('[data-service="instagram.com"] .setup-reason-more').isVisible());
 
-    // ── "Nothing — I just want it gone" is exclusive in both directions.
+    await next(page);
+    step = await visibleStep(page);
+    record('the next purpose page is the hand-typed site',
+      step.title === 'When is opening some-blog.example fair enough?', step.title);
+
     await chip('some-blog.example', 'needs', 'sent').click();
-    await page.waitForTimeout(60);
     await chip('some-blog.example', 'needs', 'none').click();
     await page.waitForTimeout(60);
-    cards = await stack();
     record('the "nothing" chip clears the reasons beside it',
       (await chip('some-blog.example', 'needs', 'sent').getAttribute('aria-pressed')) === 'false');
     record('and swaps the preview to starting from no',
-      /start every visit from no/.test(cards[1].preview), cards[1].preview);
-    record('and says so on the collapsed head', cards[1].state === 'Blocked outright', cards[1].state);
-
+      /start every visit from no/.test(await preview('some-blog.example')));
     await chip('some-blog.example', 'needs', 'none').click();
-    await page.waitForTimeout(60);
-
+    await page.click('[data-service="some-blog.example"] .setup-reason-more-toggle');
     await noteToggle('some-blog.example', 1).click();
     await note('some-blog.example', 1).fill('Reading one author.');
     await note('some-blog.example', 1).blur();
     await page.waitForTimeout(60);
 
-    // ── Skip is the way past the whole step, and it must not be the way past
-    // the wizard.
+    // ── More time, then done.
+    await next(page);
+    step = await visibleStep(page);
+    record('explains what happens past an intention',
+      step.ids.join() === 'setup-step-access', JSON.stringify(step));
+
+    await next(page);
+    step = await visibleStep(page);
+    record('ends on the ready page', step.ids.join() === 'setup-step-done', JSON.stringify(step));
+    const rules = await page.locator('#setup-done-list li').allTextContents();
+    record('which reads every intention back',
+      rules.length === 2 && rules[0].includes('4 × 15 min') && rules[1].includes('1 × 10 min'),
+      JSON.stringify(rules));
+    record('and Start replaces Continue', await page.locator('#setup-save-btn').isVisible());
+
+    // Back from the end still works, and the purpose skip goes to the end.
+    await page.click('#setup-back-btn');
+    await page.click('#setup-back-btn');
+    await page.waitForTimeout(60);
     await page.click('#setup-purpose-skip-btn');
     await page.waitForTimeout(60);
     step = await visibleStep(page);
-    record('Skip leaves the questions behind and lands on the mode step',
-      step.ids.join() === 'setup-step-mode', JSON.stringify(step));
-
-    // ── Simple mode must not change the denominator (the bug the access step
-    // is unconditionally in the order to avoid).
-    const beforeToggle = (await visibleStep(page)).label;
-    await page.click('#setup-mode-simple-btn');
-    await page.waitForTimeout(60);
-    const afterToggle = (await visibleStep(page)).label;
-    record('toggling to Simple does not move the step count',
-      beforeToggle === afterToggle, `${beforeToggle} -> ${afterToggle}`);
-    await page.click('#setup-mode-coach-btn');
-    await page.waitForTimeout(60);
-
-    // ── Finish, and check what actually landed in storage.
+    record('"Skip the rest" goes past the purpose pages',
+      step.ids.join() === 'setup-step-access', JSON.stringify(step));
     await next(page);
-    await next(page);
-    step = await visibleStep(page);
-    record('ends on the done step', step.ids.join() === 'setup-step-done', JSON.stringify(step));
 
     await page.click('#setup-save-btn');
     await page.waitForSelector('#settings-view:not([hidden])', { timeout: 5000 });
+
+    const saved = await page.evaluate(() => new Promise(done =>
+      chrome.storage.local.get(['domainLimits'], done)));
+    record('the intentions reached storage',
+      saved.domainLimits?.['instagram.com']?.maxGrants === 4 &&
+      saved.domainLimits?.['instagram.com']?.passMinutes === 15 &&
+      saved.domainLimits?.['some-blog.example']?.maxGrants === 1,
+      JSON.stringify(saved.domainLimits));
 
     const stored = await page.evaluate(() => new Promise(done =>
       chrome.storage.local.get(['serviceReasons', 'setupDraft'], done)));
@@ -337,15 +291,15 @@ async function main() {
       action: 'saveSettings',
       config: {
         blockedApps: ['com.instagram.android'],
-        appLimits: { 'com.instagram.android': { maxGrants: 3, maxMinutes: 10 } },
+        appLimits: { 'com.instagram.android': { maxGrants: 3, passMinutes: 10 } },
         appLabels: { 'com.instagram.android': 'Instagram' }
       }
     }, done)));
 
     const paired = await page.evaluate(async () => {
       const s = await getConfig();
-      renderApps(s.blockedApps, s.appLimits, s.appLabels, s.blockingMode, s.serviceReasons);
-      renderDomains(s.blockedDomains, s.domainLimits, s.blockingMode, s.serviceReasons);
+      renderApps(s.blockedApps, s.appLimits, s.appLabels, s.serviceReasons);
+      renderDomains(s.blockedDomains, s.domainLimits, s.serviceReasons);
       const read = (sel) => [...document.querySelectorAll(sel)].map(li => ({
         value: li.querySelector('.row-reason-input')?.value,
         shared: li.querySelector('.row-reason-shared')?.textContent || null
@@ -377,7 +331,7 @@ async function main() {
     }, done)));
     await page.evaluate(async () => {
       const s = await getConfig();
-      renderApps(s.blockedApps, s.appLimits, s.appLabels, s.blockingMode, s.serviceReasons);
+      renderApps(s.blockedApps, s.appLimits, s.appLabels, s.serviceReasons);
       const area = [...document.querySelectorAll('#app-list li .row-reason-input')][1];
       area.value = 'Only to reply, never to browse.';
       area.dispatchEvent(new Event('change'));
@@ -390,9 +344,9 @@ async function main() {
         && afterFirst['com.instagram.android'] === undefined,
       JSON.stringify(afterFirst));
 
-    // ── Every edit AFTER that is a rule the coach already reasons from, so it
-    // costs a conversation. Nothing may reach storage until one is had, and
-    // the box reverts to the stored wording meanwhile.
+    // ── An edit after that is saved too. These answers only change what the
+    // coach reads, and the coach is reached only past a spent intention and
+    // is paid for, so there is nothing to defer.
     const afterSecond = await page.evaluate(async () => {
       const area = [...document.querySelectorAll('#app-list li .row-reason-input')][1];
       area.value = 'Anything I feel like, actually.';
@@ -402,11 +356,11 @@ async function main() {
         chrome.storage.local.get('serviceReasons', r => done(r.serviceReasons)));
       return { stored, shown: area.value };
     });
-    record('editing an answer that already exists does not write silently',
-      afterSecond.stored['instagram.com']?.legitimateUse === 'Only to reply, never to browse.',
+    record('editing an answer that already exists saves it on the shared key',
+      afterSecond.stored['instagram.com']?.legitimateUse === 'Anything I feel like, actually.',
       JSON.stringify(afterSecond.stored));
-    record('and the box reverts until the coach agrees',
-      afterSecond.shown === 'Only to reply, never to browse.', afterSecond.shown);
+    record('and the box keeps what was typed',
+      afterSecond.shown === 'Anything I feel like, actually.', afterSecond.shown);
 
     if (HEADED) await page.waitForTimeout(5000);
   } finally {

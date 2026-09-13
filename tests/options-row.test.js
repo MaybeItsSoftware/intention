@@ -1,11 +1,9 @@
 // options.js — the blocked-row controls, and the one rule they all obey.
 //
-// The settings page runs tighten-free / loosen-gated: a change that makes the
-// rules stricter saves itself the moment you make it, and a change that makes
-// them looser has to be argued with the coach first. Two of the row's controls
-// are new to that rule — the loose -> strict split, where LOWERING is the
-// tightening, and the two site-specific answers, where the FIRST write is free
-// and every edit after it is not — so both directions are covered here.
+// The settings page runs tighten-free / loosen-deferred: a change that makes
+// the rules stricter saves itself the moment you make it, and a change that
+// makes them looser is handed to requestLoosening, which offers tomorrow or
+// the coach. Both directions are covered here for every control on the row.
 //
 // options.js is a browser script with no exports and no test-only seams, so it
 // is evaluated in a vm against a DOM thin enough to build an element tree in.
@@ -89,7 +87,8 @@ const fire = (node, type) =>
 let ctx;
 let doc;     // the shim document, so a test can answer getElementById itself
 let saved;   // every saveSettings config the page wrote, in order
-let gates;   // every coach gate it opened instead
+let gates;   // every loosening it asked for instead (requestLoosening)
+let sent;    // every other background message, in order
 let config;  // what getConfig answers with
 
 // `host` is what the page's window looks like: the Android bridge publishes
@@ -99,6 +98,7 @@ let config;  // what getConfig answers with
 function load({ host = {} } = {}) {
   saved = [];
   gates = [];
+  sent = [];
 
   const chrome = {
     runtime: {
@@ -107,6 +107,7 @@ function load({ host = {} } = {}) {
       sendMessage: (msg, cb) => {
         if (msg.action === 'getConfig') return cb(structuredClone(config));
         if (msg.action === 'saveSettings') saved.push(structuredClone(msg.config));
+        else sent.push(structuredClone(msg));
         cb({ ok: true });
       }
     },
@@ -135,9 +136,9 @@ function load({ host = {} } = {}) {
     }
   });
 
-  // The coach gate is a modal with a chat in it; all these tests need to know
-  // is that it was opened, and what it was asked to approve.
-  ctx.openGateModal = (args) => { gates.push(args); };
+  // Loosening opens a choice between tomorrow and the coach; all these tests
+  // need to know is that it was asked for, and what for.
+  ctx.requestLoosening = (args) => { gates.push(args); };
 }
 
 const noop = async () => {};
@@ -147,8 +148,7 @@ beforeEach(() => {
     blockedDomains: ['instagram.com'],
     blockedApps: [],
     appLabels: {},
-    blockingMode: 'coach',
-    domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 45, looseUntilMinutes: 15 } },
+    domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } },
     appLimits: {},
     serviceReasons: {}
   };
@@ -157,137 +157,87 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('the loose -> strict timeline', () => {
-  const build = (limitInfo, max = 45) =>
-    ctx.buildLooseTimelineField('instagram.com', 'instagram.com', limitInfo, ctx.ROW_KINDS.domain, max, noop);
+describe('the intention', () => {
+  const build = (entry = config.domainLimits['instagram.com'], kind = 'domain', target = 'instagram.com') => {
+    const li = makeElement('li');
+    const fields = makeElement('div');
+    ctx.buildRowBody({
+      li, fields, target, label: target, limitInfo: entry,
+      kind: ctx.ROW_KINDS[kind], serviceReasons: {}, rerender: noop
+    });
+    return { li, fields };
+  };
+  const stepper = (fields) => findAll(fields, 'stepper-btn');
+  const chips = (fields) => findAll(fields, 'chip');
 
-  it('is a real range input, so it is keyboard-operable without any ARIA', () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const range = find(field, 'row-timeline-range');
-    expect(range.tagName).toBe('input');
-    expect(range.type).toBe('range');
-    expect(range.min).toBe('0');
-    expect(range.max).toBe('45');
-    expect(range.getAttribute('aria-label')).toContain('before the coach turns strict');
-    // A bare "15" doesn't say what it counts.
-    expect(range.getAttribute('aria-valuetext')).toBe('15 of 45 minutes lenient, then strict');
+  it('shows opens a day and minutes each, named by micro-labels', () => {
+    const { fields } = build();
+    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Opens', 'Each time']);
+    expect(find(fields, 'stepper-value').textContent).toBe('3 opens a day');
+    const selected = chips(fields).filter(c => c.getAttribute('aria-checked') === 'true');
+    expect(selected.map(c => c.textContent)).toEqual(['10 min']);
   });
 
-  it('hides the painted band from the accessibility tree', () => {
-    // The band says the same thing the range already announces. Two voices
-    // saying "loose, strict, 15" is one too many.
-    const band = find(build({ looseUntilMinutes: 15 }), 'row-timeline-band');
-    expect(band.getAttribute('aria-hidden')).toBe('true');
+  it('calls zero opens what it is', () => {
+    const { fields } = build({ maxGrants: 0, passMinutes: 10 });
+    expect(find(fields, 'stepper-value').textContent).toBe('Blocked');
+    expect(stepper(fields)[0].disabled).toBe(true);
   });
 
-  it('pairs the range with a number box carrying the same value and label', () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const number = find(field, 'row-timeline-number');
-    expect(number.type).toBe('number');
-    expect(number.value).toBe('15');
-    expect(number.getAttribute('aria-label')).toBe(find(field, 'row-timeline-range').getAttribute('aria-label'));
-  });
-
-  // Absent means no split at all, which is lenient all day — so the handle
-  // opens at the far right rather than inventing a line the user never drew.
-  it('opens at the far right when no split was ever set', () => {
-    const field = build({ maxMinutes: 45 });
-    expect(find(field, 'row-timeline-number').value).toBe('45');
-    expect(find(field, 'row-timeline-range').getAttribute('aria-valuetext'))
-      .toBe('lenient all day, no strict phase');
-    expect(find(field, 'row-timeline-note').textContent).toContain('never turns strict');
-  });
-
-  it('lowering it shortens the lenient window — saved directly, no coach', async () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const number = find(field, 'row-timeline-number');
-    number.value = '5';
-    await fire(number, 'change');
-
+  it('fewer opens is a tightening — saved directly, nothing asked', async () => {
+    const { fields } = build();
+    await fire(stepper(fields)[0], 'click');
     expect(gates).toEqual([]);
     expect(saved).toHaveLength(1);
-    expect(saved[0].domainLimits['instagram.com'].looseUntilMinutes).toBe(5);
-    expect(number.value).toBe('5');
+    expect(saved[0].domainLimits['instagram.com']).toMatchObject({ maxGrants: 2, passMinutes: 10 });
   });
 
-  it('raising it lengthens the window — gated, and not written meanwhile', async () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const number = find(field, 'row-timeline-number');
-    number.value = '30';
-    await fire(number, 'change');
-
-    expect(saved).toEqual([]);
-    expect(gates).toHaveLength(1);
-    expect(gates[0].changeType).toBe('increase_loose_window');
-    expect(gates[0].domain).toBe('instagram.com');
-    expect(gates[0].currentValue).toBe(15);
-    expect(gates[0].newValue).toBe(30);
-    // Reverted on screen until the coach says otherwise.
-    expect(number.value).toBe('15');
-  });
-
-  it('drawing a first split out of "lenient all day" is a tightening', async () => {
-    const field = build({ maxMinutes: 45 });
-    const number = find(field, 'row-timeline-number');
-    number.value = '20';
-    await fire(number, 'change');
-
+  it('shorter opens is a tightening too', async () => {
+    const { fields } = build();
+    await fire(chips(fields).find(c => c.textContent === '5 min'), 'click');
     expect(gates).toEqual([]);
-    expect(saved[0].domainLimits['instagram.com'].looseUntilMinutes).toBe(20);
+    expect(saved[0].domainLimits['instagram.com']).toMatchObject({ maxGrants: 3, passMinutes: 5 });
   });
 
-  it('the range and the number box are two ways into the same field', async () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const range = find(field, 'row-timeline-range');
-    range.value = '4';
-    await fire(range, 'change');
-    expect(saved[0].domainLimits['instagram.com'].looseUntilMinutes).toBe(4);
-    // Dragging repaints the number too, so the two never disagree on screen.
-    expect(find(field, 'row-timeline-number').value).toBe('4');
-  });
-
-  it('dragging paints but does not save — only letting go commits', async () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const range = find(field, 'row-timeline-range');
-    range.value = '3';
-    await fire(range, 'input');
+  it('more opens is a loosening — asked for, and not written meanwhile', async () => {
+    const { fields } = build();
+    await fire(stepper(fields)[1], 'click');
     expect(saved).toEqual([]);
-    expect(find(field, 'row-timeline-number').value).toBe('3');
-  });
-
-  it('clamps a typed value to the track and ignores an unreadable one', async () => {
-    const field = build({ looseUntilMinutes: 15 });
-    const number = find(field, 'row-timeline-number');
-
-    number.value = '900';
-    await fire(number, 'change');
-    // 900 past a 45-minute max is "lenient all day", which is longer: gated.
     expect(gates).toHaveLength(1);
-    expect(gates[0].newValue).toBe(45);
+    expect(gates[0].changeType).toBe('increase_limit');
+    expect(gates[0].currentValue).toEqual({ maxGrants: 3, passMinutes: 10 });
+    expect(gates[0].newValue).toEqual({ maxGrants: 4, passMinutes: 10 });
+  });
 
-    number.value = 'soon';
-    await fire(number, 'change');
+  it('longer opens is a loosening too', async () => {
+    const { fields } = build();
+    await fire(chips(fields).find(c => c.textContent === '30 min'), 'click');
     expect(saved).toEqual([]);
-    expect(number.value).toBe('15');
+    expect(gates[0].newValue).toEqual({ maxGrants: 3, passMinutes: 30 });
   });
 
-  it('a split left beyond a since-lowered max reads as lenient all day', () => {
-    // Lowering the daily max is a tightening that saves itself, so a stored
-    // split can end up past the end of the track.
-    const field = build({ looseUntilMinutes: 40 }, 10);
-    expect(find(field, 'row-timeline-number').value).toBe('10');
+  it('keeps the part rule on the entry when it saves a tightening', async () => {
+    config.domainLimits['instagram.com'] = { maxGrants: 3, passMinutes: 10, scope: 'only', parts: ['instagram:reels'] };
+    const { fields } = build(config.domainLimits['instagram.com']);
+    await fire(stepper(fields)[0], 'click');
+    expect(saved[0].domainLimits['instagram.com']).toEqual({
+      maxGrants: 2, passMinutes: 10, scope: 'only', parts: ['instagram:reels']
+    });
   });
 
-  it('an app row gates through the app change type', async () => {
-    const field = ctx.buildLooseTimelineField(
-      'com.instagram.android', 'the Instagram app',
-      { looseUntilMinutes: 15 }, ctx.ROW_KINDS.app, 45, noop
-    );
-    const number = find(field, 'row-timeline-number');
-    number.value = '30';
-    await fire(number, 'change');
-    expect(gates[0].changeType).toBe('increase_app_loose_window');
+  it('an app row asks through the app change type', async () => {
+    config.appLimits = { 'com.instagram.android': { maxGrants: 1, passMinutes: 5 } };
+    const { fields } = build(config.appLimits['com.instagram.android'], 'app', 'com.instagram.android');
+    await fire(stepper(fields)[1], 'click');
+    expect(gates[0].changeType).toBe('increase_app_limit');
     expect(gates[0].isApp).toBe(true);
+  });
+
+  it('folds parts and purpose away under one disclosure', () => {
+    const { li } = build();
+    const more = find(li, 'row-more');
+    expect(more.tagName).toBe('details');
+    expect(find(more, 'row-reasons')).toBeDefined();
   });
 });
 
@@ -327,10 +277,11 @@ describe('the two site-specific answers', () => {
     expect(saved[0].serviceReasons['instagram.com'].purpose).toBe('It eats my evenings.');
   });
 
-  it('every edit after that goes through the coach', async () => {
+  // They only change what the coach reads, and the coach is paid for, so an
+  // edit is applied at once rather than deferred.
+  it('every edit after that is applied directly', async () => {
     config.serviceReasons = { 'instagram.com': { purpose: 'It eats my evenings.', updatedAt: 1 } };
     load();
-    ctx.openGateModal = (args) => { gates.push(args); };
 
     const wrap = ctx.buildRowReasonFields(
       'instagram.com', 'instagram.com', ctx.ROW_KINDS.domain, config.serviceReasons, [], noop
@@ -341,13 +292,11 @@ describe('the two site-specific answers', () => {
     purpose.value = 'Actually it is fine.';
     await fire(purpose, 'change');
 
-    expect(saved).toEqual([]);
-    expect(gates).toHaveLength(1);
-    expect(gates[0].changeType).toBe('edit_site_purpose');
-    expect(gates[0].currentValue).toBe('It eats my evenings.');
-    expect(gates[0].newValue).toBe('Actually it is fine.');
-    // Reverted on screen until the coach says otherwise.
-    expect(purpose.value).toBe('It eats my evenings.');
+    expect(gates).toEqual([]);
+    const change = sent.find(m => m.action === 'applySettingChange');
+    expect(change).toMatchObject({
+      changeType: 'edit_site_purpose', domain: 'instagram.com', newValue: 'Actually it is fine.'
+    });
   });
 
   // The two fields are independent: an answered "why you're blocking it" must
@@ -355,7 +304,6 @@ describe('the two site-specific answers', () => {
   it('the two fields count their first write separately', async () => {
     config.serviceReasons = { 'instagram.com': { purpose: 'It eats my evenings.', updatedAt: 1 } };
     load();
-    ctx.openGateModal = (args) => { gates.push(args); };
 
     const wrap = ctx.buildRowReasonFields(
       'instagram.com', 'instagram.com', ctx.ROW_KINDS.domain, config.serviceReasons, [], noop
@@ -375,7 +323,6 @@ describe('the two site-specific answers', () => {
   it('does nothing at all when the text comes back unchanged', async () => {
     config.serviceReasons = { 'instagram.com': { purpose: 'It eats my evenings.', updatedAt: 1 } };
     load();
-    ctx.openGateModal = (args) => { gates.push(args); };
 
     const wrap = ctx.buildRowReasonFields(
       'instagram.com', 'instagram.com', ctx.ROW_KINDS.domain, config.serviceReasons, [], noop
@@ -397,92 +344,6 @@ describe('the two site-specific answers', () => {
       config.serviceReasons, [], noop
     );
     expect(findAll(wrap, 'row-reason-input')[1].value).toBe('One specific DM.');
-  });
-});
-
-describe('the Coach / Simple toggle', () => {
-  const build = (limitInfo, globalMode = 'coach') =>
-    ctx.buildRowModeToggle('instagram.com', 'instagram.com', limitInfo, globalMode, 'domainLimits', noop);
-
-  it('shows the mode that is in force, and announces which is chosen', () => {
-    // No override, global is coach: the row is a coach row.
-    const [coach, simple] = findAll(build({}), 'row-mode-btn');
-    expect(coach.getAttribute('aria-pressed')).toBe('true');
-    expect(simple.getAttribute('aria-pressed')).toBe('false');
-    expect(coach.classList.contains('selected')).toBe(true);
-  });
-
-  it('follows a per-row override over the global default', () => {
-    const [coach, simple] = findAll(build({ mode: 'simple' }), 'row-mode-btn');
-    expect(coach.getAttribute('aria-pressed')).toBe('false');
-    expect(simple.getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('names the row it belongs to, so ten of them are not ten bare "Coach"es', () => {
-    expect(build({}).getAttribute('aria-label')).toBe('How instagram.com is blocked');
-    expect(build({}).getAttribute('role')).toBe('group');
-  });
-
-  it('writes an override when the choice disagrees with the global', async () => {
-    const [, simple] = findAll(build({}), 'row-mode-btn');
-    await fire(simple, 'click');
-    expect(saved[0].domainLimits['instagram.com'].mode).toBe('simple');
-    // The simple-only fields come with it, defaulted.
-    expect(saved[0].domainLimits['instagram.com'].behavior).toBe('pass');
-    expect(saved[0].domainLimits['instagram.com'].passMinutes).toBe(10);
-  });
-
-  // Two buttons, three stored states. Choosing the mode that already matches
-  // the global drops the override rather than freezing it, so the row goes
-  // back to following the global blocking-mode card.
-  it('drops the override when the choice matches the global again', async () => {
-    config.domainLimits['instagram.com'].mode = 'simple';
-    load();
-    const [coach] = findAll(build({ mode: 'simple' }), 'row-mode-btn');
-    await fire(coach, 'click');
-    expect('mode' in saved[0].domainLimits['instagram.com']).toBe(false);
-  });
-
-  it('clears the simple-only fields on the way back to coach', async () => {
-    config.domainLimits['instagram.com'] = { maxGrants: 3, mode: 'simple', behavior: 'hard', passMinutes: 25 };
-    load();
-    const [coach] = findAll(build({ mode: 'simple', behavior: 'hard', passMinutes: 25 }), 'row-mode-btn');
-    await fire(coach, 'click');
-    const entry = saved[0].domainLimits['instagram.com'];
-    expect('behavior' in entry).toBe(false);
-    expect('passMinutes' in entry).toBe(false);
-  });
-
-  it('saves nothing when you pick the mode already in force', async () => {
-    const [coach] = findAll(build({}), 'row-mode-btn');
-    await fire(coach, 'click');
-    expect(saved).toEqual([]);
-  });
-});
-
-describe('the absolute daily max', () => {
-  it('is named for what it is, and explains itself on request', () => {
-    const field = ctx.buildDailyLimitField(45, 'instagram.com', () => {}, { info: true });
-    expect(find(field, 'micro-label').textContent).toBe('Absolute daily max');
-    const info = find(field, 'row-info-btn');
-    expect(info.getAttribute('aria-expanded')).toBe('false');
-    expect(info.getAttribute('aria-controls')).toBe(find(field, 'row-info-note').id);
-    expect(find(field, 'row-info-note').textContent).toContain('a ceiling, not a target');
-  });
-
-  it('the explanation is a disclosure, not a hover', async () => {
-    const field = ctx.buildDailyLimitField(45, 'instagram.com', () => {}, { info: true });
-    const info = find(field, 'row-info-btn');
-    const note = find(field, 'row-info-note');
-    expect(note.hidden).toBe(true);
-    await fire(info, 'click');
-    expect(note.hidden).toBe(false);
-    expect(info.getAttribute('aria-expanded')).toBe('true');
-  });
-
-  it('the wizard rows get the field without a second explanation', () => {
-    const field = ctx.buildDailyLimitField(10, 'instagram.com', () => {});
-    expect(find(field, 'row-info-btn')).toBeUndefined();
   });
 });
 
@@ -537,7 +398,7 @@ describe('the add dialog and the wizard do not both show suggestions', () => {
 
 describe('the parts-of-the-site control', () => {
   const build = (entry, label = 'instagram.com') =>
-    ctx.buildRowPartsField('instagram.com', label, entry, ctx.ROW_KINDS.domain, 'coach', noop);
+    ctx.buildRowPartsField('instagram.com', label, entry, ctx.ROW_KINDS.domain, noop);
 
   const scopeButtons = (field) => findAll(field, 'row-scope-btn');
   const pressed = (field) => scopeButtons(field)
@@ -558,7 +419,7 @@ describe('the parts-of-the-site control', () => {
   });
 
   it('opens on "All of it" for every row written before this existed', () => {
-    const field = build({ maxGrants: 3, maxMinutes: 45 });
+    const field = build({ maxGrants: 3, passMinutes: 10 });
     expect(pressed(field)).toEqual(['All of it']);
     // Nothing to list and nothing to explain until a scope is chosen.
     expect(find(field, 'row-parts-helper').hidden).toBe(true);
@@ -747,7 +608,7 @@ describe('the parts-of-the-site control', () => {
     // separate parts. Saying so in the picker is the only honest place: the
     // alternative is a part that silently never matches.
     it('says outright what X cannot distinguish', async () => {
-      const field = ctx.buildRowPartsField('x.com', 'x.com', { maxGrants: 3 }, ctx.ROW_KINDS.domain, 'coach', noop);
+      const field = ctx.buildRowPartsField('x.com', 'x.com', { maxGrants: 3 }, ctx.ROW_KINDS.domain, noop);
       await fire(findAll(field, 'row-scope-btn')[1], 'click');
       find(field, 'row-parts-add')._handlers.click[0]({});
       const picker = doc.body.children.at(-1);
@@ -852,7 +713,7 @@ function kotlinUnrecognisedVerdict() {
 
 describe('section rules on an app row', () => {
   const build = (target, label, entry = { maxGrants: 3 }) =>
-    ctx.buildRowPartsField(target, label, entry, ctx.ROW_KINDS.app, 'coach', noop);
+    ctx.buildRowPartsField(target, label, entry, ctx.ROW_KINDS.app, noop);
 
   const scopeButtons = (field) => findAll(field, 'row-scope-btn');
   const helperText = (field) => find(field, 'row-parts-helper').textContent;
@@ -972,7 +833,7 @@ describe('section rules on an app row', () => {
       load({ host: ANDROID });
       const field = ctx.buildRowPartsField(
         'instagram.com', 'instagram.com', { maxGrants: 3, scope: 'only', parts: ['instagram:reels'] },
-        ctx.ROW_KINDS.domain, 'coach', noop
+        ctx.ROW_KINDS.domain, noop
       );
       expect(find(field, 'row-parts-caveat').hidden).toBe(true);
     });

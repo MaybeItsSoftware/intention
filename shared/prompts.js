@@ -4,7 +4,7 @@ const GRANT_TOOL = {
   schema: {
     type: 'object',
     properties: {
-      minutes: { type: 'number', description: 'Minutes to grant (1 to 60). Match to the task, do not inflate.' },
+      minutes: { type: 'number', description: 'Minutes to grant. Passes past the user\'s intention are capped at 10 (20 when scoped to one page). Match to the task, do not inflate.' },
       reason: { type: 'string', description: 'One-line statement of what the user is going to do in that time.' },
       // Deliberately NOT in `required`, and deliberately not a URL.
       //
@@ -32,7 +32,7 @@ const GRANT_TOOL = {
 
 const APPROVE_CHANGE_TOOL = {
   name: 'approve_setting_change',
-  description: 'Approve the user\'s requested loosening of their own blocking settings (removing a blocked site, increasing/removing an absolute max limit, or disabling all blocking). Only call this when the user has given a genuine, specific, and well-justified reason that holds up to scrutiny \u2014 not just because they asked, are frustrated, or are in a weak moment. The default answer is NO. The user set these rules deliberately when they were thinking clearly; honor that unless the case for change is truly compelling.',
+  description: 'Approve the user\'s requested loosening of their own blocking settings (removing a blocked site, raising an intention, or disabling all blocking) TODAY rather than tomorrow, when it would take effect anyway. Only call this when the user has given a genuine, specific, and well-justified reason that holds up to scrutiny \u2014 not just because they asked, are frustrated, or are in a weak moment. The default answer is NO. The user set these rules deliberately when they were thinking clearly; honor that unless the case for change is truly compelling.',
   schema: {
     type: 'object',
     properties: {
@@ -499,35 +499,25 @@ function computeEscalationLine(recentDays, grantsCap) {
 
   if (capDays < 3 && !repeated) return '';
   const findings = [];
-  if (capDays >= 3) findings.push(`they hit their daily grant cap on ${capDays} of the last 7 days`);
+  if (capDays >= 3) findings.push(`they used up their daily intention on ${capDays} of the last 7 days`);
   if (repeated) findings.push(`"${repeated.reason.slice(0, 60)}" has come up on ${repeated.count} separate days`);
   return `Cross-day pattern (computed for you): ${findings.join(', and ')}. Treat today as a continuation of that streak, not a fresh start \u2014 raise the bar for granting and say plainly what you see.`;
 }
 
-// ---- The loose -> strict split --------------------------------------------
+// ---- Past the intention ----------------------------------------------------
 //
-// `looseUntilMinutes` on a domain/app limit entry is how many of today's
-// minutes on THAT site the coach spends being lenient. Up to it, a plausible
-// specific reason earns time; past it, only genuine need does. The field is
-// optional, and absent means no split at all — which is not an oversight but
-// the point: an entry that never got one behaves exactly as it did before the
-// field existed, so nothing is owed a migration.
-//
-// Computed here, in code, and rendered as instruction, like the trust tally
-// and the escalation line above it. "Compare today's minutes against the split
-// and decide how strict to be" is precisely the arithmetic weak BYOK models
-// get wrong, and the answer changes how many minutes someone gets. And like
-// every other modifier in this file it is silent when it doesn't apply — a
-// coach reciting "you are 0 minutes into a window you never set" is noise.
-//
-// The line is volatile: it turns over mid-day as the minutes climb, so it is
-// composed into the usage block BELOW CACHE_BREAK_MARKER, never into the
-// questions block above it.
+// The coach is never the first thing someone meets. Every blocked target
+// carries an intention — N opens a day, M minutes each — and inside it a visit
+// is one tap with no conversation. The coach is reached only once that is used
+// up, and only because the user chose to ask: every conversation here is, by
+// construction, a request for time beyond a line they drew for themselves in a
+// calmer moment. So there is no lenient phase to be in. The bar is the strict
+// one from the first message, and the line saying so is computed here and
+// rendered as instruction like the trust tally and escalation line above it.
 
-// The ceiling on a single pass once the lenient window is spent. It lives here
-// beside the text that promises it, and background.js reads it from here to do
-// the clamping — two numbers that have to agree is one number in the wrong
-// place.
+// The ceiling on a single negotiated pass. It lives here beside the text that
+// promises it, and background.js reads it from here to do the clamping — two
+// numbers that have to agree is one number in the wrong place.
 const STRICT_PHASE_MAX_MINUTES = 10;
 
 // The same ceiling for a pass pinned to one page, and the asymmetry is the
@@ -537,48 +527,23 @@ const STRICT_PHASE_MAX_MINUTES = 10;
 // minutes of the whole site. The incentive only works if the easier option is
 // genuinely easier, and it has to be visible to the coach as well as true in
 // the arithmetic, which is why renderScopeBlock states it outright.
-//
-// Nothing above this loosens: the 60-minute ceiling on any single pass and the
-// user's own daily maxMinutes remainder are both applied after this and both
-// still win, so the day's total cannot grow because of it.
 const STRICT_PHASE_MAX_MINUTES_SCOPED = 20;
 
 // Named for background.js's clampCause channel, which renders as "...only N
 // were available under ${clampCause}", so this has to be a noun phrase that
 // finishes that sentence.
-const STRICT_PHASE_CLAMP_CAUSE = "the strict-phase cap on a single pass \u2014 today's lenient window on this site is spent";
-
-// null when there is no split to speak of. Everything else derives from the
-// one stored number and today's minutes, both of which the caller already has.
-//
-// The field is read through rules.js rather than parsed again here. Callers
-// normally hand over an already-normalised value, but "already normalised" is
-// not something this can check, and a second hand-written parse of the same
-// field is exactly the drift rules.js exists to end — absent must keep meaning
-// "no split", never `Number(null) === 0`, "strict from the first minute".
-function computePhase(looseUntilMinutes, minutesTodaySite) {
-  const split = normalizeLooseUntil(looseUntilMinutes);
-  if (split === null) return null;
-  const used = Math.max(0, Number(minutesTodaySite) || 0);
-  return {
-    split,
-    strict: used >= split,
-    remaining: Math.max(0, Math.round(split - used))
-  };
-}
+const STRICT_PHASE_CLAMP_CAUSE = "the cap on a pass beyond today's intention";
 
 // `scopeAvailable` is the one thing this line cannot compute for itself: it is
 // a fact about the destination, resolved in background.js. When a page-scoped
-// pass is on the table the strict-phase sentence has to say so, or the coach
-// reads a flat 10-minute cap and never offers the cheaper option the strict
-// phase is exactly the moment for.
-function renderPhaseLine(looseUntilMinutes, minutesTodaySite, scopeAvailable) {
-  const phase = computePhase(looseUntilMinutes, minutesTodaySite);
-  if (!phase) return '';
-  if (!phase.strict) {
-    return `\n\nToday's lenient window (computed for you): they set it at ${phase.split} minutes on this site and ${phase.remaining} of those are left. You are in the LOOSE phase \u2014 still ask what they came for, and still refuse a mood dressed up as an errand, but a plausible, specific reason is enough to earn time here. Do not read the window out as a budget waiting to be spent; it is a line they drew, not an offer you are making.`;
-  }
-  return `\n\nToday's lenient window is SPENT (computed for you): they set it at ${phase.split} minutes on this site and they are past it. You are in the STRICT phase \u2014 plausible is no longer enough, only genuine need is. Say plainly that the easy part of their day here is over, and say it as their decision: they drew that line themselves, in a calmer moment, precisely for this one. Any pass you do grant is capped at ${STRICT_PHASE_MAX_MINUTES} minutes${scopeAvailable ? ` \u2014 unless it is scoped to a single page, which may run to ${STRICT_PHASE_MAX_MINUTES_SCOPED}, because leaving that page ends it` : ''}, so ask what actually has to happen now and fit the minutes to that.`;
+// pass is on the table the sentence has to say so, or the coach reads a flat
+// 10-minute cap and never offers the cheaper option.
+function renderIntentionLine(opens, minutesEach, scopeAvailable) {
+  const n = Math.max(0, Number(opens) || 0);
+  const intention = n === 0
+    ? 'not to open it at all today'
+    : `to open it at most ${n} time${n === 1 ? '' : 's'} a day, ${Number(minutesEach) || 0} minutes each`;
+  return `\n\nTheir intention for this site (set by them, computed for you): ${intention}. That is used up for today \u2014 which is the only reason you are talking. Every minute you grant now is beyond a line they drew in a calmer moment, and they are spending coaching credit to ask for it. Plausible is not enough; only a concrete, bounded, genuinely necessary task is. Say plainly that today's intention is spent, and say it as their own decision rather than your rule. Any pass you do grant is capped at ${STRICT_PHASE_MAX_MINUTES} minutes${scopeAvailable ? ` \u2014 unless it is scoped to a single page, which may run to ${STRICT_PHASE_MAX_MINUTES_SCOPED}, because leaving that page ends it` : ''}, so ask what actually has to happen now and fit the minutes to that. Walking away is always a good outcome here; never make them feel they wasted credit by choosing it.`;
 }
 
 // The walk-away count is the product this whole tool exists to produce, and
@@ -932,19 +897,7 @@ function renderRemovalBlock({ blockedSites, blockedApps, daysActive, minutesToda
   return lines.join('\n');
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesCap, minutesTodaySite, looseUntilMinutes, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
-  // Without the minutes on both branches this line read "Minutes on x today:
-  // unlimited" for someone who had spent none — reporting the cap where the
-  // coach is being told the usage.
-  const minsCapStr = minutesCap && minutesCap > 0
-    ? `${minutesTodaySite} of ${minutesCap}m absolute max`
-    : `${minutesTodaySite} (no daily cap set)`;
-  // Both caps now close the door outright. They used to diverge — the grants
-  // cap left the quick-check lane open because it was a separate budget — and
-  // the override text below had to say which one bound. With the lane retired
-  // there is no exception left to carve out of either.
-  const grantsCapReached = grantsToday >= grantsCap;
-  const minutesCapReached = !!(minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesEach, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   // An app and a web page are mutually exclusive targets; only one block can
   // apply, and the app one wins because there is no page to describe.
@@ -971,9 +924,9 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
-  // Where in the day they are on this site, in terms of their own loose/strict
-  // split. Silent unless they set one. See renderPhaseLine.
-  const phaseStr = renderPhaseLine(looseUntilMinutes, minutesTodaySite, !!pageScope);
+  // What they meant to allow themselves here, and that it is spent. See
+  // renderIntentionLine.
+  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope);
   // The cache-break marker is prefixed HERE, at the head of the usage block,
   // so every compose path — default append and user {{usage}} overrides alike
   // — splits exactly where the volatile content starts, with no change to
@@ -983,19 +936,15 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
 ${renderNowLine()}
 
 Today's usage:
-- Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
-- Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
+- Passes on ${domain} today: ${grantsToday} (their intention allows ${grantsCap})
+- Minutes on ${domain} today: ${minutesTodaySite}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Minutes across all blocked sites this week: ${minutesWeekAll}
 - Reasons they already gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${phaseStr}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}${partStr}${scopeStr}
 
 ${reasonsStr === '(none yet today)'
-    ? `This is their first visit here today, so don't recite the zeros \u2014 just ask what brings them here.`
-    : `They have already been here today: say so ("Earlier today you came here for ${reasonsStr}\u2026") and ask whether this is the same pull or genuinely new.`}${minutesCapReached ? `
-
-- YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${minutesCap} minutes on this site). DO NOT call grant_access \u2014 it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : grantsCapReached ? `
-
-- YOU HAVE REACHED TODAY'S ABSOLUTE MAX (${grantsCap} grants allowed today). DO NOT call grant_access \u2014 it will be rejected anyway. Your job now is pure support: help them feel good about stopping. Name the pattern kindly. Offer one concrete alternative. Celebrate the fact that they're even checking in with you.` : ''}`;
+    ? `They have given no reasons here today yet, so don't recite the zeros \u2014 just ask what they need the extra time for.`
+    : `They have already been here today: say so ("Earlier today you came here for ${reasonsStr}\u2026") and ask whether this is the same pull or genuinely new.`}`;
   return composeSystemPrompt(coachInstructions, {
     questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }),
     usage
@@ -1004,7 +953,7 @@ ${reasonsStr === '(none yet today)'
     grants_today: grantsToday,
     grants_cap: grantsCap,
     minutes_today: minutesTodaySite,
-    minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
+    minutes_each: minutesEach,
     reasons_today: reasonsStr,
     site_purpose: (siteReason && siteReason.purpose) || '',
     site_legitimate: (siteReason && siteReason.legitimateUse) || '',
@@ -1013,16 +962,7 @@ ${reasonsStr === '(none yet today)'
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesCap, minutesTodaySite, looseUntilMinutes, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
-  // Without the minutes on both branches this line read "Minutes on x today:
-  // unlimited" for someone who had spent none — reporting the cap where the
-  // coach is being told the usage.
-  const minsCapStr = minutesCap && minutesCap > 0
-    ? `${minutesTodaySite} of ${minutesCap}m absolute max`
-    : `${minutesTodaySite} (no daily cap set)`;
-  const grantsCapReached = grantsToday >= grantsCap;
-  const minutesCapReached = !!(minutesCap && minutesCap > 0 && minutesTodaySite >= minutesCap);
-  const capReached = grantsCapReached || minutesCapReached;
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesEach, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   const pageCtxStr = appContext ? renderAppContextBlock(appContext, partContext) : renderPageContextBlock(pageContext);
   const partStr = renderPartBlock({ siteLabel: domain, ...(partContext || {}) });
@@ -1041,9 +981,9 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
-  // The check-in is the moment the phase most often turns over — the minutes
-  // that spent the window are the ones this session just used.
-  const phaseStr = renderPhaseLine(looseUntilMinutes, minutesTodaySite, !!pageScope);
+  // A coach check-in only ever follows a pass beyond the intention, so the
+  // same line applies — see renderIntentionLine.
+  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope);
   // Marker prefixed at the head of the usage block, same as the gate prompt —
   // see buildGateSystemPrompt for why it lives here.
   const usage = CACHE_BREAK_MARKER + `You are gently checking in: the user's granted time on ${domain} is up. Their original stated purpose was: "${originalReason || '(unknown)'}".
@@ -1051,8 +991,8 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
 ${renderNowLine()}
 
 Today's usage:
-- Grants on ${domain} today: ${grantsToday} of ${grantsCap} allowed
-- Minutes on ${domain} today: ${minsCapStr}${weekSiteStr}
+- Passes on ${domain} today: ${grantsToday} (their intention allows ${grantsCap})
+- Minutes on ${domain} today: ${minutesTodaySite}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Reasons they gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${phaseStr}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}${partStr}${scopeStr}${endedScopeStr}
 
@@ -1062,8 +1002,7 @@ Open with: asking warmly whether they finished what they came for. Then:
 - If the page context above describes something different from what they came for, that drift is the most useful thing you can name \u2014 gently. "You came for X and you're on Y now" is a real observation, not an accusation.
 - If yes, or they're ready to close: affirm warmly, suggest one short good-feeling transition (stretch, water, deep breath, one small task).
 - If they want more time: this is the exponential-difficulty moment. Push back gently. Ask what specifically remains that the site is the answer to. Name the pattern if it's there: "This would be the Nth time today \u2014 is there something else going on?"
-- Only grant more time if there is a genuinely concrete, remaining, bounded task. Subtract from your normal willingness as grants today rises.${capReached ? `
-- ABSOLUTE MAX REACHED (${minutesCapReached ? `${minutesCap} minutes on this site` : `${grantsCap} grants allowed today`}). DO NOT call grant_access \u2014 it will be rejected. This is the moment the user most needs kindness, not scolding. Help them feel OK about closing. Acknowledge what they're doing right by talking to you at all.` : ''}
+- Only grant more time if there is a genuinely concrete, remaining, bounded task. Subtract from your normal willingness as grants today rises.
 - Keep messages short (2-4 sentences). Warm, not preachy.`;
   return composeSystemPrompt(coachInstructions, {
     questions: renderQuestionsBlock({ contextProjects, contextReasons, userContext, domain, siteReason }),
@@ -1073,7 +1012,7 @@ Open with: asking warmly whether they finished what they came for. Then:
     grants_today: grantsToday,
     grants_cap: grantsCap,
     minutes_today: minutesTodaySite,
-    minutes_cap: minutesCap > 0 ? minutesCap : 'unlimited',
+    minutes_each: minutesEach,
     reasons_today: reasonsStr,
     site_purpose: (siteReason && siteReason.purpose) || '',
     site_legitimate: (siteReason && siteReason.legitimateUse) || '',
@@ -1111,15 +1050,12 @@ function buildSettingsGateSystemPrompt({ domain, changeType, currentValue, newVa
   } else if (changeType === 'remove_app') {
     changeDesc = `REMOVE ${domain} from their blocklist entirely \u2014 meaning this app would no longer be blocked at all.`;
   } else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') {
-    const fromStr = (currentValue && Number(currentValue) > 0) ? `${currentValue} minutes/day` : 'unlimited';
-    const toStr = (newValue && Number(newValue) > 0) ? `${newValue} minutes/day` : 'unlimited (no limit)';
+    // Both values arrive as sentences ("3 opens a day, 10 minutes each"),
+    // rendered in background.js by describeIntentionForHuman, for the same
+    // reason the scope change's do: {{current_value}} is a template token and
+    // an object renders through it as "[object Object]".
     const kind = changeType === 'increase_app_limit' ? 'an app' : 'a site';
-    changeDesc = `RAISE the absolute max time limit on ${domain} from ${fromStr} to ${toStr} \u2014 giving themselves more time on ${kind} they chose to limit.`;
-  } else if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') {
-    // Lengthening the lenient window is a quieter loosening than raising the
-    // cap — the total time doesn't move — so the description has to spell out
-    // what actually changes: how much of today they get judged gently for.
-    changeDesc = `LENGTHEN the lenient window on ${domain} from ${Number(currentValue) || 0} to ${Number(newValue) || 0} minutes of the day's time there. Up to that mark you judge them gently and a plausible, specific reason earns time; past it only genuine need does, and any pass is capped short. They are asking you to stay easy on them for longer.`;
+    changeDesc = `RAISE their intention for ${domain} from ${currentValue} to ${newValue} \u2014 more time on ${kind} they chose to limit.`;
   } else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') {
     // These two answers are an input to every gate decision on this service —
     // you quote them back at the user at the block — so rewriting one in front
@@ -1230,7 +1166,7 @@ How to handle this:
   // see buildGateSystemPrompt for why it lives here.
   const usage = CACHE_BREAK_MARKER + `The user is in their settings page and is trying to make their rules LOOSER. They want to: ${changeDesc}
 
-This is a high-stakes moment. The user set these absolute maxes deliberately, in a clear-headed moment, precisely so a future weaker moment couldn't undo them. You are that safeguard. Your default answer is NO.
+This change is NOT refused if you say no. Loosening in Intention always takes effect the next day on its own, for free \u2014 so what they are really asking you for is to have it NOW, today, while the pull is live. That is exactly the moment the rule was drawn for. Your default answer is NO, and "you can have it tomorrow" is a complete, kind answer.
 
 ${renderNowLine()}
 
@@ -1243,9 +1179,9 @@ Today's context:${domain ? `
 How to handle this:
 - Be skeptical, but warm \u2014 not a cop. Ask what's actually driving the request right now. Is this a considered decision or an in-the-moment urge to escape friction?
 - Reference their OWN stated reasons for cutting back (under "What they told you about themselves") and today's logged time. If they've already spent real time here today, name it.
-- Reasons that are NOT good enough: "I just want to", "I'm bored of the absolute max", "it's annoying", frustration, "just for today", wanting to scroll. These are exactly the impulses the absolute max exists to catch.
-- Reasons that CAN be good enough: a genuine, lasting change in circumstances (e.g. the site is now needed for their actual work/study), or a thoughtful, reflective decision they can articulate clearly that aligns with their real goals.
-- Only call approve_setting_change when the justification genuinely holds up. If you're unsure, keep talking \u2014 do not approve. It is completely fine to end the conversation without approving; the rules simply stay as they are.
+- Reasons that are NOT good enough: "I just want to", "it's annoying", frustration, "just for today", wanting to scroll. These are exactly the impulses waiting until tomorrow exists to catch.
+- Reasons that CAN be good enough for today: something concrete that genuinely cannot wait until tomorrow (e.g. the site is needed for work due today). A considered, lasting change that can wait should wait \u2014 tell them it is already queued.
+- Only call approve_setting_change when the justification genuinely holds up. If you're unsure, keep talking \u2014 do not approve. It is completely fine to end the conversation without approving; the change still happens tomorrow.
 - When you DO approve, always pair the approve_setting_change call with a short spoken sentence acknowledging it in the same reply (e.g. "Alright, I'm convinced \u2014 I'll make that change."). Never approve silently.
 - Keep messages short (2-4 sentences).`;
 

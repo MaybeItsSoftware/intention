@@ -32,7 +32,7 @@ enum AppGroupConfig {
         // Kept in lockstep with tracking.js. These are declarative blocking
         // configuration, never usage/activity data; an encrypted restore made
         // in the app must be visible to Safari too.
-        "serviceReasons", "blockingMode", "simpleBehavior", "simplePassMinutes",
+        "serviceReasons", "pendingChanges",
         "leaveDelayMinutes"
     ]
 

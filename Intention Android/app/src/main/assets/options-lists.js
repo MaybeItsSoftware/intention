@@ -94,18 +94,6 @@ function renderRecommendGrid(container, more, ordered, seenCount, buildCard, rer
   };
 }
 
-// The daily limit a tapped suggestion should use. The chips lived in the
-// Blocked sites card until they moved into the Add-website dialog, where there
-// was no minutes field within reach and 10 was hard-coded; now they sit beside
-// one, so a chip and the Add button agree on the number that was just typed.
-// The wizard's own chip grid is still inline in its step and reads the same
-// (untouched, so 10) field — one number for both, wherever you tap.
-function currentAddSiteLimit() {
-  const el = document.getElementById('domain-limit-input');
-  const val = parseInt(el ? el.value : '', 10);
-  return !isNaN(val) && val > 0 ? val : DEFAULT_DAILY_MAX_MINUTES;
-}
-
 async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
   const container = document.getElementById(containerId);
   const more = document.getElementById(moreId);
@@ -122,7 +110,7 @@ async function renderSiteRecommendations(containerId, moreId, blockedDomains) {
     container, more, ordered, seen.length,
     (site) => {
       const meta = SITE_META[site];
-      return buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site, currentAddSiteLimit()));
+      return buildRecommendCard(meta, meta ? meta.name : site, site, () => addDomainToBlocklist(site));
     },
     () => renderSiteRecommendations(containerId, moreId, blockedDomains)
   );
@@ -244,20 +232,13 @@ function wireAppSearch(inputId, resultsId, isSelected, onAdd) {
 function renderSetupDomains() {
   renderSiteRecommendations('setup-sites-recommend-grid', 'setup-sites-recommend-more', setupBlockedDomains);
   refreshSetupNav();
-  // The per-service step is one screen that iterates whatever is on the list,
-  // and it rebuilds itself on arrival - which covers everything except going
-  // BACK to this step and removing something, where the stack is already built
-  // and one of its cards has just stopped existing.
-  refreshPurposeStackIfVisible();
   saveSetupDraft();
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {
-    const limitInfo = setupDomainLimits[d] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
-
-    // No badge: the wizard hasn't asked about blocking mode yet at this step,
-    // so there is nothing true to put there.
-    const { li, fields } = buildBlockedRow({
+    // Just the name and a way to take it back off. How often it may be opened
+    // is its own page, next.
+    const { li } = buildBlockedRow({
       target: d,
       label: d,
       inlineFields: true,
@@ -268,41 +249,14 @@ function renderSetupDomains() {
       }
     });
 
-    fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, d, (e) => {
-      const val = parseInt(e.target.value, 10);
-      if (!isNaN(val) && val > 0) {
-        entryFor(setupDomainLimits, d).maxMinutes = val;
-        // The lenient window is measured against the daily max, so the slider's
-        // track just changed length under it. Repaint rather than leave a split
-        // sitting at a position that now means something else.
-        renderSetupDomains();
-      }
-    }));
-
-    // Coach-only, matching the settings row: a simple-mode target never turns
-    // strict, so a lenient/strict split has nothing to say there.
-    if (setupBlockingMode !== 'simple') {
-      li.appendChild(buildSetupTimelineField(d, limitInfo.maxMinutes, limitInfo.looseUntilMinutes, (value) => {
-        entryFor(setupDomainLimits, d).looseUntilMinutes = value;
-        saveSetupDraft();
-      }));
-    }
-
     list.appendChild(li);
   }
-}
-
-// The limits entry for a target in a draft map, created if this is the first
-// thing written about it. Both setup lists grew the same four lines inline.
-function entryFor(limits, target) {
-  if (!limits[target]) limits[target] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
-  return limits[target];
 }
 
 function addSetupApp(app) {
   if (setupBlockedApps.includes(app.packageName)) return;
   setupBlockedApps.push(app.packageName);
-  setupAppLimits[app.packageName] = { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
+  setupAppLimits[app.packageName] = { ...INTENTION_DEFAULTS };
   setupAppLabels[app.packageName] = app.label;
   renderSetupApps();
 }
@@ -310,17 +264,12 @@ function addSetupApp(app) {
 function renderSetupApps() {
   renderAppRecommendations('setup-apps-recommend-grid', 'setup-apps-recommend-more', setupBlockedApps);
   refreshSetupNav();
-  // Same reason as renderSetupDomains: an app removed on a Back leaves a card
-  // behind unless the stack is told.
-  refreshPurposeStackIfVisible();
   saveSetupDraft();
   const list = document.getElementById('setup-apps-list');
   list.innerHTML = '';
   for (const pkg of setupBlockedApps) {
     const name = setupAppLabels[pkg] || pkg;
-    const limitInfo = setupAppLimits[pkg] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
-
-    const { li, fields } = buildBlockedRow({
+    const { li } = buildBlockedRow({
       target: pkg,
       label: name,
       inlineFields: true,
@@ -331,21 +280,6 @@ function renderSetupApps() {
         renderSetupApps();
       }
     });
-
-    fields.appendChild(buildDailyLimitField(limitInfo.maxMinutes, name, (e) => {
-      const val = parseInt(e.target.value, 10);
-      if (!isNaN(val) && val > 0) {
-        entryFor(setupAppLimits, pkg).maxMinutes = val;
-        renderSetupApps();
-      }
-    }));
-
-    if (setupBlockingMode !== 'simple') {
-      li.appendChild(buildSetupTimelineField(name, limitInfo.maxMinutes, limitInfo.looseUntilMinutes, (value) => {
-        entryFor(setupAppLimits, pkg).looseUntilMinutes = value;
-        saveSetupDraft();
-      }));
-    }
 
     list.appendChild(li);
   }

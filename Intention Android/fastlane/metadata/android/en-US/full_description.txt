@@ -1,13 +1,13 @@
 Say goodbye to rigid app blockers and easily bypassed screen time limits. Intention is a smart, AI-powered focus gate that places a supportive AI coach between you and the apps that pull you away from your real goals.
 
-Instead of a hard block or a simple timer, opening a distracting app begins a brief, mindful conversation. Your coach asks what you are trying to do, prompts you to reflect, and decides whether to grant you access based on your actual goals.
+For each app you set an intention: how many times a day you mean to open it, and for how long. Within that, opening it is one tap. Once today's opens are used, more time means a brief conversation with your coach, who asks what you are trying to do and decides whether it is worth it.
 
 HOW IT WORKS
 1. Choose your Apps: Add distracting social media, games, or feed-based apps to your blocklist.
-2. Mindful Interception: When you open a blocked app, Intention temporarily pauses it and opens a coaching chat.
-3. State Your Intention: Explain what you need to do (e.g., "Check directions for my meeting" or "Reply to an urgent message").
-4. Earn Your Minutes: If you have a specific, time-bounded purpose, your coach grants you a few minutes of access. If it's aimless scrolling, the coach gently reminds you of your goals and suggests better alternatives.
-5. No Easy Way Out: You can only update your goals and coach instructions by talking to the coach. No simple text settings toggle to bypass the rules in a weak moment!
+2. Set Your Intention: Choose how many opens a day and how many minutes each — say, 3 opens of 10 minutes.
+3. Mindful Interception: When you open a blocked app, Intention pauses it and shows how many of today's opens are left. One tap uses one.
+4. Earn Extra Minutes: Once the day's opens are used, explain to your coach what you need to do. A specific, time-bounded purpose earns a short pass; aimless scrolling gets a gentle reminder of your goals.
+5. No Easy Way Out: Giving yourself more time in settings waits until tomorrow, unless the coach agrees today. Keep every intention to build a forgiving streak.
 
 KEY FEATURES
 • Bring Your Own Key (BYOK): Set up your own API key to connect to leading AI models: Anthropic (Claude), OpenAI (GPT), Google (Gemini), or Groq. You pay only for what you use, directly to the provider.

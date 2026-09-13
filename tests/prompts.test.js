@@ -185,7 +185,7 @@ describe('buildGateSystemPrompt', () => {
     coachInstructions: P_inst(),
     grantsToday: 1,
     grantsCap: 3,
-    minutesCap: 30,
+    minutesEach: 10,
     minutesTodaySite: 12,
     minutesTodayAll: 40,
     minutesWeekAll: 200,
@@ -195,8 +195,8 @@ describe('buildGateSystemPrompt', () => {
 
   it('includes injected usage numbers and reasons', () => {
     const out = P.buildGateSystemPrompt(base);
-    expect(out).toContain('Grants on twitter.com today: 1 of 3 allowed');
-    expect(out).toContain('12 of 30m absolute max');
+    expect(out).toContain('Passes on twitter.com today: 1 (their intention allows 3)');
+    expect(out).toContain('Minutes on twitter.com today: 12');
     expect(out).toContain('Minutes across all blocked sites today: 40');
     expect(out).toContain('Minutes across all blocked sites this week: 200');
     expect(out).toContain('"check DMs"; "reply to a friend"');
@@ -207,25 +207,20 @@ describe('buildGateSystemPrompt', () => {
     expect(out).toContain('Reasons today were "check DMs"; "reply to a friend".');
   });
 
-  it('emits cap-reached language when grants hit the cap', () => {
-    const out = P.buildGateSystemPrompt({ ...base, grantsToday: 3 });
-    expect(out).toContain('REACHED');
-    expect(out).toContain('DO NOT call grant_access');
+  // The coach is only ever reached once the intention is spent, so there is
+  // no cap left to announce and no instruction never to grant: the prompt's
+  // job is to hold a high bar for time past the intention, not a wall.
+  it('tells the coach the intention is spent and it is the way past it', () => {
+    const out = P.buildGateSystemPrompt(base);
+    expect(out).toContain('to open it at most 3 times a day, 10 minutes each');
+    expect(out).toContain('That is used up for today');
+    expect(out).not.toContain('DO NOT call grant_access');
+    expect(out).not.toContain('ABSOLUTE MAX');
   });
 
-  // The grants cap used to have exactly one hole in it: while the quick-check
-  // lane was unspent, the override told the coach "ONE exception remains" and
-  // invited a cap-bypassing grant. The lane is retired, so the grants cap is
-  // now as absolute as the minutes cap — and this is the assertion that would
-  // catch it coming back.
-  it('the grants cap is absolute: no carve-out left to bypass it', () => {
-    const out = P.buildGateSystemPrompt({ ...base, grantsToday: 3 });
-    expect(out).toContain("YOU HAVE REACHED TODAY'S ABSOLUTE MAX (3 grants allowed today)");
-    expect(out).toContain('DO NOT call grant_access');
-    expect(out).not.toContain('ONE exception');
-    expect(out).not.toContain('for a normal pass');
-    expect(out).not.toContain('quick_check');
-    expect(out).not.toContain('Quick check');
+  it('says so in words for an intention of no opens at all', () => {
+    const out = P.buildGateSystemPrompt({ ...base, grantsCap: 0 });
+    expect(out).toContain('not to open it at all today');
   });
 
   // A stored quickCheck field is ignored data now: an entry that still carries
@@ -236,19 +231,7 @@ describe('buildGateSystemPrompt', () => {
       ...base, grantsToday: 3, quickCheck: { minutes: 5, usesPerDay: 2 }, quickChecksToday: 0
     });
     expect(withLane).toBe(P.buildGateSystemPrompt({ ...base, grantsToday: 3 }));
-  });
-
-  it('the minutes cap is absolute too', () => {
-    const out = P.buildGateSystemPrompt({ ...base, minutesTodaySite: 30 });
-    expect(out).toContain("ABSOLUTE MAX (30 minutes on this site)");
-    expect(out).not.toContain('ONE exception');
-    expect(out).not.toContain('Quick check');
-  });
-
-  it('minutes-cap wording wins when both caps are nominally reached', () => {
-    const out = P.buildGateSystemPrompt({ ...base, grantsToday: 3, minutesTodaySite: 30 });
-    expect(out).toContain('ABSOLUTE MAX (30 minutes on this site)');
-    expect(out).not.toContain('GRANT CAP');
+    expect(withLane).not.toContain('Quick check');
   });
 
   // The two quick-check placeholders went with the lane. An instruction
@@ -297,19 +280,13 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
     expect(out).toContain('CT=remove');
   });
 
+  // background.js hands both values over as sentences (describeIntentionForHuman).
   it('increase_limit shows from/to', () => {
     const out = P.buildSettingsGateSystemPrompt({
-      ...base, changeType: 'increase_limit', currentValue: 30, newValue: 60
+      ...base, changeType: 'increase_limit',
+      currentValue: '2 opens a day, 10 minutes each', newValue: '4 opens a day, 10 minutes each'
     });
-    expect(out).toContain('RAISE the absolute max time limit on reddit.com');
-    expect(out).toContain('from 30 minutes/day to 60 minutes/day');
-  });
-
-  it('increase_limit to unlimited', () => {
-    const out = P.buildSettingsGateSystemPrompt({
-      ...base, changeType: 'increase_limit', currentValue: 30, newValue: 0
-    });
-    expect(out).toContain('unlimited (no limit)');
+    expect(out).toContain('RAISE their intention for reddit.com from 2 opens a day, 10 minutes each to 4 opens a day, 10 minutes each');
   });
 
   it('disable_all', () => {
@@ -317,20 +294,12 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
     expect(out).toContain('DISABLE all blocking');
   });
 
-  it('increase_loose_window says what actually changes, since the cap does not', () => {
-    const out = P.buildSettingsGateSystemPrompt({
-      ...base, changeType: 'increase_loose_window', currentValue: 10, newValue: 25
-    });
-    expect(out).toContain('LENGTHEN the lenient window on reddit.com from 10 to 25 minutes');
-    expect(out).toContain('only genuine need does');
-  });
-
-  it('the app variant of the lenient window gets the same wording', () => {
-    const out = P.buildSettingsGateSystemPrompt({
-      ...base, domain: 'the Instagram app', changeType: 'increase_app_loose_window',
-      currentValue: 10, newValue: 25
-    });
-    expect(out).toContain('LENGTHEN the lenient window on the Instagram app');
+  // Saying no does not refuse the change, it only delays it — and the coach
+  // has to know that, or it argues as if it were the last line of defence.
+  it('tells the coach the change happens tomorrow anyway', () => {
+    const out = P.buildSettingsGateSystemPrompt({ ...base, changeType: 'remove' });
+    expect(out).toContain('takes effect the next day on its own');
+    expect(out).toContain('the change still happens tomorrow');
   });
 
   // The judgement is on the new wording, not on the fact of editing — so both
@@ -371,14 +340,15 @@ describe('buildSettingsGateSystemPrompt varies by changeType', () => {
   // any more, but a change type that arrives from an old queued transcript
   // must not describe a feature that no longer exists — it falls through to
   // the generic wording, and applySettingChange returns null for it.
-  it('the retired quick-check change types get no wording of their own', () => {
-    for (const changeType of ['increase_quick_check', 'increase_app_quick_check']) {
+  it('the retired change types get no wording of their own', () => {
+    for (const changeType of ['increase_quick_check', 'increase_app_quick_check', 'increase_loose_window', 'increase_app_loose_window']) {
       const out = P.buildSettingsGateSystemPrompt({
         ...base, changeType,
         currentValue: { minutes: 3, usesPerDay: 1 }, newValue: { minutes: 5, usesPerDay: 2 }
       });
       expect(out).toContain('loosen their blocking settings on reddit.com');
       expect(out).not.toContain('quick check');
+      expect(out).not.toContain('lenient window');
     }
   });
 });
@@ -908,32 +878,26 @@ describe('usage lines say what they mean', () => {
     reasonsToday: []
   };
 
-  it('reports minutes spent, not the cap, when there is no cap', () => {
-    const out = P.buildGateSystemPrompt({ ...base, minutesCap: 0, minutesTodaySite: 0 });
-    // Previously: "Minutes on example.com today: unlimited" — for someone who
-    // had spent none.
-    expect(out).toContain('Minutes on example.com today: 0 (no daily cap set)');
+  it('reports minutes spent, with no cap to report them against', () => {
+    const out = P.buildGateSystemPrompt({ ...base, minutesTodaySite: 0 });
+    expect(out).toContain('Minutes on example.com today: 0');
     expect(out).not.toMatch(/Minutes on example\.com today: unlimited/);
-  });
-
-  it('still shows usage against a cap when one is set', () => {
-    const out = P.buildGateSystemPrompt({ ...base, minutesCap: 30, minutesTodaySite: 12 });
-    expect(out).toContain('Minutes on example.com today: 12 of 30m absolute max');
+    expect(out).not.toContain('absolute max');
   });
 
   it('does not stage an empty "earlier today you came here for ……"', () => {
-    const out = P.buildGateSystemPrompt({ ...base, minutesCap: 0, minutesTodaySite: 0 });
+    const out = P.buildGateSystemPrompt({ ...base, minutesTodaySite: 0 });
     expect(out).not.toContain('……');
     expect(out).not.toContain('came here for …');
-    expect(out).toContain('first visit here today');
+    expect(out).toContain('no reasons here today yet');
   });
 
   it('quotes the earlier reasons when there are some', () => {
     const out = P.buildGateSystemPrompt({
-      ...base, minutesCap: 0, minutesTodaySite: 5, reasonsToday: ['check DMs']
+      ...base, minutesTodaySite: 5, reasonsToday: ['check DMs']
     });
     expect(out).toContain('Earlier today you came here for "check DMs"…');
-    expect(out).not.toContain('first visit here today');
+    expect(out).not.toContain('no reasons here today yet');
   });
 });
 
@@ -1265,99 +1229,6 @@ describe('renderWalkAwayLine', () => {
 // against minutes already spent on this site today. The whole point of the
 // field being optional is that an entry without one behaves exactly as it did
 // before the field existed, so "silent when absent" is the first thing tested.
-describe('the loose -> strict phase', () => {
-  const at = (looseUntil, minutesToday) => P.buildGateSystemPrompt({
-    domain: 'twitter.com', coachInstructions: '{{usage}}',
-    grantsToday: 0, grantsCap: 3, minutesCap: 45,
-    minutesTodaySite: minutesToday, minutesTodayAll: minutesToday, minutesWeekAll: 0,
-    looseUntilMinutes: looseUntil,
-    reasonsToday: []
-  });
-
-  describe('computePhase', () => {
-    it('is null when no split was ever set', () => {
-      expect(P.computePhase(undefined, 30)).toBeNull();
-      expect(P.computePhase(null, 30)).toBeNull();
-      expect(P.computePhase('', 30)).toBeNull();
-    });
-
-    // Number(null) is 0, and a 0 read as a split means "strict from the first
-    // minute" — the exact opposite of an unset field. Worth its own case.
-    it('does not turn an absent value into a zero split', () => {
-      expect(P.computePhase(null, 0)).toBeNull();
-      expect(P.computePhase(0, 0)).toEqual({ split: 0, strict: true, remaining: 0 });
-    });
-
-    it('is loose below the split and strict at or above it', () => {
-      expect(P.computePhase(15, 14).strict).toBe(false);
-      expect(P.computePhase(15, 15).strict).toBe(true);
-      expect(P.computePhase(15, 16).strict).toBe(true);
-    });
-
-    it('counts down what is left of the window, never past zero', () => {
-      expect(P.computePhase(15, 0).remaining).toBe(15);
-      expect(P.computePhase(15, 9).remaining).toBe(6);
-      expect(P.computePhase(15, 40).remaining).toBe(0);
-    });
-  });
-
-  it('says nothing at all when no split was set', () => {
-    const out = at(undefined, 30);
-    expect(out).not.toContain('lenient window');
-    expect(out).not.toContain('STRICT phase');
-  });
-
-  it('below the split, tells the coach a plausible reason is enough', () => {
-    const out = at(15, 9);
-    expect(out).toContain('LOOSE phase');
-    expect(out).toContain('they set it at 15 minutes on this site and 6 of those are left');
-    expect(out).toContain('plausible, specific reason is enough');
-    expect(out).not.toContain('SPENT');
-  });
-
-  // The boundary is inclusive: the minute you reach the split you are past it.
-  it('at the split exactly, the window is already spent', () => {
-    const out = at(15, 15);
-    expect(out).toContain("Today's lenient window is SPENT");
-    expect(out).not.toContain('LOOSE phase');
-  });
-
-  it('above the split, names the window as spent and the clamp that follows', () => {
-    const out = at(15, 30);
-    expect(out).toContain("Today's lenient window is SPENT");
-    expect(out).toContain('only genuine need is');
-    // The user drew the line; the coach is not to present it as its own rule.
-    expect(out).toContain('they drew that line themselves');
-    expect(out).toContain(`capped at ${P.STRICT_PHASE_MAX_MINUTES} minutes`);
-  });
-
-  it('reaches the check-in prompt too — that is where it usually turns over', () => {
-    const out = P.buildCheckinSystemPrompt({
-      domain: 'twitter.com', coachInstructions: '{{usage}}',
-      originalReason: 'reply to one DM',
-      grantsToday: 1, grantsCap: 3, minutesCap: 45,
-      minutesTodaySite: 20, minutesTodayAll: 20,
-      looseUntilMinutes: 15,
-      reasonsToday: ['reply to one DM']
-    });
-    expect(out).toContain("Today's lenient window is SPENT");
-  });
-
-  // The line changes as the minutes climb, so caching it would serve a stale
-  // phase for the rest of the day.
-  it('sits below the cache break, with the rest of the volatile usage', () => {
-    const out = at(15, 30);
-    const markerAt = out.indexOf(P.CACHE_BREAK_MARKER);
-    expect(markerAt).toBeGreaterThan(-1);
-    expect(out.indexOf("Today's lenient window is SPENT")).toBeGreaterThan(markerAt);
-  });
-});
-
-// The quick check is retired: no normalizeQuickCheck, no renderQuickCheckLine,
-// and no prompt anywhere that mentions the lane. Those three had their own
-// describe blocks here; what replaces them is the assertion that matters now —
-// that neither gate nor check-in can be talked into the lane, whatever a
-// stored entry or an old transcript still carries.
 describe('the retired quick-check lane leaves no trace in any prompt', () => {
   it('the helpers are gone, not just unused', () => {
     expect(P.normalizeQuickCheck).toBeUndefined();
@@ -1648,8 +1519,8 @@ describe('where the scope block lands in the prompt', () => {
   });
 });
 
-describe('the strict phase is looser for a pass that is bounded by construction', () => {
-  const at = (scopeAvailable) => P.renderPhaseLine(15, 30, scopeAvailable);
+describe('a pass past the intention is looser when it is bounded by construction', () => {
+  const at = (scopeAvailable) => P.renderIntentionLine(3, 10, scopeAvailable);
 
   it('names the higher ceiling only where a scoped pass is actually possible', () => {
     expect(P.STRICT_PHASE_MAX_MINUTES_SCOPED).toBe(20);
@@ -1664,9 +1535,8 @@ describe('the strict phase is looser for a pass that is bounded by construction'
     expect(at(false)).toContain(`capped at ${P.STRICT_PHASE_MAX_MINUTES} minutes`);
   });
 
-  it('stays silent in the loose phase, as it always has', () => {
-    expect(P.renderPhaseLine(15, 9, true)).toContain('LOOSE phase');
-    expect(P.renderPhaseLine(15, 9, true)).not.toContain('may run to');
+  it('never makes walking away read as wasted credit', () => {
+    expect(at(false)).toContain('never make them feel they wasted credit');
   });
 });
 

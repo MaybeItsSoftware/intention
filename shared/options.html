@@ -14,139 +14,111 @@
 
     <main id="setup-view" hidden>
       <div class="setup-progress">
+        <span id="setup-progress-label" class="setup-progress-label"></span>
         <div class="setup-progress-track">
           <div id="setup-progress-fill" class="setup-progress-fill"></div>
         </div>
-        <span id="setup-progress-label" class="setup-progress-label"></span>
       </div>
 
-      <section class="card setup-step" id="setup-step-welcome" hidden>
-        <h3 id="setup-welcome-title">Welcome to Intention</h3>
-        <p class="subtitle" id="setup-welcome-intro">Intention puts a moment of choice between you and the things that pull you in. Open a blocked site or app and it stops you, then asks what you actually meant to do.</p>
-        <ul class="setup-checklist" id="setup-welcome-checklist"></ul>
-        <p class="subtitle">This takes about a minute. Nothing starts blocking until you finish, and if you stop halfway you'll pick up where you left off.</p>
+      <!-- One question per page. computeStepOrder in options-wizard.js decides
+           which of these appear and how often: the intention and purpose
+           sections are shown once per target or service, filled in on arrival. -->
+
+      <section class="setup-step setup-page setup-welcome" id="setup-step-welcome" hidden>
+        <h3 class="setup-question" id="setup-welcome-title">Open things on purpose.</h3>
+        <p class="setup-lede" id="setup-welcome-intro">A little friction in front of the apps and sites that pull you in — and none in front of the times you meant to open them.</p>
+        <ol class="setup-agenda" id="setup-welcome-checklist"></ol>
+        <p class="setup-aside">About a minute. Nothing is blocked until you finish.</p>
       </section>
 
-      <section class="card setup-step" id="setup-step-safari" hidden>
-        <h3>Turn on the Safari extension</h3>
-        <p class="subtitle">Website blocking runs inside Safari, and only you can switch it on, because iOS doesn't let an app do it for you. Apps are handled separately, later in this setup.</p>
+      <section class="setup-step setup-page" id="setup-step-safari" hidden>
+        <h3 class="setup-question">Turn on the Safari extension</h3>
+        <p class="setup-lede">Website blocking runs inside Safari, and only you can switch it on — iOS doesn't let an app do it for you.</p>
         <ol class="setup-steps-list" id="setup-safari-steps"></ol>
         <button type="button" id="setup-safari-settings-btn" class="primary add-row-btn">Open Settings</button>
         <button type="button" id="setup-safari-open-btn" class="secondary add-row-btn">I turned it on — open Safari</button>
         <p class="setup-check" id="setup-safari-status">Checking…</p>
-        <p class="subtitle" id="setup-safari-skip-hint">You can carry on without this and turn it on later, but blocked websites won't stop you until you do.</p>
+        <p class="setup-aside" id="setup-safari-skip-hint">You can carry on and turn it on later, but websites won't be blocked until you do.</p>
       </section>
 
-      <section class="card setup-step" id="setup-step-mode" hidden>
-        <h3>How should blocking work?</h3>
-        <p class="subtitle">You can change this later, or set it per site or app.</p>
-        <div class="mode-choice-grid">
-          <button type="button" class="mode-choice-card" id="setup-mode-coach-btn" data-mode="coach">
-            <strong>Coach (AI-guided)</strong>
-            <span id="setup-mode-coach-desc">Talk to an AI coach to get through a block or change your rules.</span>
-          </button>
-          <button type="button" class="mode-choice-card" id="setup-mode-simple-btn" data-mode="simple">
-            <strong>Simple (no AI)</strong>
-            <span>No AI, nothing to buy. Choose a hard block or a self-serve timed pass.</span>
-          </button>
-        </div>
-        <div id="setup-simple-options" hidden>
-          <label>When you hit a block</label>
-          <div class="mode-choice-grid">
-            <button type="button" class="mode-choice-card" id="setup-simple-hard-btn" data-behavior="hard">
-              <strong>Hard block</strong>
-              <span>No self-serve unlock. You'd need to change settings to get through.</span>
-            </button>
-            <button type="button" class="mode-choice-card" id="setup-simple-pass-btn" data-behavior="pass">
-              <strong>Timed pass</strong>
-              <span id="setup-simple-pass-desc">A "Take 10 minutes" button lets you through without asking anyone.</span>
-            </button>
-          </div>
-          <div id="setup-simple-minutes-group" class="input-group" hidden>
-            <label for="setup-simple-minutes-input">Minutes per pass</label>
-            <input type="number" id="setup-simple-minutes-input" min="1" max="180" value="10">
-          </div>
-        </div>
-      </section>
-
-      <section class="card setup-step" id="setup-step-apps" hidden>
-        <h3 id="setup-apps-title">Which apps pull you in?</h3>
-        <p class="subtitle" id="setup-apps-subtitle">Tap a suggestion below, or search your installed apps. Each gets a 30 min/day absolute max you can adjust.</p>
-        <button type="button" id="setup-open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+      <section class="setup-step setup-page" id="setup-step-apps" hidden>
+        <h3 class="setup-question" id="setup-apps-title">Which apps pull you in?</h3>
+        <p class="setup-lede" id="setup-apps-subtitle">Tap the ones you want a moment of friction in front of.</p>
         <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
         <button type="button" id="setup-apps-recommend-more" class="recommend-more" hidden></button>
-        <ul id="setup-apps-list"></ul>
+        <button type="button" id="setup-open-add-app-btn" class="secondary add-row-btn">+ Find another app</button>
+        <ul id="setup-apps-list" class="setup-picked"></ul>
         <p class="setup-check" id="setup-ios-apps-status" hidden></p>
         <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Allow Screen Time</button>
       </section>
 
-      <section class="card setup-step" id="setup-step-sites" hidden>
-        <h3>Which websites pull you in?</h3>
-        <p class="subtitle">Add sites you want to be mindful about, or tap a suggestion below. Each gets a 30 min/day absolute max you can adjust.</p>
-        <button type="button" id="setup-open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+      <section class="setup-step setup-page" id="setup-step-sites" hidden>
+        <h3 class="setup-question">Which websites pull you in?</h3>
+        <p class="setup-lede">Tap the ones you want a moment of friction in front of.</p>
         <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
         <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
-        <ul id="setup-websites-list"></ul>
-        <p class="setup-check" id="setup-sites-empty-hint">Nothing picked yet. Add at least one site or app before you finish — you can change the list any time.</p>
+        <button type="button" id="setup-open-add-site-btn" class="secondary add-row-btn">+ Type a website</button>
+        <ul id="setup-websites-list" class="setup-picked"></ul>
+        <p class="setup-aside" id="setup-sites-empty-hint">Pick at least one site or app to carry on.</p>
       </section>
 
-      <!-- The two general questions that used to stand here — "what are you
-           protecting" and "how do these sites make you feel" — are gone. They
-           asked in the abstract what the per-service step below now asks
-           concretely, once per thing you actually blocked, and a concrete
-           answer is both easier to give and better material for the coach. The
-           general pair mostly got skipped or filled with a sentence the coach
-           could do nothing with. What the coach knows about you in general is
-           now built through conversation instead (the update_context tool). -->
-
-      <!-- ONE screen for every service, iterated inline by renderPurposeStack().
-           This used to be one WIZARD STEP per service, which made the wizard's
-           own length a function of the blocklist: six picks meant six
-           near-identical screens of two textareas each, and the "Step N of M"
-           denominator moved every time a site was added on the step before.
-           One step means that denominator is now a per-platform constant
-           (browser 6, Android 7, iOS 8) and cannot move at all — strictly
-           stronger than the guarantee the comment above the sites step asks
-           for.
-
-           The stack has its own internal counter ("2 of 6 answered") rather
-           than borrowing the wizard's. They measure different things: the
-           wizard bar says where you are in setup, and this says how much of
-           THIS is left, which is the part that reads as endless when it is not
-           shown.
-
-           Rebuilt on arrival, which is safe because the selection can only be
-           edited on the steps before this one — and renderSetupDomains /
-           renderSetupApps repaint it directly for the Back-then-remove path. -->
-      <section class="card setup-step" id="setup-step-purpose" hidden>
-        <h3>What is each one for?</h3>
-        <p class="subtitle" id="setup-purpose-subtitle"></p>
-        <div class="setup-substep">
-          <div class="setup-substep-track"><div id="setup-purpose-fill" class="setup-substep-fill"></div></div>
-          <span id="setup-purpose-count" class="micro-label"></span>
+      <section class="setup-step setup-page" id="setup-step-intention" hidden>
+        <span class="setup-mark" id="setup-intention-mark" aria-hidden="true"></span>
+        <h3 class="setup-question" id="setup-intention-question"></h3>
+        <div class="setup-counter">
+          <button type="button" id="setup-intention-minus" class="setup-counter-btn">−</button>
+          <div class="setup-counter-read">
+            <output id="setup-intention-opens" class="setup-counter-value" aria-live="polite"></output>
+            <span id="setup-intention-unit" class="setup-counter-unit"></span>
+          </div>
+          <button type="button" id="setup-intention-plus" class="setup-counter-btn">+</button>
         </div>
-        <p class="setup-check" id="setup-purpose-empty" hidden></p>
-        <ul class="setup-service-stack" id="setup-purpose-stack"></ul>
-        <button type="button" id="setup-purpose-skip-btn" class="secondary setup-purpose-skip">Skip these — my coach can ask me later</button>
+        <div class="setup-dots" id="setup-intention-dots" aria-hidden="true"></div>
+        <div id="setup-intention-minutes-wrap">
+          <p class="micro-label setup-sub">For how long each time?</p>
+          <div class="setup-minutes" id="setup-intention-minutes" role="radiogroup" aria-label="Minutes each time"></div>
+        </div>
+        <p class="setup-sum" id="setup-intention-sum" aria-live="polite"></p>
+        <button type="button" id="setup-intention-same-btn" class="setup-link" hidden></button>
       </section>
 
-      <section class="card setup-step" id="setup-step-access" hidden>
-        <h3 id="setup-access-title">Turn on your coach</h3>
-        <p class="subtitle" id="setup-access-subtitle">You can also finish now and set this up later. Your sites and apps stay blocked either way, you just won't be able to talk your way past them yet.</p>
-        <div id="setup-paywall"></div>
+      <section class="setup-step setup-page" id="setup-step-reasons" hidden>
+        <h3 class="setup-question">Tell the coach what each one is for?</h3>
+        <p class="setup-lede">If you ever use up an intention and ask for more time, this is the first thing the coach reads. A few taps each.</p>
+        <div class="setup-choice">
+          <button type="button" id="setup-reasons-yes-btn" class="primary">Yes, a few taps</button>
+          <button type="button" id="setup-reasons-skip-btn" class="secondary">Skip for now</button>
+        </div>
       </section>
 
-      <section class="card setup-step" id="setup-step-done" hidden>
-        <h3 id="setup-done-title">You're set</h3>
-        <p class="subtitle" id="setup-done-summary"></p>
-        <ul class="setup-checklist" id="setup-done-list"></ul>
-        <p class="subtitle" id="setup-done-note"></p>
+      <section class="setup-step setup-page" id="setup-step-purpose" hidden>
+        <span class="setup-mark" id="setup-reason-mark" aria-hidden="true"></span>
+        <h3 class="setup-question" id="setup-reason-question"></h3>
+        <p class="setup-lede">Tap any that apply. Leave it blank and the coach will simply ask.</p>
+        <div id="setup-reason-body"></div>
+        <button type="button" id="setup-purpose-skip-btn" class="setup-link">Skip the rest</button>
+      </section>
+
+      <section class="setup-step setup-page" id="setup-step-access" hidden>
+        <h3 class="setup-question" id="setup-access-title">And when an intention runs out?</h3>
+        <ol class="setup-agenda">
+          <li>That's today's allowance. The site stays blocked.</li>
+          <li>If something genuinely needs more, you can make your case to the coach.</li>
+          <li>The coach uses coaching credit. Nothing to buy now — only if you ever need it.</li>
+        </ol>
+      </section>
+
+      <section class="setup-step setup-page" id="setup-step-done" hidden>
+        <p class="setup-tick" aria-hidden="true">✓</p>
+        <h3 class="setup-question" id="setup-done-title">Your intentions</h3>
+        <ul class="setup-done-list" id="setup-done-list"></ul>
+        <p class="setup-lede" id="setup-done-note"></p>
       </section>
 
       <div class="setup-nav">
         <button id="setup-back-btn" class="secondary" type="button">Back</button>
-        <button id="setup-next-btn" class="primary" type="button">Next</button>
-        <button id="setup-save-btn" class="primary" type="button" hidden>Finish setup</button>
+        <button id="setup-next-btn" class="primary" type="button">Continue</button>
+        <button id="setup-save-btn" class="primary" type="button" hidden>Start</button>
       </div>
       <div id="setup-status" class="status"></div>
     </main>
@@ -200,38 +172,16 @@
           <ul id="usage-log-list"></ul>
         </section>
 
-        <section class="card" id="blocking-mode-card" data-section="blocking">
-          <h2>Blocking mode</h2>
-          <p class="subtitle" id="blocking-mode-blurb">Coach mode uses your AI to gate access and approve changes. Simple mode needs no API key — you choose a hard block or a self-serve timed pass. Either can also be set per site or app below.</p>
-          <div class="mode-choice-grid">
-            <button type="button" class="mode-choice-card" id="settings-mode-coach-btn" data-mode="coach">
-              <strong>Coach (AI-guided)</strong>
-              <span>Talk to your coach to get through a block or change rules.</span>
-            </button>
-            <button type="button" class="mode-choice-card" id="settings-mode-simple-btn" data-mode="simple">
-              <strong>Simple (no AI)</strong>
-              <span id="settings-mode-simple-desc">No API key needed.</span>
-            </button>
-          </div>
-          <div id="settings-simple-options" hidden>
-            <label>Default behavior when you hit a block</label>
-            <div class="mode-choice-grid">
-              <button type="button" class="mode-choice-card" id="settings-simple-hard-btn" data-behavior="hard">
-                <strong>Hard block</strong>
-                <span>No self-serve unlock.</span>
-              </button>
-              <button type="button" class="mode-choice-card" id="settings-simple-pass-btn" data-behavior="pass">
-                <strong>Timed pass</strong>
-                <span>"Take N minutes" self-serve button.</span>
-              </button>
-            </div>
-            <div id="settings-simple-minutes-group" class="input-group" hidden>
-              <label for="settings-simple-minutes-input">Minutes per pass</label>
-              <input type="number" id="settings-simple-minutes-input" min="1" max="180" value="10">
-            </div>
-          </div>
-          <button id="save-blocking-mode-btn" class="secondary" style="width: 100%; margin-top: 10px;">Save</button>
-          <div id="blocking-mode-status" class="status"></div>
+        <section class="card streak-card" id="streak-line" data-section="blocking" hidden>
+          <span class="micro-label">Streak</span>
+          <strong class="streak-value" id="streak-value"></strong>
+          <span class="streak-grace" id="streak-grace"></span>
+        </section>
+
+        <section class="card" id="pending-card" data-section="blocking" hidden>
+          <h2>Starting tomorrow</h2>
+          <p class="subtitle">Changes that give you more time wait a day. Cancel any of them for free.</p>
+          <ul id="pending-list" class="pending-list"></ul>
         </section>
 
         <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
@@ -241,7 +191,7 @@
 
         <section class="card" id="websites-card" data-section="blocking">
           <h2>Blocked sites</h2>
-          <p class="subtitle">Add domains you want to be mindful about — "+ Add website" also suggests the usual suspects. Each row uses the blocking mode above unless you give it one of its own, and the absolute daily max is the most time you can spend there in a day however you ask.</p>
+          <p class="subtitle">Each site has an intention: how many times a day you open it, and for how long. Fewer is instant; more starts tomorrow.</p>
           <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
           <ul id="domain-list"></ul>
         </section>
@@ -382,7 +332,7 @@
         <details class="card advanced-card" data-section="coach">
           <summary>Coach instructions <span class="muted">(advanced)</span></summary>
           <div class="advanced-card-body">
-            <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_cap}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
+            <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_each}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
             <div class="input-group">
               <textarea id="coach-instructions-input" rows="8"></textarea>
             </div>
@@ -434,6 +384,20 @@
       </div>
     </div>
 
+    <!-- Loosening, asked for from Settings: tomorrow for free, or the coach now. -->
+    <div id="loosen-modal" hidden>
+      <div class="coach-box loosen-box" role="dialog" aria-modal="true" aria-labelledby="loosen-title">
+        <h2 id="loosen-title"></h2>
+        <p class="subtitle" id="loosen-subtitle"></p>
+        <p class="loosen-when" id="loosen-when"></p>
+        <div class="loosen-actions">
+          <button type="button" id="loosen-later-btn" class="primary">Save for tomorrow</button>
+          <button type="button" id="loosen-now-btn" class="secondary">Ask the coach for it now</button>
+          <button type="button" id="loosen-cancel-btn" class="secondary loosen-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <div id="gate-modal" hidden>
       <div class="coach-box">
         <div class="coach-header">
@@ -467,7 +431,6 @@
         <label for="domain-input">Website address</label>
         <div class="input-group">
           <input type="text" id="domain-input" class="input-domain" placeholder="e.g. twitter.com">
-          <input type="number" id="domain-limit-input" class="input-minutes" placeholder="min" min="1" value="30" aria-label="Absolute daily max in minutes">
           <button id="add-btn" class="primary">Add</button>
         </div>
         <p class="int-pw-error" id="add-site-error" hidden></p>

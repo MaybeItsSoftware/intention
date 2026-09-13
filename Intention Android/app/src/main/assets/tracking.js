@@ -84,7 +84,7 @@ const CONFIG_KEYS = [
   // These are configuration, not activity data. They have to cross the App
   // Group too: otherwise an encrypted restore in the native app updates its
   // WebView but leaves Safari using the previous coaching mode and reasons.
-  'serviceReasons', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
+  'serviceReasons', 'pendingChanges',
   // The cool-off the user put on removing Intention. It rides this bridge
   // because on Apple platforms the settings page the user changes it on is the
   // one inside the app, not the one inside the extension, and the two have to
@@ -225,6 +225,12 @@ async function recordGrant(domain, minutes, reason, options) {
   // this list as its evidence for what the next ask deserves. Absent means
   // site-wide, so no migration and no rewrite of banked history.
   const scoped = !!(options && options.scope);
+  // A pass the coach negotiated past the day's intention, as opposed to one
+  // of the intended opens. Counted separately because it is the difference
+  // between "used what they meant to" and "needed more" — the gate counts
+  // opens left from grants minus these, and the streak reads a day with any
+  // of them as a miss.
+  const negotiated = !!(options && options.negotiated);
   await withDailyStats((stats, today) => {
     if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
     if (quickCheck) stats[today][domain].quickChecks = (stats[today][domain].quickChecks || 0) + 1;
@@ -232,6 +238,10 @@ async function recordGrant(domain, minutes, reason, options) {
     const session = { grantedMinutes: minutes, reason, grantedAt: Date.now() };
     if (quickCheck) session.quickCheck = true;
     if (scoped) session.scope = 'page';
+    if (negotiated) {
+      session.negotiated = true;
+      stats[today][domain].negotiated = (stats[today][domain].negotiated || 0) + 1;
+    }
     stats[today][domain].sessions.push(session);
   });
 }
@@ -309,7 +319,7 @@ async function getStatsForDomain(domain) {
   const monthKeys = daysAgoKeys(30);
   const yearKeys = daysAgoKeys(365);
 
-  let minutesToday = 0, grantsToday = 0, quickChecksToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
+  let minutesToday = 0, grantsToday = 0, negotiatedToday = 0, quickChecksToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
   let walkedAwayToday = 0, walkedAwayWeek = 0;
   let reasonsToday = [];
@@ -324,6 +334,7 @@ async function getStatsForDomain(domain) {
         if (k === todayKey) {
           minutesToday = site.minutes || 0;
           grantsToday = site.grants || 0;
+          negotiatedToday = site.negotiated || 0;
           quickChecksToday = site.quickChecks || 0;
           walkedAwayToday = site.walkedAway || 0;
           reasonsToday = (site.sessions || [])
@@ -397,6 +408,7 @@ async function getStatsForDomain(domain) {
     minutesYear: Math.round(minutesYear),
     minutesAllTime: Math.round(minutesAllTime),
     grantsToday,
+    negotiatedToday,
     quickChecksToday,
     minutesTodayAll: Math.round(minutesTodayAll),
     minutesWeekAll: Math.round(minutesWeekAll),
@@ -427,7 +439,7 @@ async function getUsageLog(days = 30) {
 }
 
 async function getStatsSummary() {
-  const { dailyStats = {} } = await getStorage(['dailyStats']);
+  const { dailyStats = {}, setupCompletedAt = 0 } = await getStorage(['dailyStats', 'setupCompletedAt']);
   const todayKey = dateKey();
   const weekKeys = daysAgoKeys(7);
 
@@ -447,6 +459,67 @@ async function getStatsSummary() {
   return {
     minutesToday: Math.round(minutesToday),
     minutesWeek: Math.round(minutesWeek),
-    perSiteToday
+    perSiteToday,
+    streak: computeStreak(dailyStats, todayKey, setupCompletedAt)
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Streak
+// ---------------------------------------------------------------------------
+//
+// A streak day is a day the user kept every intention: nothing on any target
+// needed a pass negotiated past it. Opening a site within its intention is not
+// a miss — that is the intention working — and neither is a day with no usage
+// at all.
+//
+// It forgives. One missed day in any seven is absorbed without breaking the
+// run, because a streak that shatters on the first genuine need teaches people
+// to stop caring about it, and a streak that never breaks teaches nothing. A
+// second miss inside the same seven days ends it.
+//
+// Today is in progress: a clean today counts, but a missed today does not end
+// the streak until it is over — the run is reported up to yesterday plus today
+// if today is clean so far, with today's miss shown as the grace it is using.
+// Pure: takes the stored stats and returns numbers, so every surface agrees.
+
+function dayKept(daySites) {
+  if (!daySites || typeof daySites !== 'object') return true;
+  return !Object.values(daySites).some(site => site && Number(site.negotiated) > 0);
+}
+
+// `todayKey` is dateKey() for now; `startedAt` is setupCompletedAt (ms), and
+// no day before it can count toward — or against — the streak.
+function computeStreak(dailyStats, todayKey, startedAt) {
+  const stats = dailyStats && typeof dailyStats === 'object' ? dailyStats : {};
+  const startKey = Number(startedAt) > 0 ? dateKey(new Date(Number(startedAt))) : todayKey;
+  const parse = (key) => {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const cursor = parse(todayKey);
+  const start = parse(startKey);
+  const misses = [];   // day offsets (0 = today) of forgiven misses
+  let days = 0;
+  let offset = 0;
+  while (cursor >= start && offset < 366) {
+    const key = dateKey(cursor);
+    const kept = dayKept(stats[key]);
+    if (!kept) {
+      // A miss is forgiven only if no other miss already sits within the
+      // seven-day window ending on it.
+      if (misses.some(o => offset - o < 7)) break;
+      misses.push(offset);
+    } else {
+      days += 1;
+    }
+    cursor.setDate(cursor.getDate() - 1);
+    offset += 1;
+  }
+  const recentMiss = misses.some(o => o < 7);
+  return {
+    days,
+    todayKept: dayKept(stats[todayKey]),
+    graceLeft: recentMiss ? 0 : 1
   };
 }

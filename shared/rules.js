@@ -14,41 +14,31 @@
 // drifted. Nothing in here reads storage or touches `chrome`; the async
 // storage-reading wrappers stay in background.js, where the storage keys live.
 
-// What a target falls back to when it carries no per-item override. `mode`,
-// `behavior` and `passMinutes` all have a global setting behind them, so the
-// per-item field is genuinely optional; `looseUntilMinutes` deliberately does
-// not (see normalizeLooseUntil).
-const BLOCK_DEFAULTS = { mode: 'coach', behavior: 'pass', passMinutes: 10 };
-
-// maxMinutes -1 means "no daily ceiling", which is not the same as 0.
-const LIMIT_DEFAULTS = { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: null };
-
-// What a newly added site or app gets as its absolute daily max, and what the
-// UI shows in a minutes box that has nothing real to show. Distinct from
-// LIMIT_DEFAULTS.maxMinutes above, which is the rule engine's answer for a
-// target carrying no entry at all — that stays -1 (uncapped), because changing
-// it would silently put a ceiling on every target an existing user has left
-// unlimited. This one only ever decides what a *new* entry starts at.
+// ===========================================================================
+// INTENTIONS — how often, and for how long, the user means to open a target
+// ===========================================================================
 //
-// Was 10, which turned out to be short enough that the first thing a lot of
-// people did was argue with the coach to raise it — an argument the coach is
-// designed to make hard, aimed at a number nobody had actually chosen.
-const DEFAULT_DAILY_MAX_MINUTES = 30;
+// Every blocked site or app carries one intention: "open it at most N times a
+// day, M minutes each time". Inside that, a visit is one tap and costs nothing
+// — no conversation, no credit. Past it, the only way to more time today is to
+// negotiate with the coach. There is no mode to choose and no second cap: the
+// intention IS the day's allowance, and `opens: 0` is what a hard block is.
+//
+// Stored on the per-target limits entry under the field names the grant
+// bookkeeping has always used — `maxGrants` is opens, `passMinutes` is minutes
+// each — so the session, sync and native layers read an unchanged shape.
 
-// `looseUntilMinutes`: how many of today's minutes on a target the coach spends
-// in its lenient phase before it turns strict (see renderPhaseLine in
-// prompts.js). Absent is a real answer, not a missing one — it means no split,
-// which is exactly how every entry written before the field existed behaves —
-// so anything that isn't a finite number of minutes normalises to null rather
-// than to a number. In particular `Number(null)` is 0, and 0 would mean
-// "strict from the first minute", which is the opposite of what an unset field
-// should do. There is no global default either: a lenient window is a per-site
-// line, or it is nothing.
-function normalizeLooseUntil(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-}
+// What a target with no entry, or an unreadable one, resolves to.
+const INTENTION_DEFAULTS = { maxGrants: 3, passMinutes: 10 };
+
+// A fixed set rather than a free number, for the same reason the leave delay
+// is a ladder: this is a commitment, and four rungs are enough to mean
+// something without inviting "call it eleven".
+const PASS_MINUTE_CHOICES = [5, 10, 15, 30];
+
+// Opens per day never goes past this. Beyond ten a day the intention has
+// stopped describing an intention.
+const MAX_OPENS = 10;
 
 // The per-item limits entry for a target, from a plain object holding the
 // `domainLimits` / `appLimits` maps as read from storage.
@@ -64,46 +54,51 @@ function limitEntryFor(target, stored) {
   return domainLimits[target] || appLimits[target] || null;
 }
 
-// A per-item `mode` override on a limits entry wins; otherwise the global
-// blockingMode applies. Split out because the options page resolves the mode
-// on its own, for a row it is already rendering, without the rest of the
-// block config.
-function resolveMode(entry, globalMode) {
-  return (entry && entry.mode) || globalMode || BLOCK_DEFAULTS.mode;
-}
-
-// The full gating verdict for one target: which mode applies, and — in simple
-// mode — what a pass looks like. `globals` carries the global settings as read
-// from storage (blockingMode, simpleBehavior, simplePassMinutes).
+// The intention for one target, as `{ opens, minutesEach }`.
 //
-// looseUntilMinutes rides along even though only the coach branches on it
-// today, because a mirror that answers a different shape is a mirror nobody
-// can trust the next time one of them grows a branch.
-function resolveBlockConfig(entry, globals = {}) {
-  const globalPassMinutes = Number(globals.simplePassMinutes) > 0
-    ? Number(globals.simplePassMinutes)
-    : BLOCK_DEFAULTS.passMinutes;
-  return {
-    mode: resolveMode(entry, globals.blockingMode),
-    behavior: (entry && entry.behavior) || globals.simpleBehavior || BLOCK_DEFAULTS.behavior,
-    passMinutes: Number(entry && entry.passMinutes) > 0
-      ? Number(entry.passMinutes)
-      : globalPassMinutes,
-    looseUntilMinutes: normalizeLooseUntil(entry && entry.looseUntilMinutes)
-  };
+// Unreadable values fall back to the defaults rather than to zero, because
+// zero opens is a real answer (blocked outright) and a corrupt field must not
+// silently become one. Out-of-range values are clamped into range: an opens
+// count above MAX_OPENS reads as MAX_OPENS, and a minutes value off the ladder
+// snaps DOWN to the rung below it — the same direction normalizeLeaveDelay
+// snaps, for the same reason: being wrong must only ever mean less time.
+function resolveIntention(entry) {
+  const rawOpens = entry ? Number(entry.maxGrants) : NaN;
+  const opens = Number.isFinite(rawOpens)
+    ? Math.max(0, Math.min(MAX_OPENS, Math.floor(rawOpens)))
+    : INTENTION_DEFAULTS.maxGrants;
+  const rawMinutes = entry ? Number(entry.passMinutes) : NaN;
+  let minutesEach = INTENTION_DEFAULTS.passMinutes;
+  if (Number.isFinite(rawMinutes) && rawMinutes > 0) {
+    minutesEach = PASS_MINUTE_CHOICES[0];
+    for (const choice of PASS_MINUTE_CHOICES) {
+      if (choice <= rawMinutes) minutesEach = choice;
+    }
+  }
+  return { opens, minutesEach };
 }
 
-// The daily allowances for one target. Unlike the block config these have no
-// global setting behind them — an absent entry means the defaults above.
-function resolveLimits(entry) {
-  if (!entry) return { ...LIMIT_DEFAULTS };
-  const maxGrants = Number(entry.maxGrants);
-  const maxMinutes = Number(entry.maxMinutes);
-  return {
-    maxGrants: Number.isNaN(maxGrants) ? LIMIT_DEFAULTS.maxGrants : maxGrants,
-    maxMinutes: Number.isNaN(maxMinutes) ? LIMIT_DEFAULTS.maxMinutes : maxMinutes,
-    looseUntilMinutes: normalizeLooseUntil(entry.looseUntilMinutes)
-  };
+// Whether moving a target from one intention to another gives the user more
+// time. More opens or longer opens is a loosening; everything else — fewer,
+// shorter, or the same — is not. Both sides go through resolveIntention, so a
+// raw stored entry and a freshly edited one compare like for like.
+//
+// Loosening is never refused, only deferred: it takes effect the next day
+// unless the coach agrees to it now. Tightening applies the moment it is saved.
+function isLoosening(current, next) {
+  const a = resolveIntention(current);
+  const b = resolveIntention(next);
+  return b.opens > a.opens || b.minutesEach > a.minutesEach;
+}
+
+// When a deferred loosening made at `now` takes effect: midnight at the start
+// of the next local day. A day boundary rather than "24 hours from now" so the
+// promise is one a person can hold in their head — "tomorrow" — and so a
+// change made at 23:55 does not buy a whole extra evening.
+function nextDayStart(now = Date.now()) {
+  const d = new Date(now);
+  d.setHours(24, 0, 0, 0);
+  return d.getTime();
 }
 
 // ===========================================================================

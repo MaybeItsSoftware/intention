@@ -5,8 +5,7 @@ console.log(
   window.location.href,
 );
 
-const OVERLAY_CSS = `
-/* The gate's own tokens, declared ON #intention-root rather than :root.
+const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rather than :root.
    Two reasons, both load-bearing:
      - This stylesheet is injected into arbitrary third-party pages. Tokens on
        :root would restyle the host site.
@@ -210,6 +209,88 @@ const OVERLAY_CSS = `
 
 #intention-root .int-primary-btn:hover { background: var(--hover); }
 #intention-root .int-primary-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* The intention gate. A hairline, the target in large slab, the day's count
+   as a micro-label with one dot per intended open, then the actions. */
+#intention-root [hidden] { display: none !important; }
+
+#intention-root .int-intention {
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+  margin-bottom: 8px;
+}
+
+#intention-root .int-target {
+  margin: 0 0 12px;
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+#intention-root .int-count {
+  margin: 0 0 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+#intention-root .int-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 22px;
+}
+
+#intention-root .int-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-input);
+}
+
+#intention-root .int-dot-used {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+#intention-root .int-lede {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.62;
+  color: var(--ink);
+}
+
+#intention-root .int-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px;
+}
+
+#intention-root .int-solid-btn {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 16px;
+  min-height: 44px;
+  padding: 10px 20px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root .int-solid-btn:disabled { opacity: 0.6; cursor: default; }
+
+#intention-root .int-note {
+  margin: 26px 0 0;
+  font-size: 14px;
+  color: var(--text-muted);
+}
 
 #intention-root .int-retry-row { margin-top: 4px; }
 
@@ -422,7 +503,7 @@ function injectOverlayStyle() {
 
 let currentSession = null;
 let matchedDomain = null;
-let matchedBlockConfig = null;
+let matchedIntention = null;
 // The AI route the last check reported: 'hosted', 'byok' or 'locked'. Cached
 // because the URL watcher reaches the drift screen without a fresh check in
 // hand, and the drift screen offers a button that only makes sense when there
@@ -520,10 +601,9 @@ function showGate(why) {
     capturePageContext();
     ensureBodyAndHush();
     injectOverlayStyle();
-    renderChatUI({
+    renderIntentionGateUI({
       mode: "gate",
       domain: matchedDomain || window.location.hostname,
-      blockConfig: matchedBlockConfig,
     });
   } catch (e) {
     console.error(INT_LOG, "failed to render gate:", e);
@@ -713,7 +793,7 @@ function applyCheckResult(response) {
   }
 
   matchedDomain = response.matchedDomain;
-  matchedBlockConfig = response.blockConfig || null;
+  matchedIntention = response.intention || null;
   matchedAccessRoute = response.accessRoute || null;
   // Set before any of the branches below render: the gate's subtitle reads it.
   matchedPartId = response.partId || null;
@@ -748,19 +828,10 @@ function applyCheckResult(response) {
     currentSession = response.session;
     setupInterruptionListener();
     showScopeDrift(response.session);
-  } else if (response.accessRoute === "locked") {
-    // Blocked, with no coach to argue with. The site stays blocked —
-    // there's just nothing to say to it from here.
-    if (handled) return;
-    markHandled();
-    try {
-      ensureBodyAndHush();
-      injectOverlayStyle();
-      renderAccessNeededUI();
-    } catch (e) {
-      console.error(INT_LOG, "failed to render access needed UI:", e);
-    }
   } else {
+    // No credit is no longer a reason to skip the gate: the day's intended
+    // opens are free, so a locked account still gets them. The gate itself
+    // offers a top-up only once they are spent.
     showGate("no active session (fail-safe)");
   }
 }
@@ -774,13 +845,10 @@ function readGateStorage() {
         "blockedDomains",
         "setupComplete",
         "activeSessions",
-        "blockingMode",
-        "simpleBehavior",
-        "simplePassMinutes",
         // Every per-site limit field the fail-safe reads rides in here: the
-        // mode override, the pass length, and `looseUntilMinutes`. Anything new
-        // the gate reads has to be named in THIS list, or resolveBlockConfig
-        // sees `undefined` and the fail-safe decides on nothing.
+        // intention and the part rule. Anything new the gate reads has to be
+        // named in THIS list, or resolveIntention sees `undefined` and the
+        // fail-safe decides on nothing.
         "domainLimits",
       ],
       (items) => {
@@ -851,7 +919,10 @@ async function checkFromStorage(host) {
   // Same resolution the background worker would have run, from rules.js — the
   // point of this whole path is reaching that verdict with the worker dead.
   const partEntry = limitEntryFor(matched, stored);
-  matchedBlockConfig = resolveBlockConfig(partEntry, stored);
+  // Opens used today live in dailyStats, which this path deliberately does
+  // not read (it is a year of history). The gate asks the background for the
+  // live count when it renders; until then it paints the intention alone.
+  matchedIntention = resolveIntention(partEntry);
 
   // Which part of the site this is, asked here for the same reason everything
   // else on this path is: Safari suspends the background page, so this is
@@ -1133,7 +1204,7 @@ function onUrlMaybeChanged() {
   // are, and the coach would quote them back with confidence.
   capturedPageCtx = null;
   // Not showGate() directly: the background may have a live session, a locked
-  // account or a simple-mode config for this target, and runCheck is what
+  // account or an intention already spent here, and runCheck is what
   // knows how to ask. It falls back to checkFromStorage on its own when the
   // worker is dead, and both paths reach this same verdict again.
   runCheck();
@@ -1314,7 +1385,7 @@ function renderCheckinTakeover(domain) {
     capturePageContext();
     ensureBodyAndHush();
     injectOverlayStyle();
-    renderChatUI({ mode: "checkin", domain, blockConfig: matchedBlockConfig });
+    renderIntentionGateUI({ mode: "checkin", domain });
     return true;
   } catch (e) {
     console.error(INT_LOG, "failed to render the check-in:", e);
@@ -1608,7 +1679,7 @@ function renderScopeDriftUI(session) {
       // This screen is spent: what replaces it is a conversation, and a
       // conversation is not something a check-in may sweep away.
       teardown();
-      renderChatUI({ mode: "gate", domain, blockConfig: matchedBlockConfig });
+      renderChatUI({ mode: "gate", domain });
     };
     askBackground(
       { action: "endSession", domain, reason: "left_page" },
@@ -1627,14 +1698,13 @@ function renderScopeDriftUI(session) {
   });
 }
 
-function renderChatUI({ mode, domain, blockConfig }) {
+// The coach. Only ever reached from the intention gate once today's opens are
+// spent (or from the scope-drift screen, which is already past them), and only
+// by the user choosing it — a conversation spends credit, so it never starts
+// on its own.
+function renderChatUI({ mode, domain }) {
   if (document.getElementById("intention-root")) {
     document.getElementById("intention-root").remove();
-  }
-
-  if (blockConfig && blockConfig.mode === "simple") {
-    renderSimpleGateUI({ mode, domain, blockConfig });
-    return;
   }
 
   // At the gate, name the PART when there is one. "instagram.com — let's check
@@ -1773,92 +1843,178 @@ function renderChatUI({ mode, domain, blockConfig }) {
   }
 }
 
-// No-AI counterpart to renderChatUI's coach transcript: just a message plus a
-// button, since there's no LLM to talk to in simple mode.
-function renderSimpleGateUI({ mode, domain, blockConfig }) {
-  const isPass = blockConfig.behavior !== "hard";
-  const message =
-    mode === "gate"
-      ? isPass
-        ? `${domain} is blocked. Take ${blockConfig.passMinutes} minutes if you need it, or close this tab.`
-        : `${domain} is blocked. Open settings to change this.`
-      : isPass
-        ? `Your time on ${domain} is up. Take ${blockConfig.passMinutes} more minutes, or you're done.`
-        : `Your time on ${domain} is up.`;
+// The gate. What it offers is decided by the intention and nothing else:
+//
+//   opens left       one tap for a pass of the intention's length — no
+//                    conversation, no credit
+//   spent, coachable the coach, offered and never started unasked
+//   spent, locked    a top-up, because the coach is the only way past
+//
+// A check-in is the same screen at the other end of a pass: another open if
+// one is left, otherwise the same offer of the coach.
+function renderIntentionGateUI({ mode, domain }) {
+  const existing = document.getElementById("intention-root");
+  if (existing) existing.remove();
 
-  const subtitle = mode === "gate" ? `${domain} — blocked` : `${domain} — time's up`;
+  const partHere = mode === "gate" && matchedPartId && typeof partLabel === "function"
+    ? partLabel(matchedPartId)
+    : "";
 
   const root = document.createElement("div");
   root.id = "intention-root";
   root.innerHTML = `
     <div class="int-column">
       <h1>Intention</h1>
-      <p class="int-subtitle"></p>
+      <div class="int-intention">
+        <p class="int-target"></p>
+        <p class="int-count"></p>
+        <div class="int-dots" aria-hidden="true"></div>
+        <p class="int-lede"></p>
+      </div>
       <div class="int-messages" id="int-messages"></div>
-      <div class="int-close-row" id="int-simple-actions"></div>
+      <div class="int-actions" id="int-gate-actions"></div>
+      <p class="int-note" hidden></p>
     </div>
   `;
-  root.querySelector(".int-subtitle").textContent = subtitle;
   document.body.appendChild(root);
   // An SPA re-rendering <body> must not be able to drop the block.
   keepAttached(root);
 
-  const messagesEl = document.getElementById("int-messages");
-  const actionsEl = document.getElementById("int-simple-actions");
-  addMessage(messagesEl, "assistant", message);
+  const targetEl = root.querySelector(".int-target");
+  const countEl = root.querySelector(".int-count");
+  const dotsEl = root.querySelector(".int-dots");
+  const ledeEl = root.querySelector(".int-lede");
+  const messagesEl = root.querySelector("#int-messages");
+  const actionsEl = root.querySelector("#int-gate-actions");
+  const noteEl = root.querySelector(".int-note");
 
-  if (isPass) {
-    const passBtn = document.createElement("button");
-    passBtn.type = "button";
-    passBtn.className = "int-primary-btn";
-    passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
-    passBtn.addEventListener("click", () => {
-      passBtn.disabled = true;
-      passBtn.textContent = "…";
-      chrome.runtime.sendMessage(
-        { action: "simpleGrant", domain, isApp: false },
-        (resp) => {
-          if (resp && resp.grantedSession) {
-            window.location.reload();
-            return;
-          }
-          passBtn.disabled = false;
-          passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
-          addMessage(
-            messagesEl,
-            "assistant",
-            (resp && resp.denied) || "Couldn't grant a pass — try again.",
-          );
-        },
-      );
-    });
-    actionsEl.appendChild(passBtn);
-  }
+  targetEl.textContent = mode === "checkin"
+    ? `Time's up on ${domain}`
+    : `${partHere ? `${partHere} on ` : ""}${domain}`;
 
-  const secondaryBtn = document.createElement("button");
-  secondaryBtn.type = "button";
-  secondaryBtn.className = "int-secondary";
-  if (isPass) secondaryBtn.style.marginLeft = "14px";
-  secondaryBtn.textContent = isPass ? "Not now" : "Open settings";
-  secondaryBtn.addEventListener("click", () => {
-    if (!isPass) {
-      chrome.runtime.sendMessage({ action: "openOptions" });
-      return;
-    }
+  loadStatsRow(domain, (stats) => { domainStats = stats; });
+
+  const leave = () => {
     if (mode === "checkin") {
       chrome.runtime.sendMessage({ action: "endSession", domain, reason: "fulfilled" });
       window.close();
       return;
     }
-    // Walking away counts without the coach too — same moment, same record,
-    // same background-side close (see the coach gate's close handler).
+    // Closing the gate without taking time is a walk-away, the exact habit
+    // this tool exists to build. Recorded first, then the moment, then the
+    // background closes the tab — a content script can't reliably
+    // window.close() a user-opened tab.
     chrome.runtime.sendMessage({ action: "endSession", domain, reason: "walked_away" });
     showWalkAwayMoment(() => {
       chrome.runtime.sendMessage({ action: "closeCurrentTab" });
       window.close();
     }, domainStats);
-  });
-  actionsEl.appendChild(secondaryBtn);
+  };
+
+  const button = (label, className, onClick) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = className;
+    el.textContent = label;
+    el.addEventListener("click", onClick);
+    actionsEl.appendChild(el);
+    return el;
+  };
+
+  const paint = (intention) => {
+    const { opens, minutesEach } = intention;
+    const used = Math.min(opens, Math.max(0, Number(intention.opensUsed) || 0));
+    const left = Math.max(0, opens - used);
+
+    dotsEl.textContent = "";
+    for (let i = 0; i < opens; i++) {
+      const dot = document.createElement("span");
+      dot.className = i < used ? "int-dot int-dot-used" : "int-dot";
+      dotsEl.appendChild(dot);
+    }
+    actionsEl.textContent = "";
+    messagesEl.textContent = "";
+
+    if (left > 0) {
+      countEl.textContent = mode === "checkin"
+        ? `${left} of ${opens} ${opens === 1 ? "open" : "opens"} left today · ${minutesEach} min`
+        : `Open ${used + 1} of ${opens} today · ${minutesEach} min`;
+      ledeEl.textContent = mode === "checkin"
+        ? "Done, or another open?"
+        : "You set this intention yourself. Is this one of those times?";
+      const take = button(
+        mode === "checkin" ? "Use another open" : `Open for ${minutesEach} minutes`,
+        "int-solid-btn",
+        () => {
+          take.disabled = true;
+          chrome.runtime.sendMessage({ action: "intentionGrant", domain, isApp: false }, (resp) => {
+            if (chrome.runtime.lastError) {
+              take.disabled = false;
+              addMessage(messagesEl, "assistant", "Couldn't open a pass — try again.");
+              return;
+            }
+            if (resp && resp.grantedSession) {
+              window.location.reload();
+              return;
+            }
+            if (resp && resp.intention) {
+              paint(resp.intention);
+              return;
+            }
+            take.disabled = false;
+            addMessage(messagesEl, "assistant", "Couldn't open a pass — try again.");
+          });
+        },
+      );
+      button(mode === "checkin" ? "Done" : "Not now", "int-secondary", leave);
+      return;
+    }
+
+    countEl.textContent = opens === 0
+      ? "Blocked · no opens"
+      : `All ${opens} ${opens === 1 ? "open" : "opens"} used today`;
+
+    if (matchedAccessRoute === "locked") {
+      ledeEl.textContent = opens === 0
+        ? "You chose not to open this at all. Getting past that means talking to the coach, which needs coaching credit or your own API key."
+        : "That was today's intention. More time today means talking to the coach, which needs coaching credit or your own API key.";
+      button("Top up", "int-solid-btn", () => {
+        chrome.runtime.sendMessage({ action: "openOptions", section: "unlock" });
+      });
+    } else {
+      ledeEl.textContent = opens === 0
+        ? "You chose not to open this at all. If something genuinely needs it, you can make your case to the coach."
+        : "That was today's intention. If something genuinely needs more, you can make your case to the coach.";
+      button("Ask the coach", "int-solid-btn", () => renderChatUI({ mode, domain }));
+    }
+    button(mode === "checkin" ? "Done" : "Close", "int-secondary", leave);
+  };
+
+  paint(matchedIntention || { opens: 0, minutesEach: 10, opensUsed: 0 });
+
+  // The live count. The check result carried one, but a check-in arrives a
+  // whole pass later and the storage fallback never had one at all.
+  try {
+    chrome.runtime.sendMessage({ action: "getBlockInfo", domain }, (resp) => {
+      if (chrome.runtime.lastError || !resp || !resp.intention) return;
+      if (!document.body.contains(root)) return;
+      matchedIntention = resp.intention;
+      paint(resp.intention);
+    });
+  } catch (e) {}
+
+  // The streak, quietly, and only while there is an open to take: next to a
+  // spent intention it would read as pressure rather than as a fact.
+  try {
+    chrome.runtime.sendMessage({ action: "getStatsSummary" }, (resp) => {
+      if (chrome.runtime.lastError || !resp || !resp.streak) return;
+      const days = Number(resp.streak.days) || 0;
+      const left = matchedIntention ? matchedIntention.opens - (matchedIntention.opensUsed || 0) : 0;
+      if (days < 2 || left <= 0) return;
+      noteEl.textContent = `Day ${days} of keeping your intentions.`;
+      noteEl.hidden = false;
+    });
+  } catch (e) {}
 }
 
 // Today's stats for the gated domain, kept for showWalkAwayMoment below: the

@@ -129,7 +129,8 @@ describe('background.js handleChat — malformed tool calls do not lose the turn
         { type: 'tool_use', id: 't1', name: 'grant_access', input: { minutes: 'lots', reason: undefined } }
       ]
     });
-    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch });
+    // The coach only grants past a spent intention, so this site has none.
+    const { ctx, chrome } = loadBackground({ seed: { ...CONFIGURED, domainLimits: { 'x.com': { maxGrants: 0 } } }, fetch });
     const res = await ctx.handleMessage(
       { action: 'chat', mode: 'gate', domain: 'x.com', userMessage: 'let me in' },
       { tab: { id: 1 } }

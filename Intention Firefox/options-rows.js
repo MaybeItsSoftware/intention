@@ -1,29 +1,17 @@
 // options-rows.js - the blocked-site / blocked-app row.
 //
-// One row is a small card that reads top to bottom as a single decision
-// getting more specific: WHICH site, HOW it is blocked, HOW MUCH at most, WHEN
-// the coach stops being lenient, and WHY you set it up. Every control on it
-// obeys one rule - tightening saves itself, loosening has to be argued with the
-// coach first (applyOrGate in options.js) - which is why they are built here
-// together rather than wherever each happens to be rendered.
-
-// ---- The blocked-site / blocked-app row ------------------------------------
+// One row is one target and reads top to bottom: WHICH site, its INTENTION
+// (how many opens a day, how long each), and — folded away until wanted —
+// which parts of it are blocked and what it is for. Every control obeys one
+// rule: tightening saves itself, loosening waits until tomorrow unless the
+// coach allows it today (requestLoosening in options.js). That shared rule is
+// why they are built here together.
 //
-// A row is a small card, and it reads top to bottom as one decision getting
-// more specific: WHICH site, HOW it's blocked, HOW MUCH at most, WHEN the
-// coach stops being lenient, and WHY you set it up in the first place.
-//
-// The head is identity and the one switch that changes everything under it —
-// a brand mark, the name, the Coach/Simple toggle, Remove. Everything below
-// the hairline is that mode's settings. Hierarchy comes from surface and
-// position: every field names itself with the 10px micro-label rather than
-// with a bigger font, and the controls all sit at one size.
-//
-// What was here before had six controls and no order: a badge that only
-// reported the blocking mode, a "Blocking mode" select two inches under it
-// saying the same thing, a limit called "Daily limit" as if it were an
-// allowance, and the two answers the coach actually argues from folded away
-// inside a collapsed disclosure at the bottom.
+// Hierarchy comes from surface and position: every field names itself with
+// the 10px micro-label rather than with a bigger font, and the controls all
+// sit at one size. There is no mode to choose. What used to be a Coach/Simple
+// toggle, a hard-or-pass select, an absolute daily max and a lenient-window
+// timeline is now two numbers.
 
 function microLabel(text) {
   const el = document.createElement('span');
@@ -46,75 +34,6 @@ function buildRowField(labelEl, ...controls) {
   return field;
 }
 
-// What the row does, and the control that changes it — one thing, in the head,
-// where you read it.
-//
-// This replaces a pair that said the same thing twice: a "COACH" badge in the
-// head and a "Blocking mode" select in the strip below it. A badge that only
-// reports a setting sitting two inches above the setting is a label pretending
-// to be information.
-//
-// Two buttons where storage has three states. The third — `mode` absent,
-// meaning "follow the global default" — is not dropped, it is just no longer
-// something to choose: the toggle shows the mode that is EFFECTIVE, and
-// picking the one that already matches the global deletes the override rather
-// than writing it. So a row you never touched still follows the global card,
-// and a row you set to disagree with it stays set. Same three states, one
-// fewer decision.
-function buildRowModeToggle(target, label, limitInfo, globalMode, persistKey, onSaved) {
-  const group = document.createElement('div');
-  group.className = 'row-mode-toggle';
-  // A named group, because "Coach" and "Simple" ten times down the page is
-  // twenty unattached words to a screen reader without the row named once.
-  group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', `How ${label} is blocked`);
-
-  const current = effectiveModeFor(limitInfo, globalMode);
-
-  const persist = async (mode) => {
-    if (mode === current) return;
-    const state = await getConfig();
-    const currentLimits = state[persistKey] || {};
-    if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
-    // Matching the global again means having no opinion again — see above.
-    if (mode === (globalMode || 'coach')) delete currentLimits[target].mode;
-    else currentLimits[target].mode = mode;
-    // The simple-only fields follow the mode they belong to, exactly as they
-    // did when the select owned this: a coach row carrying a stale pass length
-    // is a setting that does nothing and reappears if you ever switch back.
-    if (mode === 'simple') {
-      if (!currentLimits[target].behavior) currentLimits[target].behavior = limitInfo.behavior || 'pass';
-      if (!currentLimits[target].passMinutes) currentLimits[target].passMinutes = limitInfo.passMinutes || 10;
-    } else {
-      delete currentLimits[target].behavior;
-      delete currentLimits[target].passMinutes;
-    }
-    await sendBg({ action: 'saveSettings', config: { [persistKey]: currentLimits } });
-    await onSaved();
-  };
-
-  for (const [mode, text] of [['coach', 'Coach'], ['simple', 'Simple']]) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'row-mode-btn';
-    btn.textContent = text;
-    // Buttons carrying a .selected class read as nothing at all without this;
-    // aria-pressed is what makes the pair announce as a choice.
-    btn.setAttribute('aria-pressed', String(mode === current));
-    btn.classList.toggle('selected', mode === current);
-    btn.addEventListener('click', () => persist(mode));
-    group.appendChild(btn);
-  }
-  return group;
-}
-
-// The head and the empty settings strip, shared by all four lists (settings
-// and wizard, sites and apps). Returns both, so the caller fills the strip
-// with whatever its list actually offers.
-//
-// `inlineFields` drops the strip and hands back the head instead: the wizard
-// rows carry a daily limit and nothing else, and a band of its own for one
-// number is a lot of card for very little.
 function buildBlockedRow({ target, label, headExtra, onRemove, inlineFields = false }) {
   const li = document.createElement('li');
 
@@ -134,9 +53,7 @@ function buildBlockedRow({ target, label, headExtra, onRemove, inlineFields = fa
   name.title = label;
   head.appendChild(name);
 
-  // The settings rows put the Coach/Simple toggle here, between the name and
-  // Remove. The wizard rows pass nothing: it hasn't asked about blocking mode
-  // yet at that step, so there is nothing true to put there.
+  // Anything the caller wants between the name and Remove.
   if (headExtra) head.appendChild(headExtra);
 
   // Placed before the Remove button either way, so the caller can fill it
@@ -161,13 +78,13 @@ function buildBlockedRow({ target, label, headExtra, onRemove, inlineFields = fa
   return { li, fields };
 }
 
-// Ids for the info notes below. A page-lifetime counter rather than the target
-// name: a domain is not a valid id fragment, and the same service can appear
-// in both the sites list and the apps list.
+// Ids for the reason boxes below. A page-lifetime counter rather than the
+// target name: a domain is not a valid id fragment, and the same service can
+// appear in both the sites list and the apps list.
 let rowInfoSeq = 0;
 
-// The ⓘ beside the absolute daily max. A disclosure, not a tooltip: a tooltip
-// is a hover, and most installs of this page are a phone. `aria-expanded` and
+// An ⓘ that opens a note. A disclosure, not a tooltip: a tooltip is a hover,
+// and most installs of this page are a phone. `aria-expanded` and
 // `aria-controls` are the whole of the semantics, and what it opens is
 // ordinary text in the flow rather than a floating layer to keep positioned.
 function buildInfoAffordance(labelText, text) {
@@ -194,39 +111,80 @@ function buildInfoAffordance(labelText, text) {
   return { btn, note };
 }
 
-const MAX_MINUTES_EXPLAINER =
-  'The most time you could genuinely need here in one day — a ceiling, not a target. ' +
-  'Your coach will never grant past it, however good the reason. Set it to what a bad day should still be allowed to cost you, not to what a normal day looks like.';
-
-// The absolute daily max — the same `maxMinutes` field it has always been,
-// under the name it has always had in the coach's own prompts ("absolute max").
-// "Daily limit" read like an allowance to be spent; it is a wall.
+// The intention: opens per day as a stepper, minutes each as a row of chips.
+// `onChange(next)` receives a whole `{ maxGrants, passMinutes }` and decides
+// what a change means — the settings rows save or defer it, the wizard writes
+// it to its draft — so only the markup is shared.
 //
-// The four lists disagree about what a change means — the wizard writes to a
-// draft, the settings lists gate an increase behind the coach — so the handler
-// is the caller's, and only the markup is shared. `info` is settings-only: the
-// wizard step explains the number in its own subtitle, and a second
-// explanation per row would be three of them on one screen.
-function buildDailyLimitField(minutes, ariaName, onChange, { info = false } = {}) {
-  const input = document.createElement('input');
-  input.type = 'number';
-  input.min = '1';
-  input.className = 'inline-limit-input';
-  input.setAttribute('aria-label', `Absolute daily max in minutes for ${ariaName}`);
-  input.value = minutes;
-  input.addEventListener('change', onChange);
-  const unit = document.createElement('span');
-  unit.className = 'row-field-unit';
-  unit.textContent = 'min/day';
+// A stepper and chips rather than two number boxes: both values live on a
+// short fixed range, a tap is a far better control than a keyboard on a phone,
+// and neither can be typed into a value the rules would then have to snap.
+function buildIntentionField(entry, ariaName, onChange) {
+  const current = resolveIntention(entry);
+  const field = document.createElement('div');
+  field.className = 'intention-field';
 
-  if (!info) return buildRowField(microLabel('Absolute daily max'), input, unit);
+  const opensWrap = document.createElement('div');
+  opensWrap.className = 'intention-opens';
+  const minus = document.createElement('button');
+  minus.type = 'button';
+  minus.className = 'stepper-btn';
+  minus.textContent = '\u2212';
+  minus.setAttribute('aria-label', `Fewer opens a day for ${ariaName}`);
+  const value = document.createElement('span');
+  value.className = 'stepper-value';
+  value.setAttribute('aria-live', 'polite');
+  const plus = document.createElement('button');
+  plus.type = 'button';
+  plus.className = 'stepper-btn';
+  plus.textContent = '+';
+  plus.setAttribute('aria-label', `More opens a day for ${ariaName}`);
+  opensWrap.append(minus, value, plus);
 
-  const { btn, note } = buildInfoAffordance(
-    `What the absolute daily max on ${ariaName} means`,
-    MAX_MINUTES_EXPLAINER
+  const chips = document.createElement('div');
+  chips.className = 'intention-minutes';
+  chips.setAttribute('role', 'radiogroup');
+  chips.setAttribute('aria-label', `Minutes each time for ${ariaName}`);
+  const chipEls = PASS_MINUTE_CHOICES.map(minutes => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = `${minutes} min`;
+    chip.setAttribute('role', 'radio');
+    chip.addEventListener('click', () => {
+      if (minutes === current.minutesEach) return undefined;
+      return onChange({ maxGrants: current.opens, passMinutes: minutes });
+    });
+    chips.appendChild(chip);
+    return { chip, minutes };
+  });
+
+  const paint = () => {
+    value.textContent = current.opens === 0 ? 'Blocked' : `${current.opens} ${current.opens === 1 ? 'open' : 'opens'} a day`;
+    minus.disabled = current.opens <= 0;
+    plus.disabled = current.opens >= MAX_OPENS;
+    for (const { chip, minutes } of chipEls) {
+      const on = minutes === current.minutesEach;
+      chip.classList.toggle('selected', on);
+      chip.setAttribute('aria-checked', String(on));
+      chip.disabled = current.opens === 0;
+    }
+  };
+  minus.addEventListener('click', () => onChange({ maxGrants: current.opens - 1, passMinutes: current.minutesEach }));
+  plus.addEventListener('click', () => onChange({ maxGrants: current.opens + 1, passMinutes: current.minutesEach }));
+  paint();
+
+  field.append(
+    buildRowField(microLabel('Opens'), opensWrap),
+    buildRowField(microLabel('Each time'), chips)
   );
-  const field = buildRowField(microLabel('Absolute daily max'), input, unit, btn);
-  field.appendChild(note);
+  // Lets a caller that writes to a draft repaint without rebuilding the row.
+  field.setIntention = (next) => {
+    const r = resolveIntention(next);
+    current.opens = r.opens;
+    current.minutesEach = r.minutesEach;
+    paint();
+  };
   return field;
 }
 
@@ -247,7 +205,6 @@ const ROW_KINDS = {
   domain: {
     persistKey: 'domainLimits',
     increaseLimit: 'increase_limit',
-    increaseLoose: 'increase_loose_window',
     narrowScope: 'narrow_block_scope',
     // Both lists offer section rules, and the two of them mean it differently.
     // A site row is answered from the address bar, which every platform has;
@@ -264,221 +221,11 @@ const ROW_KINDS = {
   app: {
     persistKey: 'appLimits',
     increaseLimit: 'increase_app_limit',
-    increaseLoose: 'increase_app_loose_window',
     narrowScope: 'narrow_app_block_scope',
     hasParts: true,
     isApp: true
   }
 };
-
-// ---- The loose -> strict timeline (buildLooseTimelineField) ----------------
-//
-// One number drawn as the day it describes: `looseUntilMinutes`, how many of
-// today's minutes on this site the coach spends being lenient before it turns
-// strict. Left of the split a plausible, specific reason earns time; right of
-// it only genuine need does, and any pass the coach does grant comes back
-// clamped short. Absent means no split at all — the whole day is lenient,
-// which is exactly how every row behaved before this control existed — so the
-// handle opens at the far right rather than inventing a line the user never
-// drew. Dragging it back is the act of drawing one.
-//
-// The thing that moves is a real <input type="range">, not a div with pointer
-// handlers. A range is keyboard-operable out of the box (arrows, Home, End,
-// Page keys), announced by screen readers with its own value and bounds, and
-// draggable, with no ARIA plumbing to get wrong. The band behind it is
-// decoration and is hidden from the accessibility tree outright, because a
-// screen reader reading "loose, strict, slider 15" is the same fact three
-// times. The number box beside it is the second way in, for anyone who would
-// rather type 15 than hunt for it; both write the same field.
-//
-// The band and the number update on `input` — live, as you drag — but nothing
-// is saved until `change`, which for a range fires on release. Otherwise
-// dragging left to right would open a coach gate for every pixel on the way.
-// The widget on its own: band, slider, number box, scale, note. It knows how
-// to paint a value and how to report one that was committed, and nothing about
-// where that value goes.
-//
-// Split out because setup needs the same control under a completely different
-// rule. In settings, lengthening the lenient window is a loosening and has to
-// be argued past the coach (see buildLooseTimelineField below). In the wizard
-// there is nothing to argue with and nothing saved yet — you are choosing the
-// rule, not relaxing one you already set — so the same drag just writes to the
-// draft. Sharing the markup rather than the policy is the whole point: the two
-// sliders must look and read identically, and must not behave identically.
-function buildTimelineWidget({ label, maxMinutes, value, onCommit }) {
-  const effective = value;
-
-  const field = document.createElement('div');
-  field.className = 'row-field row-timeline-field';
-  field.appendChild(microLabel('Coach goes strict after'));
-
-  const timeline = document.createElement('div');
-  timeline.className = 'row-timeline';
-
-  // The band and the range it drives share a positioned box of their own, so
-  // the range can be laid over the band without reaching the scale beneath it
-  // — on a coarse pointer the range grows to a 44px target and would otherwise
-  // sit on top of the number box.
-  const track = document.createElement('div');
-  track.className = 'row-timeline-track';
-
-  const band = document.createElement('div');
-  band.className = 'row-timeline-band';
-  band.setAttribute('aria-hidden', 'true');
-  const loose = document.createElement('span');
-  loose.className = 'row-timeline-phase is-loose';
-  loose.textContent = 'loose';
-  const strict = document.createElement('span');
-  strict.className = 'row-timeline-phase is-strict';
-  strict.textContent = 'strict';
-  band.append(loose, strict);
-
-  const range = document.createElement('input');
-  range.type = 'range';
-  range.className = 'row-timeline-range';
-  range.min = '0';
-  range.max = String(maxMinutes);
-  range.step = '1';
-  range.setAttribute('aria-label', `Minutes on ${label} before the coach turns strict`);
-
-  const scale = document.createElement('div');
-  scale.className = 'row-timeline-scale';
-  const zero = document.createElement('span');
-  zero.className = 'row-timeline-end';
-  zero.textContent = '0';
-  const number = document.createElement('input');
-  number.type = 'number';
-  number.className = 'inline-limit-input row-timeline-number';
-  number.min = '0';
-  number.max = String(maxMinutes);
-  number.setAttribute('aria-label', `Minutes on ${label} before the coach turns strict`);
-  const end = document.createElement('span');
-  end.className = 'row-timeline-end';
-  end.textContent = `${maxMinutes} min`;
-  scale.append(zero, number, end);
-
-  const note = document.createElement('p');
-  note.className = 'row-timeline-note';
-
-  // Paints, never saves. Called on every drag frame and to revert a change the
-  // coach didn't approve.
-  const paint = (value) => {
-    const pct = maxMinutes > 0 ? Math.round((value / maxMinutes) * 100) : 100;
-    loose.style.flexBasis = `${pct}%`;
-    strict.style.flexBasis = `${100 - pct}%`;
-    range.value = String(value);
-    number.value = String(value);
-    // aria-valuetext, so the announcement is "15 minutes, then strict" rather
-    // than a bare "15" — the number alone doesn't say what it counts.
-    range.setAttribute('aria-valuetext',
-      value >= maxMinutes
-        ? `lenient all day, no strict phase`
-        : `${value} of ${maxMinutes} minutes lenient, then strict`);
-    note.textContent = value >= maxMinutes
-      ? 'Lenient all day — the coach never turns strict here.'
-      : `The first ${value} min of your day here are judged gently. After that, genuine need only, and passes are capped short.`;
-  };
-  paint(effective);
-
-  // Parsing and clamping belong to the widget; deciding what a committed value
-  // means belongs to the caller. `paint` goes with it so a caller that refuses
-  // the change can put the control back where it was.
-  //
-  // Returns onCommit's result, which for the settings policy is a promise that
-  // only settles once the write has landed. Swallowing it here would make every
-  // save fire-and-forget: nothing could await one, and a caller that reloaded
-  // the row afterwards would race its own write.
-  const commit = (raw) => {
-    const parsed = parseInt(raw, 10);
-    if (isNaN(parsed)) {
-      paint(effective);
-      return undefined;
-    }
-    const value = Math.max(0, Math.min(maxMinutes, parsed));
-    if (value === effective) {
-      paint(effective);
-      return undefined;
-    }
-    return onCommit(value, { paint, effective });
-  };
-
-  range.addEventListener('input', () => paint(parseInt(range.value, 10) || 0));
-  range.addEventListener('change', () => commit(range.value));
-  number.addEventListener('change', () => commit(number.value));
-
-  track.append(band, range);
-  timeline.append(track, scale, note);
-  field.appendChild(timeline);
-  return field;
-}
-
-// Settings: the coach-gated slider. Shortening the lenient window tightens the
-// rule and saves itself; lengthening it loosens the rule and has to be argued
-// past the coach — the same direction test the daily max above uses.
-function buildLooseTimelineField(target, label, limitInfo, kind, maxMinutes, rerender) {
-  const stored = looseUntilFor(limitInfo);
-  // A max that has since been lowered can leave a split beyond the end of the
-  // track. Past the end and absent mean the same thing here — lenient all day.
-  const effective = stored == null ? maxMinutes : Math.min(stored, maxMinutes);
-
-  const persist = async (value) => {
-    const state = await getConfig();
-    const currentLimits = state[kind.persistKey] || {};
-    if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
-    currentLimits[target].looseUntilMinutes = value;
-    await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
-  };
-
-  return buildTimelineWidget({
-    label,
-    maxMinutes,
-    value: effective,
-    onCommit: async (value, { paint }) => {
-      if (value < effective) {
-        paint(value);
-        await persist(value);
-        return;
-      }
-      paint(effective); // revert until/unless approved
-      applyOrGate({
-        // Only ever reachable in coach mode — the whole band is coach-only, so
-        // there is no simple-mode branch to take here. Passed anyway, and read
-        // from the row, so the day this moves it does the right thing.
-        isSimple: false,
-        isApp: kind.isApp,
-        appLabel: kind.isApp ? label : undefined,
-        changeType: kind.increaseLoose,
-        domain: target,
-        currentValue: effective,
-        newValue: value,
-        title: `Stay lenient for longer on ${label}?`,
-        subtitle: `Right now your coach goes strict after ${effective} min a day on ${label}. You're asking for ${value}. Convince your coach.`,
-        onApproved: rerender
-      });
-    }
-  });
-}
-
-// Setup: the same control, ungated, writing to the in-memory draft. Nothing is
-// committed until Finish, so there is no rule yet to loosen and no coach yet to
-// loosen it past — every move is just the user choosing, in either direction.
-//
-// An unset window means lenient all day, so the slider opens at the far end
-// rather than at 0: starting at 0 would mean "strict from the first minute",
-// which is the opposite of what an untouched control should say.
-function buildSetupTimelineField(label, maxMinutes, looseUntilMinutes, onChange) {
-  const stored = normalizeLooseUntil(looseUntilMinutes);
-  const effective = stored == null ? maxMinutes : Math.min(stored, maxMinutes);
-  return buildTimelineWidget({
-    label,
-    maxMinutes,
-    value: effective,
-    onCommit: (value, { paint }) => {
-      paint(value);
-      onChange(value);
-    }
-  });
-}
 
 // ---- The two site-specific answers (buildRowReasonFields) ------------------
 //
@@ -491,12 +238,9 @@ function buildSetupTimelineField(label, maxMinutes, looseUntilMinutes, onChange)
 // Keyed per SERVICE, not per target (serviceKeyFor folds the X app and x.com
 // onto one answer), which is what the "Shared with …" note is telling you.
 //
-// Editing one now costs a conversation. They feed every gate decision on this
-// service, so quietly rewriting "when is it legitimate" is just the block with
-// extra steps. The FIRST write of a field is direct, exactly as the coach-
-// context card's is — there is no weak moment to guard against before anything
-// exists — and every edit after that routes through applyOrGate.
-function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked, rerender) {
+// They feed the coach, and the coach is only reached once an intention is
+// spent and is paid for, so rewriting one saves directly.
+function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked) {
   const key = serviceKeyFor(target);
   const answers = (serviceReasons || {})[key] || {};
 
@@ -566,71 +310,13 @@ function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked, r
         return;
       }
 
-      area.value = before; // revert until/unless approved
-      applyOrGate({
-        isSimple: false,
-        isApp: kind.isApp,
-        appLabel: kind.isApp ? label : undefined,
-        changeType,
-        domain: target,
-        currentValue: before,
-        newValue: after,
-        title: `Change "${caption.toLowerCase()}" for ${label}?`,
-        subtitle: `Your coach reads this at every block on ${label}. Rewriting it changes every future decision, not just today's. Talk it through.`,
-        onApproved: rerender
-      });
+      await sendBg({ action: 'applySettingChange', changeType, domain: target, newValue: after });
     });
 
     row.append(fieldLabel, area);
     wrap.appendChild(row);
   }
   return wrap;
-}
-
-// The one thing a simple-mode row owns: what happens when you open it, and for
-// how long. There is no coach to argue with, so the loose/strict split and the
-// two answers written FOR that coach are both dead controls here, and the row
-// shows this pair in their place.
-function buildSimpleBehaviorField(target, label, limitInfo, kind, onSaved) {
-  const behaviorSelect = document.createElement('select');
-  behaviorSelect.className = 'row-behavior-select';
-  behaviorSelect.setAttribute('aria-label', `What happens when you open ${label}`);
-  behaviorSelect.innerHTML = `<option value="pass">Timed pass</option><option value="hard">Hard block</option>`;
-  behaviorSelect.value = limitInfo.behavior || 'pass';
-
-  const minutesInput = document.createElement('input');
-  minutesInput.type = 'number';
-  minutesInput.min = '1';
-  minutesInput.max = '180';
-  minutesInput.className = 'row-minutes-input inline-limit-input';
-  minutesInput.setAttribute('aria-label', `Minutes per pass on ${label}`);
-  minutesInput.value = limitInfo.passMinutes || 10;
-
-  const minutesUnit = document.createElement('span');
-  minutesUnit.className = 'row-field-unit';
-  minutesUnit.textContent = 'min';
-
-  const updateVisibility = () => {
-    const showMinutes = behaviorSelect.value === 'pass';
-    minutesInput.hidden = !showMinutes;
-    minutesUnit.hidden = !showMinutes;
-  };
-  updateVisibility();
-
-  const persist = async () => {
-    const state = await getConfig();
-    const currentLimits = state[kind.persistKey] || {};
-    if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
-    currentLimits[target].behavior = behaviorSelect.value;
-    currentLimits[target].passMinutes = parseInt(minutesInput.value, 10) || 10;
-    await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
-    await onSaved();
-  };
-
-  behaviorSelect.addEventListener('change', () => { updateVisibility(); persist(); });
-  minutesInput.addEventListener('change', persist);
-
-  return buildRowField(microLabel('When you open it'), behaviorSelect, minutesInput, minutesUnit);
 }
 
 // ---- Parts of the site (buildRowPartsField + the picker) -------------------
@@ -657,7 +343,7 @@ function buildSimpleBehaviorField(target, label, limitInfo, kind, onSaved) {
 //     a part actually names something — and the empty-state copy below says so
 //     out loud, because a control that looks armed and is not is the worst
 //     thing a blocker can be.
-//   * It renders in simple mode as well as coach mode. Which parts of a site
+//   * It renders for every row whatever its intention. Which parts of a site
 //     are blocked is a fact about the blocklist, not about how the coach
 //     behaves once you are stopped, and checkFromStorage reaches the part
 //     verdict before it ever resolves a mode.
@@ -1068,7 +754,7 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
 
 // The field itself. Holds the row's part rule as a draft, paints it, and hands
 // every committed edit to parts.js to judge the direction of.
-function buildRowPartsField(target, label, limitInfo, kind, globalMode, rerender) {
+function buildRowPartsField(target, label, limitInfo, kind, rerender) {
   const serviceKey = serviceKeyFor(target);
   const isApp = kind.isApp;
   const noun = isApp ? 'app' : 'site';
@@ -1240,12 +926,8 @@ function buildRowPartsField(target, label, limitInfo, kind, globalMode, rerender
       await persist(after);
       return;
     }
-    revert(); // until/unless the coach approves it
-    applyOrGate({
-      // Part rules bind in simple mode too, but there is no coach there to
-      // argue with, so the change applies outright — the same escape every
-      // other loosening on a simple row takes.
-      isSimple: effectiveModeFor(limitInfo, globalMode) === 'simple',
+    revert(); // until tomorrow, or until the coach allows it now
+    requestLoosening({
       isApp: kind.isApp,
       appLabel: kind.isApp ? label : undefined,
       changeType: kind.narrowScope,
@@ -1257,7 +939,7 @@ function buildRowPartsField(target, label, limitInfo, kind, globalMode, rerender
       newValue: after,
       title: `Block less of ${label}?`,
       subtitle: `Right now ${describeScopeForHuman(stored, label)}. You're asking for ${describeScopeForHuman(after, label)}. ` +
-        `That leaves part of ${label} open to you without ever talking to me again. Convince your coach.`,
+        `That leaves part of ${label} open to you without an intention in front of it.`,
       onApproved: rerender
     });
   }
@@ -1286,80 +968,60 @@ function buildRowPartsField(target, label, limitInfo, kind, globalMode, rerender
   return field;
 }
 
-// Everything under the head hairline, for both lists.
-//
-// The absolute daily max is here in BOTH modes, because it binds in both —
-// simpleGrant checks it just as the coach's grant path does, and a cap that
-// still stops you but no longer appears is worse than no cap at all.
-// Everything else in the band is about the coach: the loose/strict timeline
-// and the two answers written for it are coach-only, and a simple row gets its
-// pass controls instead.
-function buildRowBody({ li, fields, target, label, limitInfo, globalMode, kind, serviceReasons, rerender }) {
-  const isSimple = effectiveModeFor(limitInfo, globalMode) === 'simple';
-  const stored = limitInfo.maxMinutes !== undefined
-    ? limitInfo.maxMinutes
-    : (limitInfo.max_minutes_per_day ?? DEFAULT_DAILY_MAX_MINUTES);
-  // A non-positive maxMinutes means unlimited; the box still has to show a
-  // number you can edit, and the add-default is what every other one here is.
-  const currentMins = stored > 0 ? stored : DEFAULT_DAILY_MAX_MINUTES;
+// Everything under the head hairline, for both lists: the intention, always
+// visible, and the rest folded under one disclosure — which parts are blocked
+// and what the target is for are things you set once, not things to scan past
+// on every visit to this page.
+function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReasons, rerender }) {
+  const stored = resolveIntention(limitInfo);
 
-  fields.appendChild(buildDailyLimitField(currentMins, label, async (e) => {
-    const val = parseInt(e.target.value, 10);
-    if (isNaN(val) || val <= 0) {
-      e.target.value = currentMins;
-      return;
-    }
-    const currentlyUnlimited = !(stored > 0);
-    const isIncrease = currentlyUnlimited ? true : (val > stored);
-
-    if (!isIncrease) {
-      // Decreasing (or unchanged) tightens the rule — apply immediately, free.
-      const state = await getConfig();
-      const currentLimits = state[kind.persistKey] || {};
-      if (!currentLimits[target]) currentLimits[target] = { maxGrants: 3 };
-      currentLimits[target].maxMinutes = val;
+  fields.appendChild(buildIntentionField(limitInfo, label, async (next) => {
+    const state = await getConfig();
+    const currentLimits = state[kind.persistKey] || {};
+    const before = currentLimits[target] || limitInfo;
+    if (!isLoosening(before, next)) {
+      // Fewer or shorter opens: a tightening, saved at once, for free.
+      currentLimits[target] = { ...(currentLimits[target] || {}), maxGrants: next.maxGrants, passMinutes: next.passMinutes };
       await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
       await rerender();
       return;
     }
-
-    // Increasing the limit loosens the rule — must be approved by the coach
-    // (or applied outright, if this row is in simple mode).
-    e.target.value = currentMins; // revert until/unless approved
-    applyOrGate({
-      isSimple,
+    const after = resolveIntention(next);
+    requestLoosening({
       isApp: kind.isApp,
       appLabel: kind.isApp ? label : undefined,
       changeType: kind.increaseLimit,
       domain: target,
-      currentValue: currentlyUnlimited ? -1 : stored,
-      newValue: val,
-      title: `Raise the absolute daily max on ${label}?`,
-      subtitle: `Going from ${currentlyUnlimited ? 'unlimited' : stored + 'm/day'} to ${val}m/day gives you more time on ${label}. Convince your coach.`,
+      currentValue: { maxGrants: stored.opens, passMinutes: stored.minutesEach },
+      newValue: { maxGrants: after.opens, passMinutes: after.minutesEach },
+      title: `More time on ${label}?`,
+      subtitle: `From ${describeIntention(stored)} to ${describeIntention(after)}.`,
       onApproved: rerender
     });
-  }, { info: true }));
+  }));
 
-  // Which parts of the target are blocked, in BOTH modes. A part rule decides
-  // whether the block applies at all, which is a question that comes before
-  // "and then what happens" — checkFromStorage reaches the part verdict before
-  // it resolves a mode, and a simple-mode row that silently ignored the rule
-  // would open the very sections the user had shut.
+  const more = document.createElement('details');
+  more.className = 'row-more';
+  const summary = document.createElement('summary');
+  summary.className = 'micro-label';
+  summary.textContent = 'Parts and purpose';
+  more.appendChild(summary);
+  // Which parts of the target are blocked. A part rule decides whether the
+  // block applies at all, so it binds whatever the intention says.
   if (kind.hasParts) {
-    li.appendChild(buildRowPartsField(target, label, limitInfo, kind, globalMode, rerender));
+    more.appendChild(buildRowPartsField(target, label, limitInfo, kind, rerender));
   }
-
-  if (isSimple) {
-    fields.appendChild(buildSimpleBehaviorField(target, label, limitInfo, kind, rerender));
-    return;
-  }
-
-  // Coach-only from here down.
-  li.appendChild(buildLooseTimelineField(target, label, limitInfo, kind, currentMins, rerender));
-  li.appendChild(buildRowReasonFields(target, label, kind, serviceReasons, allBlockedTargets(), rerender));
+  more.appendChild(buildRowReasonFields(target, label, kind, serviceReasons, allBlockedTargets()));
+  li.appendChild(more);
 }
 
-function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReasons = {}) {
+// "3 opens a day, 10 min each" for an already-resolved intention.
+function describeIntention({ opens, minutesEach }) {
+  if (opens === 0) return 'blocked outright';
+  return `${opens} ${opens === 1 ? 'open' : 'opens'} a day, ${minutesEach} min each`;
+}
+
+function renderDomains(domains, limits = {}, serviceReasons = {}) {
   renderSiteRecommendations('sites-recommend-grid', 'sites-recommend-more', domains);
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
@@ -1369,20 +1031,20 @@ function renderDomains(domains, limits = {}, globalMode = 'coach', serviceReason
   }
   const rerender = async () => {
     const state = await getConfig();
-    renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.blockingMode, state.serviceReasons || {});
+    renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
+    renderPendingChanges(state);
   };
   for (const d of domains) {
-    const limitInfo = limits[d] || { maxGrants: 3, maxMinutes: DEFAULT_DAILY_MAX_MINUTES };
+    const limitInfo = limits[d] || { ...INTENTION_DEFAULTS };
 
     const { li, fields } = buildBlockedRow({
       target: d,
       label: d,
-      headExtra: buildRowModeToggle(d, d, limitInfo, globalMode, 'domainLimits', rerender),
-      onRemove: () => removeDomain(d, effectiveModeFor(limitInfo, globalMode) === 'simple')
+      onRemove: () => removeDomain(d)
     });
 
     buildRowBody({
-      li, fields, target: d, label: d, limitInfo, globalMode,
+      li, fields, target: d, label: d, limitInfo,
       kind: ROW_KINDS.domain, serviceReasons, rerender
     });
     list.appendChild(li);

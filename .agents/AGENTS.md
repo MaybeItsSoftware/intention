@@ -51,14 +51,14 @@ intention/
 | `content.js` | Content script — injects the overlay UI onto blocked pages. Contains a duplicate of `content.css` as an inline `OVERLAY_CSS` JS string constant. |
 | `content.css` | Overlay styles (also injected via manifest `content_scripts.css`). |
 | `options.html` / `options.css` / `options.js` | Settings page shell — tabs, modals, the settings view, stats. |
-| `options-wizard.js` | First-run setup: draft state, step order, per-service questions, the save that ends it. |
+| `options-wizard.js` | First-run setup, one question per page: draft state, the page order (per-target intention pages, optional per-service purpose pages), the save that ends it. |
 | `options-rows.js` | The blocked-site / blocked-app row and every control on it. |
 | `options-coach.js` | The coach modal (rewriting "about you") and the settings gate. |
 | `options-lists.js` | Recommendation grids, app search, the wizard's own site/app lists. |
 | `options-access.js` | Coaching credit: purchase, restore, paywall. |
 | `coaching.html` / `coaching.js` | Standalone coaching chat page (Android, iOS, and the gate backstop). Has **inline `<style>` block** that duplicates some overlay CSS. |
 | `gate-ui.js` | The whole gate conversation both hosts share: message bubble, typing reveal, walk-away moment, stats strip, and `createGateConversation` — the request loop itself. Loaded by the content script AND `coaching.html`. The hosts supply only the transport and what a locked account / granted pass means locally. |
-| `rules.js` | Resolves a blocked target's rules (mode, behaviour, pass length, lenient window) — pure functions, loaded into **every** context. |
+| `rules.js` | Resolves a blocked target's intention (opens a day, minutes each), whether an edit loosens it, and when a deferred loosening takes effect — pure functions, loaded into **every** context. |
 | `prompts.js` | System prompt construction for the AI coach. |
 | `providers.js` | LLM provider adapters (Intention's hosted backend, Anthropic, OpenAI, Groq, Gemini) plus `entitlementIsActive()`. |
 | `billing.js` | Page-side In-App Purchase layer: store-bridge calls, backend verification, and the paywall renderer. Loaded by `options.html` and `coaching.html`, not by the background worker. |
@@ -98,7 +98,7 @@ Rules to keep that intact:
 - **Vanilla JS only.** No frameworks, no TypeScript. Use `const`/`let`, template literals, and modern DOM APIs.
 - **Keep code clean, modular, and well-documented.** Follow existing patterns.
 - **`npm run lint` before you finish.** ESLint derives each shared file's allowed globals from the manifests and pages, so `no-undef` is what catches a call into a file your context does not load — the failure mode this architecture makes easy and the browser only reports at runtime. A new shared file must be added to the manifest / page that loads it, or nothing can call it.
-- **Resolve a target's rules through `rules.js`, never inline.** Which mode applies to a site, and when the coach turns strict, was once written out in four files held together by "change one, change all three" comments. They had drifted. `tests/rules.test.js` now fails if a copy comes back.
+- **Resolve a target's rules through `rules.js`, never inline.** A site's rules were once written out in four files held together by "change one, change all three" comments. They had drifted. `tests/rules.test.js` now fails if a copy comes back.
 - **CSS duplication awareness.** `content.js` contains a full copy of the overlay CSS as the `OVERLAY_CSS` string constant. `coaching.html` contains inline `<style>` blocks with similar styles. When modifying overlay styles, update **both** `content.css` and the `OVERLAY_CSS` constant in `content.js`, and check `coaching.html` inline styles. `tests/parity.test.js` fails the build if the two copies drift.
 - **Shared gate UI.** The message bubble, typing reveal, walk-away moment, stats strip and the conversation loop all live in `gate-ui.js`, and both gate hosts use them. Change them there, not in `content.js` or `coaching.js` — `tests/parity.test.js` fails if either redeclares one or grows a second copy of the loop, and `tests/gate-conversation.test.js` pins what the loop does.
 - **A host passes edges, not steps.** `createGateConversation` takes the transport (`sendChat`) and the three local meanings (`onLocked`, `onGranted`, `onOpenSettings`). If something host-specific seems to belong *inside* the loop, it is a new edge on `host`, not a branch on which host is running.
@@ -106,7 +106,7 @@ Rules to keep that intact:
 ## Styling Conventions
 
 - **Font**: Arvo (Google Fonts), with fallback `Georgia, 'Times New Roman', serif`.
-- **Design language**: Dark glassmorphic — dark backgrounds (`#0f1115`), light text (`#e7e7ea`), translucent panels, subtle borders (`rgba(255,255,255,0.1)`).
+- **Design language**: Flat, bordered, paper and ink — tokens in `shared/tokens.css` (chalk `#faf8f4` paper, grape `#444054` ink, hairline borders, no shadows), flipping to the same hue pulled down in dark mode. The overlay copies them by hand into `content.css` / `OVERLAY_CSS`.
 - **Overlay isolation**: The content overlay uses `all: initial` on `#intention-root` and max `z-index` (`2147483647`) to avoid style leakage from host pages.
 - **Font loading in content scripts**: Arvo is dynamically injected into host pages via `<link>` elements in `injectOverlayStyle()` (with a guard to prevent duplicates).
 - **Options/coaching pages**: Load Arvo via `<link>` tags with `preconnect` hints in the HTML `<head>`.
@@ -167,8 +167,10 @@ Four jobs, run in parallel.
 ### Publish (`publish-chrome.yml`, `publish-firefox.yml`, `publish-android.yml`) — each runs automatically on Automated Release completion or manual dispatch
 Auto-submits to the Chrome Web Store, Firefox Add-ons (AMO), and Google Play (internal track) respectively, if the relevant repo secrets are configured; each skips gracefully (without failing) otherwise. Being separate workflows, any one store can be retried via `gh workflow run publish-<store>.yml` without re-triggering the others. See `DEPLOYMENT.md` for the secrets needed and first-submission steps for all four stores, including Safari/App Store (which has no CLI-only path).
 
-**To release**: Commit your changes using Conventional Commits and merge/push to the `main` branch. The automated release pipeline will calculate the version bump, tag the commit, update the changelog, and draft the release.
+## Deployment & Vercel Guidelines
 
+- **Do NOT deploy websites/services with the Vercel CLI (`vercel` / `vercel --prod`)**: Web projects deploy automatically on Git commit/push to `main`. Never run manual CLI deployments unless explicitly requested by the user.
+- **Vercel Account Safeguards**: If the Vercel CLI must be used, always verify the active user/team first (`vercel whoami`) to ensure it is the correct account, never an unrelated account or team (e.g. `uclh-iking`). Never link or re-bind a repository to another team.
 
 ## Environment & Secrets
 

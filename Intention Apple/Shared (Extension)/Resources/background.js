@@ -988,6 +988,7 @@ async function migrateSessionKeys() {
 
 async function reconcileSessions() {
   await migrateSessionKeys();
+  await applyDuePendingChanges();
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const banked = [];
   const rearmed = [];
@@ -1210,48 +1211,43 @@ async function handleMessage(message, sender) {
     case 'endSession':
       // A hostile page must not inflate another site's walk-away streak — the
       // prompt trusts that number as evidence. Content senders may only end
-      // sessions for the site they are running on, the same bar simpleGrant
+      // sessions for the site they are running on, the same bar intentionGrant
       // applies.
       if (senderTrust(sender) === 'content' &&
           !hostMatchesDomain(senderPageHost(sender), message.domain)) {
         return { ok: true };
       }
       return endSession({ tabId, domain: message.domain, reason: message.reason });
-    case 'simpleGrant': {
-      // Simple-mode passes skip the coach entirely, so they must only exist
-      // where simple mode actually applies — otherwise any page could mint a
-      // pass for a coach-mode domain and bypass the gate. And a content script
-      // may only ask for the site it is running on, not burn another domain's
-      // daily grants.
+    case 'intentionGrant': {
+      // One of the day's free opens. No conversation stands in front of it,
+      // so the only things to check are who is asking and whether an open is
+      // left — and the second is intentionGrant's job. A content script may
+      // only spend opens for the site it is running on, never another
+      // domain's.
       if (senderTrust(sender) === 'content' &&
           !hostMatchesDomain(senderPageHost(sender), message.domain)) {
         return { denied: 'not available' };
       }
-      const { mode } = await getEffectiveMode(message.domain);
-      if (mode !== 'simple') return { denied: 'this site requires the coach' };
-      return simpleGrant({ tabId, domain: message.domain, isApp: message.isApp });
+      return intentionGrant({ tabId, domain: message.domain, isApp: message.isApp });
     }
     case 'applySettingChange': {
-      // Loosening blocking rules without a coach conversation is only ever
-      // legitimate from our own UI, and only where simple mode applies (the
-      // global mode for disable_all, the item's mode otherwise). The
-      // coach-approved path goes through handleChat's approve_setting_change,
-      // which calls applySettingChange() directly and never hits this guard.
+      // Our own UI asking for a loosening without the coach. It is never
+      // refused and never applied on the spot: it is queued for tomorrow (see
+      // scheduleSettingChange). The coach-approved path goes through
+      // handleChat's approve_setting_change, which calls applySettingChange()
+      // directly and is the only way to have it today.
       if (senderTrust(sender) === 'content') {
         return { error: 'Not allowed from a web page' };
       }
-      // The change types that have no target: they are about the whole
-      // install, so the GLOBAL blocking mode is what decides whether a coach
-      // stands in front of them.
-      const { mode } = await getEffectiveMode(
-        GLOBAL_CHANGE_TYPES.includes(message.changeType) ? null : message.domain
-      );
-      if (mode !== 'simple') return { error: 'This change requires the coach' };
-      return applySettingChange({
+      return requestSettingChange({
         changeType: message.changeType,
         domain: message.domain,
         newValue: message.newValue
       });
+    }
+    case 'cancelPendingChange': {
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      return cancelPendingChange({ changeType: message.changeType, domain: message.domain });
     }
     // ---- Leaving ---------------------------------------------------------
     //
@@ -1274,7 +1270,7 @@ async function handleMessage(message, sender) {
       return completeRemoval();
     }
     case 'getBlockInfo':
-      return { blockConfig: await getEffectiveMode(message.domain) };
+      return { intention: await getIntention(message.domain) };
     // The redirect that opens the gate carries only the domain, so the deep
     // link the user actually clicked is lost by the time they've talked their
     // way through it. webNavigation recorded it a moment earlier — hand it
@@ -1442,7 +1438,7 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   // page's gate decision open, and the rule only matters from the next load on.
   if (matchedDomain && (!session || !covered)) syncBlockingRules();
   const access = await resolveAIRoute();
-  const blockConfig = matchedDomain ? await getEffectiveMode(matchedDomain) : null;
+  const intention = matchedDomain ? await getIntention(matchedDomain) : null;
   return {
     // `matchedDomain` still says the host is on the blocklist; `isBlocked` now
     // says whether THIS address on it is gated. They come apart exactly when a
@@ -1456,7 +1452,7 @@ async function checkPageMatch(host, tabId, pageContext, url) {
     setupComplete: !!setupComplete,
     accessRoute: access.route,
     session,
-    blockConfig
+    intention
   };
 }
 
@@ -1465,7 +1461,7 @@ async function checkPageMatch(host, tabId, pageContext, url) {
 // read before handing the values over.
 async function getLimitsForDomain(domain) {
   const stored = await getStorage(['domainLimits', 'appLimits']);
-  return resolveLimits(limitEntryFor(domain, stored));
+  return resolveIntention(limitEntryFor(domain, stored));
 }
 
 // ---------------------------------------------------------------------------
@@ -1684,12 +1680,17 @@ async function getAccess(sender) {
   };
 }
 
-// Per-item mode/behavior override falls back to the global default, so most
-// domains carry no mode/behavior/passMinutes fields at all. As with
-// getLimitsForDomain, the resolution is rules.js's — this reads the keys.
-async function getEffectiveMode(domain) {
-  const stored = await getStorage(['blockingMode', 'simpleBehavior', 'simplePassMinutes', 'domainLimits', 'appLimits']);
-  return resolveBlockConfig(limitEntryFor(domain, stored), stored);
+// A target's intention together with how much of it today has used — the
+// one object the gate paints from. Any loosening that has come due is applied
+// first, so the first visit of a new day sees the rule the user asked for
+// yesterday rather than the one it replaced.
+async function getIntention(domain) {
+  await applyDuePendingChanges();
+  const stored = await getStorage(['domainLimits', 'appLimits']);
+  const { opens, minutesEach } = resolveIntention(limitEntryFor(domain, stored));
+  const stats = domain ? await getStatsForDomain(domain) : { grantsToday: 0 };
+  const opensUsed = Math.min(opens, Math.max(0, stats.grantsToday - (stats.negotiatedToday || 0)));
+  return { opens, minutesEach, opensUsed, opensLeft: Math.max(0, opens - opensUsed) };
 }
 
 // The two setup answers, keyed by service (see serviceKeyFor in sites.js).
@@ -1717,7 +1718,8 @@ function sanitizeServiceReasons(raw) {
 }
 
 async function getFullConfig() {
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'blockingMode', 'simpleBehavior', 'simplePassMinutes', 'leaveDelayMinutes', 'setupCompletedAt'];
+  await applyDuePendingChanges();
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'leaveDelayMinutes', 'setupCompletedAt', 'pendingChanges'];
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -1739,9 +1741,7 @@ async function getFullConfig() {
     appLimits: stored.appLimits || {},
     appLabels: stored.appLabels || {},
     serviceReasons: stored.serviceReasons || {},
-    blockingMode: stored.blockingMode || 'coach',
-    simpleBehavior: stored.simpleBehavior || 'pass',
-    simplePassMinutes: Number(stored.simplePassMinutes) > 0 ? Number(stored.simplePassMinutes) : 10,
+    pendingChanges: Array.isArray(stored.pendingChanges) ? stored.pendingChanges : [],
     // Normalised on the way out, not just on the way in: this is the number
     // the settings card paints its selected choice from, and a stored value
     // that is not on the ladder must show as the rung below it rather than as
@@ -1850,7 +1850,37 @@ function holdPartRuleDirection(next, stored) {
 async function limitsForWrite(key, limits) {
   const cleaned = sanitizeLimitsPartRules(limits);
   const stored = (await getStorage([key]))[key];
-  return holdPartRuleDirection(cleaned, stored);
+  return holdIntentionDirection(holdPartRuleDirection(cleaned, stored), stored);
+}
+
+// The intention half of the same guard. A whole-map write may lower opens or
+// shorten minutes as it likes — that is tightening, and it applies at once —
+// but it may not raise either: raising goes through requestSettingChange,
+// which queues it for tomorrow, or through the coach. Here a raise is simply
+// held at the stored value, field by field, so a write that tightens one
+// number and loosens the other keeps the tightening.
+//
+// Targets with no stored entry are left alone. Adding something to block is
+// never a loosening, whatever intention it arrives with.
+function holdIntentionDirection(next, stored) {
+  if (!next || typeof next !== 'object') return next;
+  const before = (stored && typeof stored === 'object') ? stored : {};
+  const out = {};
+  for (const [target, entry] of Object.entries(next)) {
+    const prior = before[target];
+    if (!entry || typeof entry !== 'object' || !prior || !isLoosening(prior, entry)) {
+      out[target] = entry;
+      continue;
+    }
+    const was = resolveIntention(prior);
+    const want = resolveIntention(entry);
+    out[target] = {
+      ...entry,
+      maxGrants: Math.min(was.opens, want.opens),
+      passMinutes: Math.min(was.minutesEach, want.minutesEach)
+    };
+  }
+  return out;
 }
 
 // AN OMITTED KEY MEANS "LEAVE IT ALONE"; a key that is present, even as '',
@@ -1880,7 +1910,7 @@ async function saveSetup(config) {
   const {
     provider, apiKey, model, userContext, contextProjects, contextReasons,
     blockedDomains, domainLimits, blockedApps, appLimits, appLabels,
-    serviceReasons, blockingMode, simpleBehavior, simplePassMinutes
+    serviceReasons
   } = config || {};
   // The second whole-key writer of both limits maps, and it gets the same
   // treatment as saveSettings for the same reason: nothing about "this message
@@ -1908,9 +1938,6 @@ async function saveSetup(config) {
   put('blockedApps', blockedApps || []);
   put('appLabels', appLabels || {});
   put('serviceReasons', sanitizeServiceReasons(serviceReasons));
-  put('blockingMode', blockingMode || 'coach');
-  put('simpleBehavior', simpleBehavior === 'hard' ? 'hard' : 'pass');
-  put('simplePassMinutes', Number(simplePassMinutes) > 0 ? Number(simplePassMinutes) : 10);
   // The two limits maps take the same rule as everything else, and they have to
   // — an omitted domainLimits cleaned to `{}` and written would strip every
   // blocked site's grant and minute caps while leaving the sites themselves
@@ -1958,6 +1985,9 @@ async function saveSettings(partial) {
   }
   if (partial && partial.appLimits) {
     partial = { ...partial, appLimits: await limitsForWrite('appLimits', partial.appLimits) };
+  }
+  if (partial && (partial.domainLimits || partial.appLimits)) {
+    await dropSupersededRaises(partial);
   }
   // The cool-off on leaving is the one setting that may only move one way
   // through here. Raising it is a tightening and free, like lowering a daily
@@ -2022,7 +2052,7 @@ async function applyHostedBalance(access, llmResponse) {
 // has to come from appLabels, and the app context block replaces the page one.
 // The reason-box edits are deliberately absent — they exist on site rows and
 // app rows alike, so the options page tells us which with `isApp` instead.
-const APP_CHANGE_TYPES = ['remove_app', 'increase_app_limit', 'increase_app_loose_window', 'narrow_app_block_scope'];
+const APP_CHANGE_TYPES = ['remove_app', 'increase_app_limit', 'narrow_app_block_scope'];
 
 // Settings-gate change types with no target at all: they are about the whole
 // install rather than one site or app. `domain` is null for every one of them,
@@ -2167,13 +2197,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       siteReason,
       coachInstructions,
       grantsToday: stats.grantsToday,
-      grantsCap: limits.maxGrants,
-      minutesCap: limits.maxMinutes,
+      grantsCap: limits.opens,
+      minutesEach: limits.minutesEach,
       minutesTodaySite: stats.minutesToday,
-      // The phase is one derived boolean beside the minutes that decide it —
-      // no new tracking, just the split the user set read against today's
-      // total. Renders below the cache break, with the rest of the usage.
-      looseUntilMinutes: limits.looseUntilMinutes,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll,
       minutesWeekSite: stats.minutesWeek,
@@ -2210,10 +2236,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       // tab may be somewhere else entirely.
       endedScope: session.scope || null,
       grantsToday: stats.grantsToday,
-      grantsCap: limits.maxGrants,
-      minutesCap: limits.maxMinutes,
+      grantsCap: limits.opens,
+      minutesEach: limits.minutesEach,
       minutesTodaySite: stats.minutesToday,
-      looseUntilMinutes: limits.looseUntilMinutes,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekSite: stats.minutesWeek,
       reasonsToday: stats.reasonsToday,
@@ -2237,6 +2262,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     // alone: applySettingChange below writes the real rule from the real
     // object, and must not be handed prose.
     const isScopeChange = SCOPE_CHANGE_TYPES.includes(changeType);
+    const isIntentionChange = changeType === 'increase_limit' || changeType === 'increase_app_limit';
     // The leaving conversation is about the install, not about a target, so it
     // is the one settings gate that needs the aggregate picture: how long they
     // have been at this and how much is on their list. Read only for the two
@@ -2264,8 +2290,10 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     systemPrompt = buildSettingsGateSystemPrompt({
       domain: displayName,
       changeType,
-      currentValue: isScopeChange ? describeScopeForHuman(currentValue, displayName) : currentValue,
-      newValue: isScopeChange ? describeScopeForHuman(newValue, displayName) : newValue,
+      currentValue: isScopeChange ? describeScopeForHuman(currentValue, displayName)
+        : isIntentionChange ? describeIntentionForHuman(currentValue) : currentValue,
+      newValue: isScopeChange ? describeScopeForHuman(newValue, displayName)
+        : isIntentionChange ? describeIntentionForHuman(newValue) : newValue,
       userContext,
       contextProjects,
       contextReasons,
@@ -2353,11 +2381,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         continue;
       }
       if (tc.name === 'grant_access' && (mode === 'gate' || mode === 'checkin')) {
-        const stats = await getStatsForDomain(domain);
-        const limits = await getLimitsForDomain(domain);
-
-        const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
-        const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
+        const intention = await getIntention(domain);
 
         // The number the model actually asked for, kept before clamping so the
         // correction below can name the gap instead of pretending it granted
@@ -2391,72 +2415,31 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           correction = 'Your grant_access call asked for scope "page", but Intention could not identify a single page to scope it to \u2014 the destination is a feed, an app, or its address was not recorded. The pass was granted for the WHOLE SITE instead. Tell the user that, honestly and in your own words.';
         }
 
-        // Both caps are now absolute. Until the quick check was retired, a
-        // model-attested "quick check" ran ahead of this check and was granted
-        // straight past the grants cap on its own budget — so this is the one
-        // place where removing the feature had to make blocking STRONGER, not
-        // just quieter. There is no lane left to fall through to, and no
-        // "still available today" invitation to dangle.
-        if (grantsLimitReached || minutesLimitReached) {
-          const reasonStr = grantsLimitReached ? 'daily grant cap reached' : `absolute max of ${limits.maxMinutes} minutes reached`;
-          systemNote = grantsLimitReached
-            ? 'Daily grant cap reached \u2014 no more time can be granted today.'
-            : `Absolute max of ${limits.maxMinutes} minutes reached \u2014 no more time can be granted today.`;
-          correction = `Your grant_access call was NOT applied: ${reasonStr}. No time can be granted today.`;
+        // The coach is the way PAST the user's intention, never a way around
+        // spending it. While a free open is left the gate offers it with one
+        // tap, so a conversation that reaches this with opens still in hand
+        // arrived by some other door — and paying credit for time that was
+        // already free is the one outcome nobody wants. Refused, and the
+        // coach is told why.
+        if (intention.opensLeft > 0) {
+          systemNote = `You still have ${intention.opensLeft} free ${intention.opensLeft === 1 ? 'open' : 'opens'} today \u2014 use one from the gate instead.`;
+          correction = `Your grant_access call was NOT applied: the user still has ${intention.opensLeft} of today's intended opens left, which the gate gives them for free. Tell them to use one of those.`;
           continue;
         }
 
-        // Past their own loose/strict split, the prompt has already told the
-        // coach to hold a higher bar — but a prompt is guidance and this is
-        // arithmetic. The mechanical half is here: a weak decision late in the
-        // day costs less because the pass it buys is shorter. Silent when they
-        // never set a split, like everything else about the phase.
-        const phase = computePhase(limits.looseUntilMinutes, stats.minutesToday);
-
-        let minutes = Math.max(1, Math.min(60, requested));
-        // Which constraint actually bound matters for the correction below: a
-        // no-cap user whose 90-minute ask hits the 60-minute ceiling must not
-        // be told about a "daily cap" they never set.
-        let clampCause = minutes < requested ? 'the 60-minute ceiling on any single pass' : '';
-        // Between the per-pass ceiling and the daily cap, because it is the
-        // same kind of rule as the first and must still lose to the second:
-        // the cap is a hard stop on the day, this only shortens one pass.
-        // A scoped pass gets the higher strict-phase ceiling, because leaving
-        // the page ends it and only the minutes actually used are banked — see
-        // STRICT_PHASE_MAX_MINUTES_SCOPED. Still below both the 60-minute
-        // ceiling applied above and the daily-remainder clamp applied below,
-        // so neither the day's total nor any single pass can grow past what
-        // the user set.
+        // Every negotiated pass is short, and this is the arithmetic behind
+        // the prompt's promise. There is no daily ceiling past the intention
+        // — credit is the friction now — so the length of each pass is what
+        // keeps an evening of "just ten more minutes" costing something every
+        // time. A scoped pass may run longer: leaving the page ends it.
         const strictCap = scope ? STRICT_PHASE_MAX_MINUTES_SCOPED : STRICT_PHASE_MAX_MINUTES;
-        if (phase && phase.strict && minutes > strictCap) {
-          minutes = strictCap;
-          clampCause = STRICT_PHASE_CLAMP_CAUSE;
-        }
-        if (limits.maxMinutes > 0) {
-          const remainingMinutes = Math.max(0, limits.maxMinutes - stats.minutesToday);
-          if (minutes > remainingMinutes) {
-            minutes = remainingMinutes;
-            clampCause = "the user's daily minutes cap";
-          }
-        }
-
-        if (minutes <= 0) {
-          systemNote = `Absolute max of ${limits.maxMinutes} minutes reached \u2014 no more time can be granted today.`;
-          correction = `Your grant_access call was NOT applied: the user's daily minutes cap is already used up. No time can be granted today.`;
-          continue;
-        }
-
+        const minutes = Math.max(1, Math.min(strictCap, requested));
         if (minutes < requested) {
           // Overwrites the downgrade correction above where both apply: the
           // clamped-minutes one is the more surprising of the two, and a
-          // single correction turn is the whole budget. The systemNote below
-          // is likewise replaced — one line, the most load-bearing fact.
-          correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${clampCause}. The pass was granted for ${minutes} minutes.`;
-          systemNote = clampCause === "the user's daily minutes cap"
-            ? `Only ${minutes} minutes were available under your daily cap \u2014 your pass is ${minutes} minutes.`
-            : clampCause === STRICT_PHASE_CLAMP_CAUSE
-              ? `Your lenient window here is spent for today, so passes are capped at ${strictCap} minutes \u2014 your pass is ${minutes} minutes.`
-              : `Passes top out at 60 minutes \u2014 your pass is ${minutes} minutes.`;
+          // single correction turn is the whole budget.
+          correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${STRICT_PHASE_CLAMP_CAUSE}. The pass was granted for ${minutes} minutes.`;
+          systemNote = `Extra time comes in passes of up to ${strictCap} minutes \u2014 your pass is ${minutes} minutes.`;
         }
 
         const reason = String(input.reason || '').slice(0, 240);
@@ -2464,7 +2447,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         // feeds stats.grantsToday and reasonsToday, so an inlined version that
         // skips it silently disables both the daily cap checked above and the
         // escalating skepticism the check-in prompt is built on.
-        grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope });
+        grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope, negotiated: true });
       } else if (tc.name === 'note_observation' && (mode === 'gate' || mode === 'checkin')) {
         // The coach's cross-day memory. Capped, deduplicated, and readable in
         // settings — a bounded notepad, not a dossier.
@@ -2512,8 +2495,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         : `Okay \u2014 you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
     } else if (settingApproved) {
       if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced \u2014 I've removed ${displayName} from your blocklist.`;
-      else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case \u2014 I've raised your absolute max on ${displayName}.`;
-      else if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') acceptanceFallback = `Alright \u2014 I've lengthened the easy stretch on ${displayName}. I'll still ask what you're there for.`;
+      else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case \u2014 your new intention for ${displayName} starts now.`;
       else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') acceptanceFallback = `Okay, that's a fair correction \u2014 I've saved your new wording for ${displayName}.`;
       // Named rather than left to the generic line below, because "I've made
       // that change" after a conversation about which SECTIONS stay blocked
@@ -2730,13 +2712,10 @@ async function applySettingChange({ domain, changeType, newValue }) {
 
   if (changeType === 'increase_limit') {
     const limits = { ...domainLimits };
-    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
-    const parsed = Number(newValue);
-    // -1 (or any non-positive sentinel) means unlimited.
-    limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
+    limits[domain] = withIntention(limits[domain], newValue);
     await setStorage({ domainLimits: limits });
     await syncBlockingRules();
-    return { changeType, domain, domainLimits: limits, maxMinutes: limits[domain].maxMinutes };
+    return { changeType, domain, domainLimits: limits, intention: resolveIntention(limits[domain]) };
   }
 
   if (changeType === 'remove_app') {
@@ -2751,32 +2730,9 @@ async function applySettingChange({ domain, changeType, newValue }) {
 
   if (changeType === 'increase_app_limit') {
     const limits = { ...appLimits };
-    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
-    const parsed = Number(newValue);
-    limits[domain] = { ...limits[domain], maxMinutes: (isNaN(parsed) || parsed <= 0) ? -1 : Math.round(parsed) };
+    limits[domain] = withIntention(limits[domain], newValue);
     await setStorage({ appLimits: limits });
-    return { changeType, domain, appLimits: limits, maxMinutes: limits[domain].maxMinutes };
-  }
-
-  // Lengthening the lenient window. The direction is the whole reason this is
-  // here at all: SHORTENING it tightens the rule and the settings page saves
-  // that on its own, free, exactly as it does a lowered daily max. Only the
-  // loosening half ever reaches the coach.
-  //
-  // No syncBlockingRules: which domains redirect hasn't changed, only how the
-  // coach judges them once you're there.
-  if (changeType === 'increase_loose_window' || changeType === 'increase_app_loose_window') {
-    const isApp = changeType === 'increase_app_loose_window';
-    const key = isApp ? 'appLimits' : 'domainLimits';
-    const limits = { ...(isApp ? appLimits : domainLimits) };
-    if (!limits[domain]) limits[domain] = { maxGrants: 3 };
-    // A non-number here would silently unset the split rather than widen it,
-    // which is a louder loosening than the one that was approved — so an
-    // unreadable value floors at zero instead.
-    const parsed = normalizeLooseUntil(newValue);
-    limits[domain] = { ...limits[domain], looseUntilMinutes: parsed == null ? 0 : parsed };
-    await setStorage({ [key]: limits });
-    return { changeType, domain, [key]: limits, looseUntilMinutes: limits[domain].looseUntilMinutes };
+    return { changeType, domain, appLimits: limits, intention: resolveIntention(limits[domain]) };
   }
 
   // Rewriting one of the two things the user told the coach this service is
@@ -2917,14 +2873,17 @@ async function applySettingChange({ domain, changeType, newValue }) {
   return null;
 }
 
-// Shared by the LLM's grant_access tool call and the no-AI simpleGrant path:
+// Shared by the LLM's grant_access tool call and the free intentionGrant path:
 // records the grant, banks whatever session previously held this key, opens
 // the new session, and arms the check-in alarm / DNR rule.
 // recordGrant still accepts a { quickCheck } option and tracking.js still
 // keeps that tally — see the note there. Nothing passes it any more: every
 // grant is a normal grant now, so every grant counts against the daily cap.
-async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope }) {
-  await recordGrant(domain, minutes, reason, scope ? { scope: 'page' } : undefined);
+async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope, negotiated }) {
+  const grantOptions = {};
+  if (scope) grantOptions.scope = 'page';
+  if (negotiated) grantOptions.negotiated = true;
+  await recordGrant(domain, minutes, reason, Object.keys(grantOptions).length ? grantOptions : undefined);
 
   // Granting replaces whatever session held this key (a check-in extending
   // time, or a native port reusing the target's slot), so bank the old
@@ -2939,7 +2898,7 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
   const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
   // Written ONLY when there is one. Absence is the third state and it is the
   // entire migration story: every session already in storage, every site pass
-  // granted after this, and every simpleGrant carry no `scope` key and are
+  // granted after this, and every intentionGrant carry no `scope` key and are
   // read as site-wide by everything that looks at them — including the three
   // native readers of this value (IntentionAccessibilityService's
   // latestSessionExpiry, SessionOverlay.liveSession, iOS
@@ -2957,29 +2916,164 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
   return session;
 }
 
-// No-AI equivalent of the grant_access tool call: same limits and bookkeeping,
-// just without a coach conversation. Used by simple-mode gate/checkin UIs.
-async function simpleGrant({ tabId, domain, isApp }) {
+// One of the day's intended opens: a timed pass of the intention's length,
+// with no conversation and no credit. Same bookkeeping as a negotiated pass —
+// it goes through grantSession — so it counts toward the day the same way.
+async function intentionGrant({ tabId, domain, isApp }) {
   const sessionKey = sessionKeyFor(tabId, domain);
   if (!sessionKey) return { denied: 'no session target' };
 
-  const stats = await getStatsForDomain(domain);
-  const limits = await getLimitsForDomain(domain);
-  const grantsLimitReached = stats.grantsToday >= limits.maxGrants;
-  const minutesLimitReached = limits.maxMinutes > 0 && stats.minutesToday >= limits.maxMinutes;
-  if (grantsLimitReached || minutesLimitReached) {
-    return { denied: grantsLimitReached ? 'daily grant cap reached' : `absolute max of ${limits.maxMinutes} minutes reached` };
-  }
+  const intention = await getIntention(domain);
+  if (intention.opens === 0) return { denied: 'blocked', intention };
+  if (intention.opensLeft <= 0) return { denied: 'intention spent', intention };
 
-  const { passMinutes } = await getEffectiveMode(domain);
-  let minutes = Math.max(1, Math.round(passMinutes));
-  if (limits.maxMinutes > 0) {
-    minutes = Math.min(minutes, Math.max(0, limits.maxMinutes - stats.minutesToday));
-  }
-  if (minutes <= 0) return { denied: 'absolute max reached' };
-
-  const grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason: 'simple mode pass' });
+  const grantedSession = await grantSession({
+    sessionKey, tabId, domain, isApp, minutes: intention.minutesEach, reason: 'intention'
+  });
   return { grantedSession };
+}
+
+// ---------------------------------------------------------------------------
+// Deferred loosening
+// ---------------------------------------------------------------------------
+//
+// Loosening a rule is never refused — it is delayed. Asked for from settings,
+// it waits until the start of tomorrow and then applies itself; the coach is
+// the only way to have it today. The delay is the whole mechanism: it is long
+// enough that the version of the user who asked is not the one who benefits,
+// and short enough that a considered change costs nothing but patience.
+//
+// Stored as a small queue of { changeType, domain, newValue, requestedAt,
+// effectiveAt }, at most one per (changeType, target) — asking again replaces
+// the earlier request rather than stacking behind it. Applied through
+// applySettingChange, so a queued change and a coach-approved one land
+// through exactly the same code.
+
+// Changes that apply at once from settings. Rewording what a service is for
+// only changes what the coach reads, and the coach is paid for; leaving has
+// its own cool-off in leaveDelayMinutes and must never be slowed by a second.
+const IMMEDIATE_CHANGE_TYPES = ['edit_site_purpose', 'edit_site_legitimate', 'uninstall'];
+
+const DEFERRED_CHANGE_TYPES = [
+  'remove', 'remove_app', 'increase_limit', 'increase_app_limit',
+  'narrow_block_scope', 'narrow_app_block_scope', 'disable_all', 'decrease_leave_delay'
+];
+
+async function requestSettingChange({ changeType, domain, newValue }) {
+  if (IMMEDIATE_CHANGE_TYPES.includes(changeType)) {
+    return applySettingChange({ changeType, domain, newValue });
+  }
+  if (!DEFERRED_CHANGE_TYPES.includes(changeType)) return { error: 'Unknown change' };
+  return scheduleSettingChange({ changeType, domain, newValue });
+}
+
+async function scheduleSettingChange({ changeType, domain, newValue, now = Date.now() }) {
+  let effectiveAt = nextDayStart(now);
+  // Shortening the cool-off on leaving waits out the cool-off it replaces as
+  // well as the night. Otherwise a three-day wait could be turned into a
+  // one-night wait by asking to shorten it first.
+  if (changeType === 'decrease_leave_delay') {
+    const { leaveDelayMinutes } = await getStorage(['leaveDelayMinutes']);
+    effectiveAt = Math.max(effectiveAt, now + normalizeLeaveDelay(leaveDelayMinutes) * 60000);
+  }
+  const target = GLOBAL_CHANGE_TYPES.includes(changeType) ? null : (domain || null);
+  const entry = { changeType, domain: target, newValue: newValue === undefined ? null : newValue, requestedAt: now, effectiveAt };
+  let queue = [];
+  await mutateStorage('pendingChanges', (current) => {
+    const list = Array.isArray(current) ? current : [];
+    queue = list.filter(p => !(p && p.changeType === changeType && (p.domain || null) === target));
+    queue.push(entry);
+    return queue;
+  }, []);
+  return { scheduled: true, pending: entry, pendingChanges: queue };
+}
+
+async function cancelPendingChange({ changeType, domain }) {
+  const target = domain || null;
+  let queue = [];
+  await mutateStorage('pendingChanges', (current) => {
+    const list = Array.isArray(current) ? current : [];
+    queue = list.filter(p => !(p && p.changeType === changeType && (p.domain || null) === target));
+    return queue;
+  }, []);
+  return { ok: true, pendingChanges: queue };
+}
+
+// Applies every queued change whose time has come. Called on the paths that
+// open a new day's state — reconcileSessions at startup, the gate's intention
+// lookup, the settings page's config read — so nothing has to be awake at
+// midnight. The due entries are taken off the queue BEFORE they are applied:
+// two tabs arriving at once must not both apply a removal, and every change
+// type here is safe to have applied once and lost, never twice.
+async function applyDuePendingChanges(now = Date.now()) {
+  const { pendingChanges } = await getStorage(['pendingChanges']);
+  if (!Array.isArray(pendingChanges) || !pendingChanges.some(p => p && p.effectiveAt <= now)) return [];
+  let due = [];
+  await mutateStorage('pendingChanges', (current) => {
+    const list = Array.isArray(current) ? current : [];
+    due = list.filter(p => p && p.effectiveAt <= now);
+    return list.filter(p => p && p.effectiveAt > now);
+  }, []);
+  const applied = [];
+  for (const p of due) {
+    try {
+      const result = await applySettingChange({ changeType: p.changeType, domain: p.domain, newValue: p.newValue });
+      if (result) applied.push(p);
+    } catch (e) {
+      console.warn(INT_LOG, 'applyDuePendingChanges failed for', p.changeType, e);
+    }
+  }
+  if (applied.length) scheduleAutomaticSync();
+  return applied;
+}
+
+// A tightening saved for a target supersedes any raise still queued for it:
+// the most recent thing the user said about that target is the one that
+// stands, and a queued "5 opens" must not undo a later "actually, 2".
+async function dropSupersededRaises(partial) {
+  const stored = await getStorage(['domainLimits', 'appLimits', 'pendingChanges']);
+  if (!Array.isArray(stored.pendingChanges) || !stored.pendingChanges.length) return;
+  const changed = (key) => {
+    const next = partial[key];
+    if (!next) return new Set();
+    const before = stored[key] || {};
+    return new Set(Object.keys(next).filter(t => {
+      const a = resolveIntention(before[t]);
+      const b = resolveIntention(next[t]);
+      return a.opens !== b.opens || a.minutesEach !== b.minutesEach;
+    }));
+  };
+  const sites = changed('domainLimits');
+  const apps = changed('appLimits');
+  if (!sites.size && !apps.size) return;
+  await mutateStorage('pendingChanges', (current) => (Array.isArray(current) ? current : []).filter(p => !(
+    p && ((p.changeType === 'increase_limit' && sites.has(p.domain)) ||
+          (p.changeType === 'increase_app_limit' && apps.has(p.domain)))
+  )), []);
+}
+
+// A limits entry with a new intention written onto it, keeping everything
+// else the entry carries (its part rule, above all). `value` is an intention
+// object from the settings sheet; anything unreadable leaves that field as it
+// was rather than resetting it to a default.
+function withIntention(entry, value) {
+  const base = entry ? { ...entry } : { ...INTENTION_DEFAULTS };
+  const v = (value && typeof value === 'object') ? value : {};
+  const next = resolveIntention({
+    maxGrants: v.maxGrants !== undefined ? v.maxGrants : base.maxGrants,
+    passMinutes: v.passMinutes !== undefined ? v.passMinutes : base.passMinutes
+  });
+  base.maxGrants = next.opens;
+  base.passMinutes = next.minutesEach;
+  return base;
+}
+
+// "3 opens a day, 10 minutes each" — the sentence both the settings row and
+// the settings-gate coach use for an intention.
+function describeIntentionForHuman(value) {
+  const { opens, minutesEach } = resolveIntention(value && typeof value === 'object' ? value : null);
+  if (opens === 0) return 'blocked outright (no opens)';
+  return `${opens} ${opens === 1 ? 'open' : 'opens'} a day, ${minutesEach} minutes each`;
 }
 
 async function clearChatHistory(historyKey) {

@@ -1,8 +1,10 @@
 # Intention
 
-**Intention** is a browser extension and mobile app that puts an AI coach between you and the sites and apps that pull you away from what you actually want to do. Instead of a hard block or a weak timer, every visit is a short conversation: why are you here, is there something you're avoiding, what would actually serve you right now?
+**Intention** is a browser extension and mobile app that stands between you and the sites and apps that pull you away from what you actually want to do. For each one you set an **intention**: how many times a day you mean to open it, and for how long each time. Within that, opening it is one tap — no conversation, nothing to pay. Once today's opens are used, the only way to more time is to make your case to an AI coach: why are you here, what has to happen now, would walking away serve you better?
 
-The coach runs on **coaching credit**, a one-time top-up bought through the App Store or Google Play — nothing to configure, no keys to fetch, no recurring charge. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
+Loosening your own rules is never refused, only delayed: more opens, or removing a block, starts the next day — or now, if the coach agrees. Tightening is instant. A forgiving streak counts the days you keep every intention, with one slip a week absorbed.
+
+The coach runs on **coaching credit**, a one-time top-up bought through the App Store or Google Play — nothing to configure, no keys to fetch, no recurring charge, and only spent when you ask it for more than you intended. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
 
 ## Get Intention
 
@@ -76,15 +78,16 @@ For development or manual installation:
 
 ## First-run setup
 
-On first open, the options page walks you through a fixed number of steps — six in a browser, seven on Android, eight on iOS, where turning the Safari extension on and choosing apps in Screen Time each need a screen of their own. The count depends on the build and not on your blocklist: adding a seventh site no longer adds a seventh step.
+On first open, the options page asks one question per page. The bar at the top fills as you go and names the part of setup you're in ("Intentions · 2 of 4"), rather than counting every page.
 
-1. What Intention is and what it will do.
+1. What Intention is: pick what pulls you in, say how often you mean to open each, and past that the coach decides.
 2. *(iOS)* Turn the Safari extension on. Only you can do that — iOS gives an app no way to do it for you.
 3. *(mobile)* Which apps pull you in.
-4. Which sites.
-5. What each one is for. One screen, one card per service — a site and its app share a card — answered by tapping chips rather than writing paragraphs: what you genuinely need it for, and what it costs you. A line under each card says back what the coach will do with the answers as you tap them. There's free text underneath for anything more specific, and the whole step can be skipped; the coach can ask later.
-6. How blocking should work: the coach, or simple mode — a hard block, or a self-serve timed pass of a length you set.
-7. Turn the coach on by buying coaching credit. You can also finish without it; your sites and apps stay blocked, you just can't talk your way past them yet.
+4. Which websites pull you in.
+5. One page per app or site: how many times a day you want to open it (a big number with − and +), and for how long each time (5, 10, 15 or 30 minutes). The line underneath adds it up as a day, and "Use this for the other N" copies the answer onto the rest.
+6. Whether to tell the coach what each one is for. Skip, or say yes and get one page per service — a site and its app share one — answered by tapping chips: when opening it is fair enough, and (folded away) why it's on the list.
+7. What happens once an intention runs out: the coach, on coaching credit. Nothing to buy during setup.
+8. Your intentions read back, and your streak starts.
 
 After that, the options page only exposes the blocklist and access settings directly. Updating your context is done through the **Talk with your coach** button — the coach decides when the context has improved enough to save a new version.
 

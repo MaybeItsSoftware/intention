@@ -354,53 +354,41 @@ describe('when the background never answers', () => {
       return dom;
     };
 
-    // What the overlay was handed is the verdict. `matchedBlockConfig` is a
+    // What the overlay was handed is the verdict. `matchedIntention` is a
     // top-level `let`, which lives in the context's lexical scope rather than
     // on its global object, so it has to be read by evaluating it there — and
     // round-tripped, so the comparison is against plain host-realm values.
-    const config = (dom) =>
-      JSON.parse(vm.runInContext('JSON.stringify(matchedBlockConfig)', dom.context));
+    const intention = (dom) =>
+      JSON.parse(vm.runInContext('JSON.stringify(matchedIntention)', dom.context));
 
-    it('resolves the global settings when the site carries no override', async () => {
+    it('reads the intention stored on the site', async () => {
       const dom = await gateWith({
-        blockingMode: 'simple', simpleBehavior: 'hard', simplePassMinutes: 25
+        domainLimits: { 'instagram.com': { maxGrants: 2, passMinutes: 5 } }
       });
       expect(gated(dom)).toBe(true);
-      expect(config(dom)).toEqual({
-        mode: 'simple', behavior: 'hard', passMinutes: 25, looseUntilMinutes: null
-      });
-    });
-
-    it('lets a per-site override beat the global setting', async () => {
-      const dom = await gateWith({
-        blockingMode: 'coach',
-        domainLimits: { 'instagram.com': { mode: 'simple', passMinutes: 5 } }
-      });
-      expect(config(dom).mode).toBe('simple');
-      expect(config(dom).passMinutes).toBe(5);
+      expect(intention(dom)).toEqual({ opens: 2, minutesEach: 5 });
     });
 
     it('falls back to the built-in defaults when nothing is configured', async () => {
       const dom = await gateWith({});
-      expect(config(dom)).toEqual({
-        mode: 'coach', behavior: 'pass', passMinutes: 10, looseUntilMinutes: null
-      });
+      expect(intention(dom)).toEqual({ opens: 3, minutesEach: 10 });
     });
 
-    // The one that made the mirrors worth unifying: an unset lenient window
-    // must stay unset. Read as 0 it would mean "strict from the first minute".
-    it('reads an unset lenient window as no split, not as zero', async () => {
+    // Zero opens is a hard block, and must survive the round trip as zero
+    // rather than falling back to a default that would let them in.
+    it('keeps zero opens as zero', async () => {
       const dom = await gateWith({
-        domainLimits: { 'instagram.com': { mode: 'coach' } }
+        domainLimits: { 'instagram.com': { maxGrants: 0 } }
       });
-      expect(config(dom).looseUntilMinutes).toBe(null);
+      expect(intention(dom).opens).toBe(0);
     });
 
-    it('carries a lenient window that was set', async () => {
-      const dom = await gateWith({
-        domainLimits: { 'instagram.com': { looseUntilMinutes: '20' } }
-      });
-      expect(config(dom).looseUntilMinutes).toBe(20);
+    // No credit is not a reason to skip the gate any more: the day's opens
+    // are free, so the gate itself is what a locked account sees.
+    it('shows the intention gate, not an access interstitial, with no credit', async () => {
+      const dom = await gateWith({ domainLimits: { 'instagram.com': { maxGrants: 1 } } });
+      expect(gated(dom)).toBe(true);
+      expect(dom.created.some(el => /needs either coaching credit/.test(el.textContent || ''))).toBe(false);
     });
   });
 
@@ -955,10 +943,8 @@ describe('a site where only some parts are blocked', () => {
     vi.useFakeTimers();
     const dom = withPartRule({ href: REELS, entry: { scope: 'only', parts: ['instagram:reels'] } });
     await vi.advanceTimersByTimeAsync(10000);
-    const subtitle = dom.created.find(el => /check in before you go through/.test(el.textContent));
-    expect(subtitle && subtitle.textContent).toBe(
-      "Reels on instagram.com — let's check in before you go through"
-    );
+    const target = dom.created.find(el => el.textContent === 'Reels on instagram.com');
+    expect(target && target.textContent).toBe('Reels on instagram.com');
   });
 
   describe('the URL watcher', () => {
@@ -1199,7 +1185,7 @@ describe('the URL watcher in a backgrounded tab', () => {
 // the check-in was swallowed, and the session goes unbanked.
 describe('a check-in that arrives while the drift screen is up', () => {
   const checkedIn = (dom) =>
-    dom.created.some(el => /your time is up/.test(el.textContent || ''));
+    dom.created.some(el => /Time's up on/.test(el.textContent || ''));
 
   async function drifting() {
     vi.useFakeTimers();
@@ -1367,7 +1353,7 @@ describe('a check-in arriving on a page it has no business on', () => {
 // poll is the only thing left that can notice.
 describe('a pass that runs out while the page sits still', () => {
   const checkedIn = (dom) =>
-    dom.created.some(el => /your time is up/.test(el.textContent || ''));
+    dom.created.some(el => /Time's up on/.test(el.textContent || ''));
 
   // The two tests below run a pass past its end, and the badge ticks once a
   // second, so 13 minutes of fake time is ~800 real timer callbacks with a

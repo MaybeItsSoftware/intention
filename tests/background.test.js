@@ -10,7 +10,15 @@ import { describe, it, expect, vi } from 'vitest';
 import vm from 'node:vm';
 import { loadBackground, makeMockFetch, evaluateScripts, filesForContext } from './load.js';
 
-const CONFIGURED = { provider: 'anthropic', apiKey: 'test-key', model: 'claude-sonnet-5' };
+// Most tests here drive the coach, and the coach only grants past a spent
+// intention — so the sites these tests visit carry no free opens unless a test
+// says otherwise. The free path has its own tests (intentionGrant).
+const SPENT = { maxGrants: 0, passMinutes: 10 };
+const CONFIGURED = {
+  provider: 'anthropic', apiKey: 'test-key', model: 'claude-sonnet-5',
+  domainLimits: { 'instagram.com': SPENT, 'youtube.com': SPENT, 'x.com': SPENT, 'reddit.com': SPENT, 'twitter.com': SPENT },
+  appLimits: { 'com.instagram.android': SPENT, 'com.google.android.youtube': SPENT }
+};
 
 // Sender shapes: a content script in a browser tab (which always carries the
 // page URL), an extension page (options/coaching), and a native host with no
@@ -613,7 +621,7 @@ describe('handleChat access gating', () => {
       text: 'Ten minutes.',
       toolCalls: [{ id: 't1', name: 'grant_access', input: { minutes: 10, reason: 'reply to a DM' } }]
     });
-    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT }, fetch });
+    const { ctx } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT, domainLimits: { 'x.com': SPENT } }, fetch });
     const res = await ctx.handleChat({ tabId: 4, mode: 'gate', domain: 'x.com', userMessage: 'hi' });
     expect(res.grantedSession.intervalMinutes).toBe(10);
   });
@@ -1453,45 +1461,12 @@ describe('an AI-granted pass is recorded like any other', () => {
     expect(stats.grantsToday).toBe(1);
   });
 
-  it('refuses a fourth grant and says why, instead of granting forever', async () => {
-    const { ctx, chrome, fetch } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(5, 'one more look') });
-    for (let i = 0; i < 3; i++) {
-      await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        NATIVE
-      );
-      // Retire each pass so the next call is a fresh grant, not an extension.
-      delete chrome.storage._store.activeSessions['target:instagram.com'];
-    }
-    expect((await ctx.getStatsForDomain('instagram.com')).grantsToday).toBe(3);
-
-    const fourth = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-      NATIVE
-    );
-    expect(fourth.grantedSession ?? null).toBe(null);
-    expect(chrome.storage._store.activeSessions['target:instagram.com']).toBeUndefined();
-    // The fact lives in systemNote for the UI to render outside the chat; the
-    // rejection also fires the honesty turn, so the reply is two texts joined
-    // and the fourth conversation cost two calls (3 grants + 2 = 5 total).
-    // The refusal is now unconditional: the quick check used to leave the day
-    // half-open here and name itself as the remaining exception.
-    expect(fourth.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
-    expect(fetch.calls.length).toBe(5);
-    expect(fourth.assistantText).toBe('Okay.\n\nOkay.');
-  });
-
-  // An UNSPENT quick-check tally is the exact shape that used to leave the day
-  // half-open once the grants cap was reached. The tally survives (tracking.js
-  // keeps it for history), but it is no longer budget: the day is closed.
-  it('an unspent quickChecks tally no longer reopens the closed day', async () => {
-    const { ctx } = loadBackground({
-      seed: {
-        ...CONFIGURED,
-        dailyStats: {
-          [today()]: { 'instagram.com': { minutes: 15, grants: 3, quickChecks: 0, sessions: [] } }
-        }
-      },
+  // The coach is the way past a spent intention, never a way to pay for time
+  // that was already free. A grant it attempts while opens remain is refused,
+  // and both the user and the model are told to use an open instead.
+  it('refuses a coach grant while free opens remain, and says why', async () => {
+    const { ctx, chrome, fetch } = loadBackground({
+      seed: { ...CONFIGURED, domainLimits: { 'instagram.com': { maxGrants: 2, passMinutes: 10 } } },
       fetch: grantingFetch(5, 'one more look')
     });
     const resp = await ctx.handleMessage(
@@ -1499,29 +1474,42 @@ describe('an AI-granted pass is recorded like any other', () => {
       NATIVE
     );
     expect(resp.grantedSession ?? null).toBe(null);
-    expect(resp.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
+    expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
+    expect(resp.systemNote).toBe('You still have 2 free opens today — use one from the gate instead.');
+    // Rejection + honesty turn.
+    expect(fetch.calls.length).toBe(2);
   });
 
-  it('honours a per-domain cap lower than the default', async () => {
-    const { ctx, chrome, fetch } = loadBackground({
-      seed: { ...CONFIGURED, domainLimits: { 'instagram.com': { maxGrants: 1 } } },
-      fetch: grantingFetch(5)
-    });
-    await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-      NATIVE
-    );
-    delete chrome.storage._store.activeSessions['target:instagram.com'];
+  // Past the intention there is no second ceiling: credit is the friction.
+  // Every pass is short, and every one is recorded as negotiated.
+  it('keeps granting past the intention, and marks each pass negotiated', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: grantingFetch(5, 'one more look') });
+    for (let i = 0; i < 5; i++) {
+      const resp = await ctx.handleMessage(
+        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+        NATIVE
+      );
+      expect(resp.grantedSession.intervalMinutes).toBe(5);
+      delete chrome.storage._store.activeSessions['target:instagram.com'];
+    }
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.grantsToday).toBe(5);
+    expect(stats.negotiatedToday).toBe(5);
+    const sessions = chrome.storage._store.dailyStats[today()]['instagram.com'].sessions;
+    expect(sessions.every(sess => sess.negotiated === true)).toBe(true);
+  });
 
-    const second = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-      NATIVE
-    );
-    expect(second.grantedSession ?? null).toBe(null);
-    expect(second.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
-    // Rejection + honesty turn: one call for the first grant, two for this.
-    expect(fetch.calls.length).toBe(3);
-    expect(second.assistantText).toBe('Okay.\n\nOkay.');
+  // Negotiated passes do not use up the day's opens: the gate counts opens
+  // from the free passes alone.
+  it('does not spend the intention with negotiated passes', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        domainLimits: { 'instagram.com': { maxGrants: 1, passMinutes: 10 } },
+        dailyStats: { [today()]: { 'instagram.com': { minutes: 30, grants: 3, negotiated: 2, sessions: [] } } }
+      }
+    });
+    expect(await ctx.getIntention('instagram.com')).toMatchObject({ opens: 1, opensUsed: 1, opensLeft: 0 });
   });
 
   it('feeds the stated reason back into the prompt context', async () => {
@@ -1534,7 +1522,7 @@ describe('an AI-granted pass is recorded like any other', () => {
     expect(stats.reasonsToday).toContain('reply to a DM');
   });
 
-  it('leaves the same state behind as the no-AI simple path', async () => {
+  it('leaves the same session shape behind as a free open', async () => {
     const seed = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
     const viaCoach = loadBackground({ seed, fetch: grantingFetch(10, 'check DMs') });
     await viaCoach.ctx.handleMessage(
@@ -1542,9 +1530,11 @@ describe('an AI-granted pass is recorded like any other', () => {
       tab(7)
     );
 
-    const viaSimple = loadBackground({ seed: { ...seed, blockingMode: 'simple' } });
+    const viaSimple = loadBackground({
+      seed: { ...seed, domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } }
+    });
     await viaSimple.ctx.handleMessage(
-      { action: 'simpleGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com' },
       tab(7)
     );
 
@@ -1563,8 +1553,6 @@ describe('an AI-granted pass is recorded like any other', () => {
 // tests that hold the lane shut: the flag is no longer in the tool schema, and
 // even a model that invents it gets a plain grant, counted like any other.
 describe('the retired quick-check lane is inert', () => {
-  const dayStats = (site) => ({ [today()]: { 'instagram.com': site } });
-
   it('an invented quick_check flag buys nothing: it is a normal grant', async () => {
     const { ctx, chrome, fetch } = loadBackground({ seed: CONFIGURED, fetch: quickCheckFetch(3) });
     const resp = await ctx.handleMessage(
@@ -1574,88 +1562,10 @@ describe('the retired quick-check lane is inert', () => {
     expect(resp.grantedSession.intervalMinutes).toBe(3);
     expect(fetch.calls.length).toBe(1);
     const stats = await ctx.getStatsForDomain('instagram.com');
-    // It counts against the cap, and the separate tally stays untouched.
+    // It counts as a grant like any other, and the separate tally stays untouched.
     expect(stats.grantsToday).toBe(1);
     expect(stats.quickChecksToday).toBe(0);
     expect(chrome.storage._store.activeSessions['target:instagram.com'].quickCheck).toBeUndefined();
-  });
-
-  // THE regression this whole removal turns on. Before, this exact call was
-  // granted: the lane ran ahead of the cap check on its own budget.
-  it('cannot bypass the grants cap, which is what the lane used to do', async () => {
-    const { ctx, chrome } = loadBackground({
-      seed: { ...CONFIGURED, dailyStats: dayStats({ minutes: 15, grants: 3, sessions: [] }) },
-      fetch: quickCheckFetch(3)
-    });
-    const resp = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
-      NATIVE
-    );
-    expect(resp.grantedSession ?? null).toBe(null);
-    expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
-    expect(resp.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
-    expect((await ctx.getStatsForDomain('instagram.com')).quickChecksToday).toBe(0);
-  });
-
-  // Same again with the lane's own budget explicitly unspent AND a generous
-  // stored entry: neither is read any more, so neither reopens the cap.
-  it('a leftover stored quickCheck entry does not reopen the cap either', async () => {
-    const { ctx } = loadBackground({
-      seed: {
-        ...CONFIGURED,
-        domainLimits: { 'instagram.com': { maxGrants: 3, quickCheck: { minutes: 5, usesPerDay: 2 } } },
-        dailyStats: dayStats({ minutes: 15, grants: 3, quickChecks: 0, sessions: [] })
-      },
-      fetch: quickCheckFetch(5)
-    });
-    const resp = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
-      NATIVE
-    );
-    expect(resp.grantedSession ?? null).toBe(null);
-    expect(resp.systemNote).toBe('Daily grant cap reached — no more time can be granted today.');
-  });
-
-  // The lane never got its own clamp back either: a flagged ask is clamped by
-  // the ordinary rules (60-minute ceiling, then the daily minutes cap), and
-  // the honesty turn talks about a pass, not a quick check.
-  it('is clamped by the ordinary minutes cap, with ordinary wording', async () => {
-    const { ctx, fetch } = loadBackground({
-      seed: {
-        ...CONFIGURED,
-        domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
-        dailyStats: dayStats({ minutes: 3, grants: 1, sessions: [] })
-      },
-      fetch: quickCheckFetch(3)
-    });
-    const resp = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
-      NATIVE
-    );
-    expect(resp.grantedSession.intervalMinutes).toBe(2);
-    expect(resp.systemNote).toBe('Only 2 minutes were available under your daily cap — your pass is 2 minutes.');
-    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
-    expect(lastMsg.content).not.toContain('quick check');
-  });
-
-  it('the absolute minutes cap still refuses outright', async () => {
-    const { ctx, chrome, fetch } = loadBackground({
-      seed: {
-        ...CONFIGURED,
-        domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
-        dailyStats: dayStats({ minutes: 5, grants: 1, sessions: [] })
-      },
-      fetch: quickCheckFetch(3)
-    });
-    const resp = await ctx.handleMessage(
-      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'check one message' },
-      NATIVE
-    );
-    expect(resp.grantedSession ?? null).toBe(null);
-    expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
-    expect(resp.systemNote).toBe('Absolute max of 5 minutes reached — no more time can be granted today.');
-    const lastMsg = JSON.parse(fetch.calls.at(-1).init.body).messages.at(-1);
-    expect(lastMsg.content).not.toContain('quick check');
   });
 
   it('a flagged check-in grant is a plain extension, as it always was', async () => {
@@ -1876,98 +1786,204 @@ describe('sessions written under the old key format', () => {
   });
 });
 
-// applySettingChange and simpleGrant used to be directly callable by any
-// content script: a hostile page could clear the whole blocklist, or mint a
-// pass on a coach-mode domain and bypass the LLM gate entirely.
-describe('privileged message actions are gated on sender and mode', () => {
+// applySettingChange and the free-pass action used to be directly callable by
+// any content script: a hostile page could clear the whole blocklist, or mint a
+// pass for another site. Opens are spent only by the site's own page (or our
+// pages and native hosts), and settings change only from our own pages.
+describe('privileged message actions are gated on sender and intention', () => {
   const BLOCKED = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
+  const WITH_OPENS = { ...BLOCKED, domainLimits: { 'instagram.com': { maxGrants: 2, passMinutes: 5 } } };
 
-  it('refuses simpleGrant on a coach-mode domain, whoever asks', async () => {
+  it('refuses intentionGrant once the intention is spent, whoever asks', async () => {
     const { ctx, chrome } = loadBackground({ seed: BLOCKED });
     for (const sender of [tab(7), EXT_PAGE, NATIVE]) {
       const resp = await ctx.handleMessage(
-        { action: 'simpleGrant', domain: 'instagram.com' }, sender
+        { action: 'intentionGrant', domain: 'instagram.com', tabId: 7 }, sender
       );
       expect(resp.grantedSession).toBeUndefined();
       expect(resp.denied).toBeTruthy();
+      expect(resp.intention).toMatchObject({ opens: 0 });
     }
     expect(chrome.storage._store.activeSessions ?? {}).toEqual({});
   });
 
   it('refuses a content script asking for a different site than its own', async () => {
-    const { ctx } = loadBackground({
-      seed: { ...BLOCKED, blockingMode: 'simple' }
-    });
+    const { ctx } = loadBackground({ seed: WITH_OPENS });
     const resp = await ctx.handleMessage(
-      { action: 'simpleGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com' },
       tab(7, 'evil.com')
     );
     expect(resp.grantedSession).toBeUndefined();
     expect(resp.denied).toBeTruthy();
   });
 
-  it('still grants from the blocked page itself in simple mode', async () => {
-    const { ctx } = loadBackground({ seed: { ...BLOCKED, blockingMode: 'simple' } });
+  it('grants one open of the intended length from the blocked page itself', async () => {
+    const { ctx } = loadBackground({ seed: WITH_OPENS });
     const resp = await ctx.handleMessage(
-      { action: 'simpleGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com' },
       tab(7, 'www.instagram.com')
     );
-    expect(resp.grantedSession).toBeDefined();
+    expect(resp.grantedSession.intervalMinutes).toBe(5);
+    expect(await ctx.getIntention('instagram.com')).toMatchObject({ opensUsed: 1, opensLeft: 1 });
   });
 
-  it('still grants from the coaching page and native hosts in simple mode', async () => {
+  it('grants from the coaching page and native hosts too', async () => {
     for (const sender of [EXT_PAGE, NATIVE]) {
-      const { ctx } = loadBackground({ seed: { ...BLOCKED, blockingMode: 'simple' } });
+      const { ctx } = loadBackground({ seed: WITH_OPENS });
       const resp = await ctx.handleMessage(
-        { action: 'simpleGrant', domain: 'instagram.com', tabId: 7 }, sender
+        { action: 'intentionGrant', domain: 'instagram.com', tabId: 7 }, sender
       );
       expect(resp.grantedSession).toBeDefined();
     }
   });
 
-  it('honours a per-domain simple override without opening the rest', async () => {
-    const { ctx } = loadBackground({
-      seed: { ...BLOCKED, domainLimits: { 'instagram.com': { mode: 'simple' } } }
-    });
-    const granted = await ctx.handleMessage(
-      { action: 'simpleGrant', domain: 'instagram.com' }, tab(7)
-    );
-    expect(granted.grantedSession).toBeDefined();
+  it('stops at the intention: the third open of two is refused', async () => {
+    const { ctx, chrome } = loadBackground({ seed: WITH_OPENS });
+    for (let i = 0; i < 2; i++) {
+      const ok = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com' }, NATIVE);
+      expect(ok.grantedSession).toBeDefined();
+      delete chrome.storage._store.activeSessions['target:instagram.com'];
+    }
+    const third = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com' }, NATIVE);
+    expect(third.grantedSession).toBeUndefined();
+    expect(third.denied).toBe('intention spent');
+    // A free open is never recorded as negotiated.
+    expect((await ctx.getStatsForDomain('instagram.com')).negotiatedToday).toBe(0);
   });
 
   it('refuses applySettingChange from any content script', async () => {
-    const { ctx, chrome } = loadBackground({
-      seed: { ...BLOCKED, blockingMode: 'simple' }
-    });
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
     const resp = await ctx.handleMessage(
       { action: 'applySettingChange', changeType: 'disable_all' },
       tab(7)
     );
     expect(resp?.blockedDomains).toBeUndefined();
+    expect(resp?.scheduled).toBeUndefined();
     expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
+    expect(chrome.storage._store.pendingChanges).toBeUndefined();
   });
+});
 
-  it('refuses applySettingChange without simple mode even from our own pages', async () => {
+// A loosening asked for from Settings is never refused and never applied on
+// the spot. It waits until tomorrow — the coach is the only way to have it now.
+describe('loosening from settings waits until tomorrow', () => {
+  const BLOCKED = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
+
+  it('queues a removal instead of applying it', async () => {
     const { ctx, chrome } = loadBackground({ seed: BLOCKED });
     const resp = await ctx.handleMessage(
       { action: 'applySettingChange', changeType: 'remove', domain: 'instagram.com' },
       EXT_PAGE
     );
-    expect(resp?.blockedDomains).toBeUndefined();
+    expect(resp.scheduled).toBe(true);
     expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
+    const [pending] = chrome.storage._store.pendingChanges;
+    expect(pending).toMatchObject({ changeType: 'remove', domain: 'instagram.com' });
+    expect(pending.effectiveAt).toBe(ctx.nextDayStart(pending.requestedAt));
   });
 
-  it('applies a simple-mode change from the options page', async () => {
+  it('applies a queued change once its day has come', async () => {
     const { ctx, chrome } = loadBackground({
-      seed: { ...BLOCKED, blockingMode: 'simple' }
+      seed: {
+        ...BLOCKED,
+        pendingChanges: [{ changeType: 'remove', domain: 'instagram.com', newValue: null, requestedAt: 1, effectiveAt: Date.now() - 1000 }]
+      }
     });
-    const resp = await ctx.handleMessage(
-      { action: 'applySettingChange', changeType: 'remove', domain: 'instagram.com' },
+    await ctx.handleMessage({ action: 'reconcileSessions' }, NATIVE);
+    expect(chrome.storage._store.blockedDomains).toEqual([]);
+    expect(chrome.storage._store.pendingChanges).toEqual([]);
+  });
+
+  it('leaves a change that is not yet due exactly where it is', async () => {
+    const pending = { changeType: 'remove', domain: 'instagram.com', newValue: null, requestedAt: 1, effectiveAt: Date.now() + 3600000 };
+    const { ctx, chrome } = loadBackground({ seed: { ...BLOCKED, pendingChanges: [pending] } });
+    await ctx.getIntention('instagram.com');
+    expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
+    expect(chrome.storage._store.pendingChanges).toEqual([pending]);
+  });
+
+  it('applies a raised intention on its day, keeping the part rule', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...BLOCKED,
+        domainLimits: { 'instagram.com': { maxGrants: 1, passMinutes: 5, scope: 'only', parts: ['instagram:reels'] } },
+        pendingChanges: [{ changeType: 'increase_limit', domain: 'instagram.com', newValue: { maxGrants: 3, passMinutes: 15 }, requestedAt: 1, effectiveAt: Date.now() - 1 }]
+      }
+    });
+    expect(await ctx.getIntention('instagram.com')).toMatchObject({ opens: 3, minutesEach: 15 });
+    expect(chrome.storage._store.domainLimits['instagram.com']).toEqual({
+      maxGrants: 3, passMinutes: 15, scope: 'only', parts: ['instagram:reels']
+    });
+  });
+
+  it('asking again replaces the earlier request rather than stacking', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    for (const opens of [4, 6]) {
+      await ctx.handleMessage(
+        { action: 'applySettingChange', changeType: 'increase_limit', domain: 'instagram.com', newValue: { maxGrants: opens, passMinutes: 10 } },
+        EXT_PAGE
+      );
+    }
+    expect(chrome.storage._store.pendingChanges).toHaveLength(1);
+    expect(chrome.storage._store.pendingChanges[0].newValue.maxGrants).toBe(6);
+  });
+
+  it('cancelling a queued change is free and immediate', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    await ctx.handleMessage({ action: 'applySettingChange', changeType: 'remove', domain: 'instagram.com' }, EXT_PAGE);
+    await ctx.handleMessage({ action: 'cancelPendingChange', changeType: 'remove', domain: 'instagram.com' }, EXT_PAGE);
+    expect(chrome.storage._store.pendingChanges).toEqual([]);
+  });
+
+  it('a later tightening supersedes a queued raise for the same target', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } }
+    });
+    await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'increase_limit', domain: 'instagram.com', newValue: { maxGrants: 5, passMinutes: 10 } },
       EXT_PAGE
     );
-    expect(resp.blockedDomains).toEqual([]);
-    expect(chrome.storage._store.blockedDomains).toEqual([]);
+    await ctx.saveSettings({ domainLimits: { 'instagram.com': { maxGrants: 2, passMinutes: 10 } } });
+    expect(chrome.storage._store.pendingChanges).toEqual([]);
+    expect(chrome.storage._store.domainLimits['instagram.com'].maxGrants).toBe(2);
   });
+
+  // The direction guard behind the UI: a whole-map write cannot raise an
+  // intention, field by field, while a tightening in the same write stands.
+  it('saveSettings holds a raised intention at its stored value', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } }
+    });
+    await ctx.saveSettings({ domainLimits: { 'instagram.com': { maxGrants: 9, passMinutes: 5 } } });
+    expect(chrome.storage._store.domainLimits['instagram.com']).toMatchObject({ maxGrants: 3, passMinutes: 5 });
+  });
+
+  // Shortening the cool-off waits out the cool-off it replaces, not just the
+  // night — otherwise asking to shorten a three-day wait would be a way around it.
+  it('shortening the leave cool-off waits for the current cool-off too', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { ...BLOCKED, leaveDelayMinutes: 4320 } });
+    const before = Date.now();
+    await ctx.handleMessage({ action: 'applySettingChange', changeType: 'decrease_leave_delay', newValue: 60 }, EXT_PAGE);
+    const [pending] = chrome.storage._store.pendingChanges;
+    expect(pending.effectiveAt).toBeGreaterThanOrEqual(before + 4320 * 60000);
+    expect(chrome.storage._store.leaveDelayMinutes).toBe(4320);
+  });
+
+  it('rewording what a service is for applies at once', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, serviceReasons: { 'instagram.com': { purpose: 'old', updatedAt: 1 } } }
+    });
+    await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'edit_site_purpose', domain: 'instagram.com', newValue: 'new' },
+      EXT_PAGE
+    );
+    expect(chrome.storage._store.serviceReasons['instagram.com'].purpose).toBe('new');
+    expect(chrome.storage._store.pendingChanges).toBeUndefined();
+  });
+});
+
+describe('privileged message actions: chat history', () => {
+  const BLOCKED = { ...CONFIGURED, blockedDomains: ['instagram.com'] };
 
   it('keeps clearChatHistory from wiping another session by guessed key', async () => {
     const { ctx, chrome } = loadBackground({ seed: BLOCKED });
@@ -2250,10 +2266,10 @@ describe('the coach opens the conversation', () => {
 // whatever it asked for. A single extra turn tells the model what actually
 // happened so it can say so itself — and never more than one turn.
 describe('the honesty turn after a clamped or rejected grant', () => {
-  // 3 of a 5-minute daily cap already used, so only 2 minutes remain.
+  // The intention is spent (CONFIGURED), so the coach can grant — and any pass
+  // it grants past the intention is capped at 10 minutes.
   const clampSeed = () => ({
     ...CONFIGURED,
-    domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 5 } },
     dailyStats: {
       [today()]: {
         'instagram.com': { minutes: 3, grants: 1, sessions: [{ reason: 'earlier', grantedMinutes: 3, grantedAt: Date.now() }] }
@@ -2262,15 +2278,15 @@ describe('the honesty turn after a clamped or rejected grant', () => {
   });
 
   it('grants the real minutes and lets the coach restate them', async () => {
-    const fetch = grantingFetch(10, 'check DMs');
+    const fetch = grantingFetch(30, 'check DMs');
     const { ctx, chrome } = loadBackground({ seed: clampSeed(), fetch });
     const res = await ctx.handleMessage(
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
       tab(1)
     );
 
-    expect(res.grantedSession.intervalMinutes).toBe(2);
-    expect(res.systemNote).toBe('Only 2 minutes were available under your daily cap — your pass is 2 minutes.');
+    expect(res.grantedSession.intervalMinutes).toBe(10);
+    expect(res.systemNote).toBe('Extra time comes in passes of up to 10 minutes — your pass is 10 minutes.');
     expect(fetch.calls.length).toBe(2);
 
     // The correction turn carries no tools (an empty array is omitted from
@@ -2280,8 +2296,9 @@ describe('the honesty turn after a clamped or rejected grant', () => {
     const lastMsg = secondBody.messages.at(-1);
     expect(lastMsg.role).toBe('user');
     expect(lastMsg.content).toMatch(/^\(Intention:/);
-    expect(lastMsg.content).toContain('asked for 10 minutes');
-    expect(lastMsg.content).toContain('only 2 were available');
+    expect(lastMsg.content).toContain('asked for 30 minutes');
+    expect(lastMsg.content).toContain('only 10 were available');
+    expect(lastMsg.content).toContain("beyond today's intention");
 
     // Both texts reach the user, joined.
     expect(res.assistantText).toBe('Okay.\n\nOkay.');
@@ -2292,133 +2309,37 @@ describe('the honesty turn after a clamped or rejected grant', () => {
     expect(history[2].content).toMatch(/^\(Intention:/);
   });
 
-  it('names the 60-minute ceiling, not a daily cap the user never set', async () => {
-    // No per-domain limits at all: the only thing clamping a 90-minute ask
-    // is the hard per-pass ceiling, and the correction must say so.
-    const fetch = grantingFetch(90, 'watch a lecture');
-    const { ctx } = loadBackground({ seed: CONFIGURED, fetch });
+  it('leaves a short ask alone — the clamp is a ceiling, not a target', async () => {
+    const fetch = grantingFetch(5, 'one reply');
+    const { ctx } = loadBackground({ seed: clampSeed(), fetch });
     const res = await ctx.handleMessage(
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
       tab(1)
     );
-
-    expect(res.grantedSession.intervalMinutes).toBe(60);
-    expect(res.systemNote).toBe('Passes top out at 60 minutes — your pass is 60 minutes.');
-    expect(res.systemNote).not.toMatch(/daily cap/);
-    const secondBody = JSON.parse(fetch.calls[1].init.body);
-    expect(secondBody.messages.at(-1).content).toContain('60-minute ceiling');
-    expect(secondBody.messages.at(-1).content).not.toContain('daily');
+    expect(res.grantedSession.intervalMinutes).toBe(5);
+    expect(res.systemNote).toBeFalsy();
+    expect(fetch.calls.length).toBe(1); // nothing to correct, no honesty turn
   });
 
-  // The mechanical half of the loose -> strict split. The prompt tells the
-  // coach to hold a higher bar past the split; this is the part that holds it
-  // whether the coach listened or not — and, because it goes through the same
-  // clampCause channel as the 60-minute ceiling, the coach has to explain the
-  // shorter pass in its own voice rather than quietly hand one over.
-  describe('a grant in the strict phase', () => {
-    // Split at 15 minutes, 20 already spent today, no daily minutes cap in the
-    // way — so the strict ceiling is the only thing that can bind.
-    const strictSeed = () => ({
-      ...CONFIGURED,
-      domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: -1, looseUntilMinutes: 15 } },
-      dailyStats: {
-        [today()]: {
-          'instagram.com': { minutes: 20, grants: 1, sessions: [{ reason: 'earlier', grantedMinutes: 20, grantedAt: Date.now() }] }
-        }
-      }
+  // How much time is already spent today changes nothing about the length of
+  // a negotiated pass: there is no daily ceiling past the intention to clamp to.
+  it('has no daily ceiling to clamp to past the intention', async () => {
+    const fetch = grantingFetch(10, 'find one thing');
+    const { ctx } = loadBackground({
+      seed: { ...CONFIGURED, dailyStats: { [today()]: { 'instagram.com': { minutes: 300, grants: 9, sessions: [] } } } },
+      fetch
     });
-
-    it('comes back clamped, and the coach is told why', async () => {
-      const fetch = grantingFetch(30, 'find one thing');
-      const { ctx } = loadBackground({ seed: strictSeed(), fetch });
-      const res = await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        tab(1)
-      );
-
-      expect(res.grantedSession.intervalMinutes).toBe(10);
-      expect(res.systemNote).toContain('lenient window here is spent');
-      expect(res.systemNote).toContain('your pass is 10 minutes');
-      // Not the 60-minute ceiling's wording: a 30-minute ask never touched it.
-      expect(res.systemNote).not.toContain('top out at 60');
-
-      const correction = JSON.parse(fetch.calls[1].init.body).messages.at(-1).content;
-      expect(correction).toContain('asked for 30 minutes');
-      expect(correction).toContain('only 10 were available');
-      expect(correction).toContain('strict-phase cap');
-    });
-
-    it('leaves a short ask alone — the clamp is a ceiling, not a target', async () => {
-      const fetch = grantingFetch(5, 'one reply');
-      const { ctx } = loadBackground({ seed: strictSeed(), fetch });
-      const res = await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        tab(1)
-      );
-      expect(res.grantedSession.intervalMinutes).toBe(5);
-      expect(res.systemNote).toBeFalsy();
-      expect(fetch.calls.length).toBe(1); // nothing to correct, no honesty turn
-    });
-
-    it('does not apply below the split', async () => {
-      const fetch = grantingFetch(30, 'find one thing');
-      const { ctx } = loadBackground({
-        seed: {
-          ...strictSeed(),
-          dailyStats: { [today()]: { 'instagram.com': { minutes: 4, grants: 1, sessions: [] } } }
-        },
-        fetch
-      });
-      const res = await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        tab(1)
-      );
-      expect(res.grantedSession.intervalMinutes).toBe(30);
-      expect(res.systemNote).toBeFalsy();
-    });
-
-    it('does not apply at all to a site with no split set', async () => {
-      const fetch = grantingFetch(30, 'find one thing');
-      const { ctx } = loadBackground({
-        seed: {
-          ...CONFIGURED,
-          domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: -1 } },
-          dailyStats: { [today()]: { 'instagram.com': { minutes: 200, grants: 1, sessions: [] } } }
-        },
-        fetch
-      });
-      const res = await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        tab(1)
-      );
-      expect(res.grantedSession.intervalMinutes).toBe(30);
-      expect(res.systemNote).toBeFalsy();
-    });
-
-    // The daily cap is a hard stop on the day; the strict ceiling only
-    // shortens one pass. When both bind, the day has to win.
-    it('loses to the daily minutes cap when both bind', async () => {
-      const fetch = grantingFetch(30, 'find one thing');
-      const { ctx } = loadBackground({
-        seed: {
-          ...CONFIGURED,
-          domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 24, looseUntilMinutes: 15 } },
-          dailyStats: { [today()]: { 'instagram.com': { minutes: 20, grants: 1, sessions: [] } } }
-        },
-        fetch
-      });
-      const res = await ctx.handleMessage(
-        { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
-        tab(1)
-      );
-      expect(res.grantedSession.intervalMinutes).toBe(4);
-      expect(res.systemNote).toBe('Only 4 minutes were available under your daily cap — your pass is 4 minutes.');
-    });
+    const res = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
+      tab(1)
+    );
+    expect(res.grantedSession.intervalMinutes).toBe(10);
+    expect(res.systemNote).toBeFalsy();
   });
 
   it('never loops: tool calls on the correction turn are ignored', async () => {
     // Static mock: the correction turn ALSO answers with a grant_access call.
-    const fetch = grantingFetch(10, 'check DMs');
+    const fetch = grantingFetch(30, 'check DMs');
     const { ctx, chrome } = loadBackground({ seed: clampSeed(), fetch });
     await ctx.handleMessage(
       { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' },
@@ -2436,7 +2357,7 @@ describe('the honesty turn after a clamped or rejected grant', () => {
         return {
           content: [
             { type: 'text', text: 'Okay.' },
-            { type: 'tool_use', id: 't1', name: 'grant_access', input: { minutes: 10, reason: 'check DMs' } }
+            { type: 'tool_use', id: 't1', name: 'grant_access', input: { minutes: 30, reason: 'check DMs' } }
           ]
         };
       }
@@ -2450,7 +2371,7 @@ describe('the honesty turn after a clamped or rejected grant', () => {
 
     // The grant already landed; a failed follow-up must not turn it into an error.
     expect(res.error).toBeUndefined();
-    expect(res.grantedSession.intervalMinutes).toBe(2);
+    expect(res.grantedSession.intervalMinutes).toBe(10);
     expect(res.systemNote).toBeTruthy();
     expect(res.assistantText).toBe('Okay.');
     // The synthetic user turn was popped, so the transcript still alternates.
@@ -2828,48 +2749,51 @@ describe('the gate backstop', () => {
   });
 });
 
-// The two loosenings the coach gate learned alongside removing a site and
-// raising its cap. Both are reached only through approve_setting_change (or,
-// on a simple-mode row, straight through the message API) — the TIGHTENING
-// half of each never comes here at all, because the settings page saves a
-// shortened window and a narrowed answer on its own, free.
-describe('applySettingChange: the lenient window', () => {
+// Raising an intention, once the coach approves it (or its day comes round).
+describe('applySettingChange: raising an intention', () => {
   const SEED = () => ({
     ...CONFIGURED,
     blockedDomains: ['instagram.com'],
     blockedApps: ['com.instagram.android'],
-    domainLimits: { 'instagram.com': { maxGrants: 3, maxMinutes: 45, looseUntilMinutes: 10 } },
-    appLimits: { 'com.instagram.android': { maxGrants: 3, maxMinutes: 45 } }
+    domainLimits: { 'instagram.com': { maxGrants: 1, passMinutes: 5, scope: 'only', parts: ['instagram:reels'] } },
+    appLimits: { 'com.instagram.android': { maxGrants: 1, passMinutes: 5 } }
   });
 
-  it('writes the longer window on a site', async () => {
+  it('writes the new intention and keeps the rest of the entry', async () => {
     const { ctx, chrome } = loadBackground({ seed: SEED() });
     const res = await ctx.applySettingChange({
-      changeType: 'increase_loose_window', domain: 'instagram.com', newValue: 25
+      changeType: 'increase_limit', domain: 'instagram.com', newValue: { maxGrants: 4, passMinutes: 15 }
     });
-    expect(res.looseUntilMinutes).toBe(25);
-    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(25);
-    // Nothing else on the entry moves.
-    expect(chrome.storage._store.domainLimits['instagram.com'].maxMinutes).toBe(45);
+    expect(res.intention).toEqual({ opens: 4, minutesEach: 15 });
+    expect(chrome.storage._store.domainLimits['instagram.com']).toEqual({
+      maxGrants: 4, passMinutes: 15, scope: 'only', parts: ['instagram:reels']
+    });
   });
 
   it('writes the app variant into appLimits, not domainLimits', async () => {
     const { ctx, chrome } = loadBackground({ seed: SEED() });
     await ctx.applySettingChange({
-      changeType: 'increase_app_loose_window', domain: 'com.instagram.android', newValue: 20
+      changeType: 'increase_app_limit', domain: 'com.instagram.android', newValue: { maxGrants: 2, passMinutes: 5 }
     });
-    expect(chrome.storage._store.appLimits['com.instagram.android'].looseUntilMinutes).toBe(20);
-    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(10);
+    expect(chrome.storage._store.appLimits['com.instagram.android'].maxGrants).toBe(2);
+    expect(chrome.storage._store.domainLimits['instagram.com'].maxGrants).toBe(1);
   });
 
-  // An unreadable value must not UNSET the split — that would be a bigger
-  // loosening than the one the coach approved.
-  it('floors an unreadable value at zero rather than clearing the split', async () => {
+  // An unreadable field must leave that number as it was, never reset it to a
+  // default that might be looser than what the coach approved.
+  it('leaves an unreadable field as it was', async () => {
     const { ctx, chrome } = loadBackground({ seed: SEED() });
     await ctx.applySettingChange({
-      changeType: 'increase_loose_window', domain: 'instagram.com', newValue: 'lots'
+      changeType: 'increase_limit', domain: 'instagram.com', newValue: { maxGrants: 2 }
     });
-    expect(chrome.storage._store.domainLimits['instagram.com'].looseUntilMinutes).toBe(0);
+    expect(chrome.storage._store.domainLimits['instagram.com']).toMatchObject({ maxGrants: 2, passMinutes: 5 });
+  });
+
+  it('describes an intention to the settings-gate coach as a sentence', () => {
+    const { ctx } = loadBackground({ seed: SEED() });
+    expect(ctx.describeIntentionForHuman({ maxGrants: 3, passMinutes: 10 })).toBe('3 opens a day, 10 minutes each');
+    expect(ctx.describeIntentionForHuman({ maxGrants: 1, passMinutes: 5 })).toBe('1 open a day, 5 minutes each');
+    expect(ctx.describeIntentionForHuman({ maxGrants: 0 })).toBe('blocked outright (no opens)');
   });
 });
 
@@ -3231,8 +3155,10 @@ describe('grant_access with scope "page"', () => {
   // A feed has no single page to pin to. The pass is still granted — refusing
   // it would punish the user for the model's word choice — but both channels
   // have to say what actually happened.
+  // Eight minutes, so the site-pass ceiling past the intention does not also
+  // bind and take the one correction turn for itself.
   it('downgrades on a feed, and tells both the user and the model', async () => {
-    const { ctx, chrome } = loadBackground({ seed: YT_BLOCKED, fetch: scopedGrantFetch() });
+    const { ctx, chrome } = loadBackground({ seed: YT_BLOCKED, fetch: scopedGrantFetch(8) });
     const res = await grantOnVideo(ctx, { pageContext: FEED_CTX });
 
     expect(res.grantedSession).toBeTruthy();
@@ -3241,7 +3167,7 @@ describe('grant_access with scope "page"', () => {
   });
 
   it('spends a correction turn saying so in the coach voice', async () => {
-    const fetch = scopedGrantFetch();
+    const fetch = scopedGrantFetch(8);
     const { ctx } = loadBackground({ seed: YT_BLOCKED, fetch });
     await grantOnVideo(ctx, { pageContext: FEED_CTX });
     // Two coach calls: the grant, then the honesty turn the correction forces.
@@ -3257,7 +3183,7 @@ describe('grant_access with scope "page"', () => {
   it('never scopes an app target, however the model asks', async () => {
     const { ctx, chrome } = loadBackground({
       seed: { ...CONFIGURED, setupComplete: true, blockedApps: ['com.instagram.android'] },
-      fetch: scopedGrantFetch()
+      fetch: scopedGrantFetch(8)
     });
     const res = await ctx.handleMessage(
       { action: 'chat', mode: 'gate', domain: 'com.instagram.android', isApp: true,
@@ -3282,44 +3208,24 @@ describe('grant_access with scope "page"', () => {
   });
 });
 
-describe('the strict phase is looser for a scoped pass, and only there', () => {
-  // looseUntilMinutes 5, already 30 minutes in: strict, whatever else happens.
-  const STRICT = (extra = {}) => ({
-    ...YT_BLOCKED,
-    domainLimits: { 'youtube.com': { looseUntilMinutes: 5, ...extra } },
-    dailyStats: {
-      [today()]: { 'youtube.com': { minutes: 30, grants: 1, sessions: [{ grantedMinutes: 30, reason: 'x', grantedAt: Date.now() - 1 }] } }
-    }
-  });
-
+describe('a pass past the intention is longer when it is scoped, and only then', () => {
   it('clamps an unscoped grant at 10', async () => {
-    const { ctx } = loadBackground({ seed: STRICT(), fetch: scopedGrantFetch(45, 'site') });
+    const { ctx } = loadBackground({ seed: YT_BLOCKED, fetch: scopedGrantFetch(45, 'site') });
     const res = await grantOnVideo(ctx);
     expect(res.grantedSession.intervalMinutes).toBe(10);
   });
 
   it('lets a scoped grant run to 20, because leaving the page ends it', async () => {
-    const { ctx } = loadBackground({ seed: STRICT(), fetch: scopedGrantFetch(45, 'page') });
+    const { ctx } = loadBackground({ seed: YT_BLOCKED, fetch: scopedGrantFetch(45, 'page') });
     const res = await grantOnVideo(ctx);
     expect(res.grantedSession.intervalMinutes).toBe(20);
     expect(res.grantedSession.scope).toBeTruthy();
   });
 
-  // Neither ceiling above it moves. The day's total cannot grow because of a
-  // scoped pass — the remainder of the user's own daily cap still wins.
-  it('still loses to the daily minutes cap', async () => {
-    const { ctx } = loadBackground({
-      seed: STRICT({ maxMinutes: 38 }),
-      fetch: scopedGrantFetch(45, 'page')
-    });
-    const res = await grantOnVideo(ctx);
-    expect(res.grantedSession.intervalMinutes).toBe(8);
-  });
-
-  it('still loses to the 60-minute ceiling on any single pass', async () => {
+  it('never goes past 20 however long the ask', async () => {
     const { ctx } = loadBackground({ seed: YT_BLOCKED, fetch: scopedGrantFetch(600, 'page') });
     const res = await grantOnVideo(ctx);
-    expect(res.grantedSession.intervalMinutes).toBe(60);
+    expect(res.grantedSession.intervalMinutes).toBe(20);
   });
 });
 
@@ -3695,8 +3601,8 @@ describe('part rules in the worker', () => {
     });
 
     it('leaves an entry with no part rule exactly as it was', async () => {
-      const { ctx, chrome } = loadBackground({ seed: { ...CONFIGURED, setupComplete: true } });
-      const entry = { maxGrants: 3, maxMinutes: 45, looseUntilMinutes: 10 };
+      const { ctx, chrome } = loadBackground({ seed: { ...CONFIGURED, setupComplete: true, domainLimits: {} } });
+      const entry = { maxGrants: 3, passMinutes: 10 };
       await ctx.saveSettings({ domainLimits: { 'instagram.com': entry } });
       expect(chrome.storage._store.domainLimits['instagram.com']).toEqual(entry);
     });
@@ -4372,21 +4278,21 @@ describe('the leaving message actions', () => {
       expect(chrome.storage._store.leaveDelayMinutes).toBe(1440);
     });
 
-  // In coach mode the change has to be argued for, so the free path is shut.
-  // These two carry no domain, so it is the GLOBAL mode that decides.
-  it.each([['uninstall'], ['decrease_leave_delay']])(
-    'refuses the ungated %s while the global mode is coach', async (changeType) => {
-      const { ctx, chrome } = seeded({ blockingMode: 'coach', leaveDelayMinutes: 1440 });
-      const result = await ctx.handleMessage({ action: 'applySettingChange', changeType, newValue: 0 }, EXT_PAGE);
-      expect(result.error).toMatch(/requires the coach/);
-      expect(chrome.storage._store.leaveRequest).toBe(undefined);
-    });
-
-  it('allows it in simple mode, where there is no coach to convince', async () => {
-    const { ctx, chrome } = seeded({ blockingMode: 'simple', leaveDelayMinutes: 0 });
+  // Leaving has its own cool-off, so asking to leave from our own page starts
+  // it at once — it is never deferred behind a second, overnight wait.
+  it('starts the leaving flow at once from our own page', async () => {
+    const { ctx, chrome } = seeded({ leaveDelayMinutes: 0 });
     const result = await ctx.handleMessage({ action: 'applySettingChange', changeType: 'uninstall' }, EXT_PAGE);
     expect(result.removalReady).toBe(true);
     expect(chrome.storage._store.leaveStandDown.reason).toBe('approved');
+    expect(chrome.storage._store.pendingChanges).toBeUndefined();
+  });
+
+  it('queues a shorter cool-off rather than applying it', async () => {
+    const { ctx, chrome } = seeded({ leaveDelayMinutes: 1440 });
+    const result = await ctx.handleMessage({ action: 'applySettingChange', changeType: 'decrease_leave_delay', newValue: 0 }, EXT_PAGE);
+    expect(result.scheduled).toBe(true);
+    expect(chrome.storage._store.leaveDelayMinutes).toBe(1440);
   });
 
   it('reports the state the settings card paints from', async () => {

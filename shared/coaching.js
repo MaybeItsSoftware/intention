@@ -200,25 +200,24 @@ async function showPaywall() {
   });
 }
 
-// Decide coach vs simple-mode UI based on the effective blocking mode, then render.
+// The intention decides what this page offers; the coach is one of the
+// answers, not the default. See renderIntentionUI.
 init();
 
 async function init() {
   if (await passThroughIfGranted()) return;
 
-  let blockConfig = null;
+  let intention = null;
   try {
     const resp = await sendChatMessage({ action: 'getBlockInfo', domain, isApp });
-    blockConfig = resp?.blockConfig || null;
+    intention = resp?.intention || null;
   } catch (e) {
-    blockConfig = null;
+    intention = null;
   }
-
-  if (blockConfig && blockConfig.mode === 'simple') {
-    renderSimpleUI(blockConfig);
-  } else {
-    renderCoachUI();
-  }
+  // No answer at all: the worker is unreachable, and the safe reading is an
+  // intention with nothing left in it — which offers the coach, and the coach
+  // path already knows how to report an unreachable background.
+  renderIntentionUI(intention || { opens: 0, minutesEach: 10, opensUsed: 0 });
 }
 
 // A gate that opens on a domain the user already holds a pass for has nothing
@@ -292,68 +291,100 @@ async function renderCoachUI() {
   if (mode === 'checkin' || turns.length === 0) conversation.attemptOpen();
 }
 
-// No-AI counterpart to renderCoachUI: a message plus a single action button,
-// since simple mode has no LLM to converse with.
-function renderSimpleUI(blockConfig) {
-  const isPass = blockConfig.behavior !== 'hard';
-  const message = mode === 'checkin'
-    ? (isPass
-        ? `Your time on ${displayName} is up. Take ${blockConfig.passMinutes} more minutes, or you're done.`
-        : `Your time on ${displayName} is up.`)
-    : (isPass
-        ? `${displayName} is blocked. Take ${blockConfig.passMinutes} minutes if you need it.`
-        : `${displayName} is blocked. Open settings to change this.`);
-  addMessage(messagesEl, 'assistant', message);
-
+// The gate, before any conversation. Three states, decided by the intention:
+// opens left (one tap, free), spent with a coach to ask (offered, never
+// started unasked — it spends credit), and spent with no credit (the paywall,
+// because the coach is the only way past).
+function renderIntentionUI(intention) {
+  const panel = document.getElementById('int-intention');
+  const heading = document.getElementById('int-heading');
+  const countEl = document.getElementById('int-intention-count');
+  const dotsEl = document.getElementById('int-intention-dots');
+  const ledeEl = document.getElementById('int-intention-lede');
+  const actionsEl = document.getElementById('int-intention-actions');
   const composer = document.querySelector('.int-composer');
   if (composer) composer.style.display = 'none';
+  document.getElementById('int-stats-row').style.display = 'none';
 
-  if (isPass) {
-    const passBtn = document.createElement('button');
-    passBtn.type = 'button';
-    passBtn.className = 'int-retry-btn';
-    passBtn.style.marginRight = '10px';
-    passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
-    passBtn.addEventListener('click', async () => {
-      passBtn.disabled = true;
-      passBtn.textContent = '…';
+  const { opens, minutesEach } = intention;
+  const used = Math.min(opens, Math.max(0, Number(intention.opensUsed) || 0));
+  const left = Math.max(0, opens - used);
+
+  heading.textContent = mode === 'checkin' ? `Time's up on ${displayName}` : displayName;
+  panel.hidden = false;
+  dotsEl.textContent = '';
+  for (let i = 0; i < opens; i++) {
+    const dot = document.createElement('span');
+    dot.className = i < used ? 'int-dot int-dot-used' : 'int-dot';
+    dotsEl.appendChild(dot);
+  }
+  actionsEl.textContent = '';
+  const button = (label, className, onClick) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = className;
+    el.textContent = label;
+    el.addEventListener('click', onClick);
+    actionsEl.appendChild(el);
+    return el;
+  };
+
+  if (left > 0) {
+    countEl.textContent = mode === 'checkin'
+      ? `${left} of ${opens} ${opens === 1 ? 'open' : 'opens'} left today \u00b7 ${minutesEach} min`
+      : `Open ${used + 1} of ${opens} today \u00b7 ${minutesEach} min`;
+    ledeEl.textContent = mode === 'checkin'
+      ? 'Done, or another open?'
+      : 'You set this intention yourself. Is this one of those times?';
+    const take = button(mode === 'checkin' ? 'Use another open' : `Open for ${minutesEach} minutes`, 'int-solid-btn', async () => {
+      take.disabled = true;
       let resp;
       try {
-        resp = await sendTabMessage({ action: 'simpleGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
+        resp = await sendTabMessage({ action: 'intentionGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
       } catch (e) {
         resp = null;
       }
       if (resp && resp.grantedSession) {
-        addMessage(messagesEl, 'assistant', 'Granted.');
-        followGrantedSession(resp.grantedSession, 900);
-      } else {
-        passBtn.disabled = false;
-        passBtn.textContent = `Take ${blockConfig.passMinutes} minutes`;
-        addMessage(messagesEl, 'assistant', (resp && resp.denied) || "Couldn't grant a pass — try again.");
+        followGrantedSession(resp.grantedSession, 300);
+        return;
       }
+      if (resp && resp.intention) {
+        renderIntentionUI(resp.intention);
+        return;
+      }
+      take.disabled = false;
+      ledeEl.textContent = "Couldn't open a pass \u2014 try again.";
     });
-    closeBtn.insertAdjacentElement('beforebegin', passBtn);
-  } else {
-    const settingsBtn = document.createElement('button');
-    settingsBtn.type = 'button';
-    settingsBtn.className = 'int-retry-btn';
-    settingsBtn.style.marginRight = '10px';
-    settingsBtn.textContent = 'Open settings';
-    settingsBtn.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ action: 'openOptions' });
-    });
-    closeBtn.insertAdjacentElement('beforebegin', settingsBtn);
+    return;
   }
-}
 
-// Locked before a word is typed: don't seed a conversation that can't happen.
-try {
+  countEl.textContent = opens === 0
+    ? 'Blocked \u00b7 no opens'
+    : `All ${opens} ${opens === 1 ? 'open' : 'opens'} used today`;
+
   chrome.runtime.sendMessage({ action: 'getAccess' }, (access) => {
-    if (chrome.runtime.lastError) return;
-    if (access && access.route === 'locked') showPaywall();
+    if (chrome.runtime.lastError) access = null;
+    if (access && access.route === 'locked') {
+      ledeEl.textContent = opens === 0
+        ? 'You chose not to open this at all. Getting past that means talking to the coach, which needs coaching credit.'
+        : "That was today's intention. More time today means talking to the coach, which needs coaching credit.";
+      button('Top up', 'int-solid-btn', () => {
+        panel.hidden = true;
+        showPaywall();
+      });
+      return;
+    }
+    ledeEl.textContent = opens === 0
+      ? 'You chose not to open this at all. If something genuinely needs it, you can make your case to the coach.'
+      : "That was today's intention. If something genuinely needs more, you can make your case to the coach.";
+    button('Ask the coach', 'int-solid-btn', () => {
+      panel.hidden = true;
+      heading.textContent = mode === 'checkin' ? "Time's up." : 'Why are you here?';
+      if (composer) composer.style.display = '';
+      document.getElementById('int-stats-row').style.display = '';
+      renderCoachUI();
+    });
   });
-} catch (e) {
-  console.warn(INT_LOG, 'getAccess message threw:', e);
 }
 
 // Today's stats for this domain, kept for showWalkAwayMoment below: the
@@ -397,7 +428,7 @@ const conversation = createGateConversation({
   onOpenSettings: () => openOptionsSection('settings')
 });
 
-// Shared by the coach chat flow and the no-AI simple-mode pass button: once a
+// Shared by the coach chat flow and the free intention pass button: once a
 // session is granted, get the user through to what they asked for. The pause
 // is just long enough to register the grant line — the reveal above has
 // already finished, so anything longer is dead air.
@@ -475,7 +506,7 @@ closeBtn.addEventListener('click', async () => {
     return;
   }
 
-  // Gate mode (coach or simple UI — same button): closing without taking time
+  // Gate mode (intention or coach — same button): closing without taking time
   // is a walk-away, the exact habit this tool exists to build. Record it
   // immediately — 'walked_away' doesn't close the tab on the background side,
   // so the moment below owns the close timing.
