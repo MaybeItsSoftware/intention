@@ -4,12 +4,22 @@
 // plaintext profile on the server. Sync has its *own* recovery key, separate
 // from the coaching-credit recovery code: rotating one can never make the
 // other unreadable. The key is never sent to the backend.
-/* global getStorage, setStorage */
+// Its own two storage helpers rather than tracking.js's: this file runs on the
+// options page, which does not load tracking.js, and calling getStorage from
+// here threw "getStorage is not defined" on every settings open — which also
+// stopped everything options.js wires up after setupEncryptedSync.
+function syncGetStorage(keys) {
+  return new Promise(resolve => chrome.storage.local.get(keys, items => resolve(items || {})));
+}
+
+function syncSetStorage(values) {
+  return new Promise(resolve => chrome.storage.local.set(values, () => resolve()));
+}
 
 const SYNC_PROFILE_KEYS = [
   'userContext', 'contextProjects', 'contextReasons', 'coachInstructions',
   'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels',
-  'serviceReasons', 'blockingMode', 'simpleBehavior', 'simplePassMinutes',
+  'serviceReasons', 'pendingChanges',
   'leaveDelayMinutes'
 ];
 const SYNC_KEY_RE = /^SYNC-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}$/;
@@ -150,7 +160,7 @@ async function refreshSyncDiagnostics() {
   const output = document.getElementById('sync-diagnostics');
   if (!output) return '';
   output.textContent = 'Checking…';
-  const local = await getStorage(['syncAutoEnabled', 'syncVaultRevision', 'syncLastSuccessAt', 'syncAutoLastError']);
+  const local = await syncGetStorage(['syncAutoEnabled', 'syncVaultRevision', 'syncLastSuccessAt', 'syncAutoLastError']);
   try {
     const { token, backendUrl } = await syncAccess();
     const result = await readSyncVault(backendUrl, token);
@@ -190,7 +200,7 @@ function syncKeyInput() {
 }
 
 function setupEncryptedSync() {
-  getStorage(['syncAutoEnabled', 'syncAutoLastError']).then(({ syncAutoEnabled, syncAutoLastError }) => {
+  syncGetStorage(['syncAutoEnabled', 'syncAutoLastError']).then(({ syncAutoEnabled, syncAutoLastError }) => {
     const toggle = document.getElementById('sync-auto');
     if (toggle) toggle.checked = syncAutoEnabled === true;
     if (syncAutoLastError) syncStatus(syncAutoLastError, 'error');
@@ -203,7 +213,7 @@ function setupEncryptedSync() {
       syncStatus('Encrypting this device’s settings…');
       const { state, token, backendUrl } = await syncAccess();
       const latest = await readSyncVault(backendUrl, token);
-      const { syncVaultRevision } = await getStorage(['syncVaultRevision']);
+      const { syncVaultRevision } = await syncGetStorage(['syncVaultRevision']);
       const knownRevision = Number.isSafeInteger(syncVaultRevision) ? syncVaultRevision : 0;
       if (latest.vault && knownRevision !== Number(latest.vault.revision)) {
         revealNewerSyncCopy(latest.vault);
@@ -211,7 +221,7 @@ function setupEncryptedSync() {
       }
       const vault = await encryptSyncProfile(syncProfileFrom(state), code);
       const saved = await writeSyncVault(backendUrl, token, vault, knownRevision);
-      await setStorage({
+      await syncSetStorage({
         syncVaultRevision: saved.vault.revision,
         syncVaultUpdatedAt: saved.vault.updatedAt || Date.now(),
         syncLastSuccessAt: Date.now(),
@@ -239,7 +249,7 @@ function setupEncryptedSync() {
       // saveSettings schedules the optional automatic uploader. Stamp the
       // revision first so that background task sees this very copy as current,
       // rather than mistaking the restore for a conflicting remote change.
-      await setStorage({
+      await syncSetStorage({
         syncVaultRevision: result.vault.revision,
         syncVaultUpdatedAt: result.vault.updatedAt || Date.now(),
         syncLastSuccessAt: Date.now(),
@@ -277,7 +287,7 @@ function setupEncryptedSync() {
       syncStatus('Enter the sync key first. It is kept on this device only when automatic sync is enabled.', 'error');
       return;
     }
-    await setStorage(enabled
+    await syncSetStorage(enabled
       ? { syncAutoEnabled: true, syncAutoKey: key }
       : { syncAutoEnabled: false, syncAutoKey: '' });
     if (enabled) await sendBg({ action: 'runAutomaticSync' });

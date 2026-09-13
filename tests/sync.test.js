@@ -124,3 +124,23 @@ describe('automatic encrypted saves', () => {
     expect(chrome.storage._store.syncAutoLastError).toBe('');
   });
 });
+
+// The options page loads sync.js without tracking.js, so the storage helpers
+// tracking.js defines do not exist there. Calling them threw on every settings
+// open and stopped the rest of the page wiring itself up.
+describe('sync.js on the options page', () => {
+  it('sets itself up without tracking.js in the page', async () => {
+    const chrome = makeMockChrome({ syncAutoEnabled: true });
+    const ctx = syncContext({ chrome });
+    expect(ctx.getStorage).toBeUndefined();
+    expect(() => ctx.setupEncryptedSync()).not.toThrow();
+    await new Promise(resolve => setTimeout(resolve, 0));
+  });
+
+  it('reads and writes through its own helpers', async () => {
+    const chrome = makeMockChrome();
+    const ctx = syncContext({ chrome });
+    await ctx.syncSetStorage({ syncVaultRevision: 4 });
+    expect(await ctx.syncGetStorage(['syncVaultRevision'])).toEqual({ syncVaultRevision: 4 });
+  });
+});
