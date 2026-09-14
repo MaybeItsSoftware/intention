@@ -125,7 +125,8 @@ describe('the two gate hosts share one UI', () => {
     'addMessage', 'addSystemNote', 'typeMessage',
     'showWalkAwayMoment', 'WALK_AWAY_LINES',
     'renderStatsRow', 'loadStatsRow', 'CHAT_TIMEOUT_MS',
-    'sendChatMessage', 'createGateConversation'
+    'sendChatMessage', 'createGateConversation',
+    'renderUsageHistory', 'loadUsageHistory', 'formatUsageMinutes', 'summariseUsage'
   ];
 
   const source = (file) => readFileSync(join(VARIANTS.chrome, file), 'utf8');
@@ -195,6 +196,40 @@ describe('the two gate hosts share one UI', () => {
     const page = opener('coaching.js', /:\s*`Hey\. I see you've opened \$\{displayName\}\.([^`]*)`/);
     expect(overlay).toBeTruthy();
     expect(page).toBe(overlay);
+  });
+
+  // The usage strip is drawn by gate-ui.js in both homes; the hosts only mark
+  // where it goes and say what they can read. A device source is an argument,
+  // so the overlay (a browser, which has no device record of a site) passes
+  // none and the Android app gate passes its bridge.
+  it('both hosts place the usage strip and hand gate-ui.js the source', () => {
+    expect(source('content.js')).toContain('id="int-usage"');
+    expect(source('coaching.html')).toContain('id="int-usage"');
+    expect(source('content.js')).toMatch(/loadUsageHistory\(domain\);/);
+    expect(source('coaching.js')).toMatch(/loadUsageHistory\(domain, isApp && window\.intentionApps/);
+    const android = readFileSync(join(REPO_ROOT, 'Intention Android', 'app', 'src', 'main', 'assets', 'android-bridge.js'), 'utf8');
+    expect(android).toContain('getAppUsageHistory: function(packageName, days, callback)');
+  });
+
+  // coaching.html's inline copy of the strip's rules, against content.css's.
+  // Unprefixed there, #intention-root-scoped here; otherwise the same.
+  it('coaching.html styles the strip with the same rules as the overlay', () => {
+    const rules = (css, prefix) => {
+      const out = new Map();
+      const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+      const re = /([^{}]+)\{([^{}]*)\}/g;
+      let m;
+      while ((m = re.exec(stripped)) !== null) {
+        const selector = m[1].trim().replace(/\s+/g, ' ').replace(prefix, '');
+        if (!selector.startsWith('.int-usage')) continue;
+        out.set(selector, m[2].split(';').map(d => d.trim().replace(/\s+/g, ' ')).filter(Boolean).sort().join('; '));
+      }
+      return out;
+    };
+    const overlay = rules(readFileSync(join(VARIANTS.chrome, 'content.css'), 'utf8'), /^#intention-root /);
+    const page = rules(/<style>([\s\S]*?)<\/style>/.exec(source('coaching.html'))[1], /^$/);
+    expect(overlay.size).toBeGreaterThan(5);
+    expect(Object.fromEntries(page)).toEqual(Object.fromEntries(overlay));
   });
 
   it.each(VARIANT_KEYS)('is byte-identical in %s', (variant) => {

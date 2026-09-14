@@ -394,6 +394,18 @@ let domainStats = null;
 
 loadStatsRow(domain, (stats) => { domainStats = stats; });
 
+// The last seven days on this target, drawn on the gate under its actions.
+// An app gate on Android can read the device's own record of foreground time,
+// so it hands that in as the source; everything else (sites, iOS, where the
+// Screen Time report cannot be read as data per app) gets Intention's own
+// tracking from gate-ui.js's fallback.
+loadUsageHistory(domain, isApp && window.intentionApps && window.intentionApps.getAppUsageHistory
+  ? {
+      read: (days, done) => window.intentionApps.getAppUsageHistory(domain, days, done),
+      requestAccess: () => window.intentionApps.requestUsageAccess()
+    }
+  : null);
+
 // The hardcoded greetings the gate used to open with, kept as the offline
 // fallback: if the LLM opener can't be fetched, this line still stands the
 // gate up.

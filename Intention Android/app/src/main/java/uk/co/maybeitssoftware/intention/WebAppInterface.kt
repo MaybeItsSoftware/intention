@@ -2,6 +2,7 @@ package uk.co.maybeitssoftware.intention
 
 import android.app.Activity
 import android.app.AppOpsManager
+import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -342,6 +343,94 @@ class WebAppInterface(
         val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+
+    // The gate's seven-day strip for one blocked app (gate-ui.js's
+    // loadUsageHistory, via coaching.js). Resolves
+    //   { granted: false }                                   no Usage Access
+    //   { granted: true, days: [{ date, minutes }, ...] }    oldest first, ending today
+    //
+    // Foreground time is rebuilt from queryEvents rather than read from
+    // queryUsageStats(INTERVAL_DAILY): see ForegroundTime for why the daily
+    // buckets cannot be trusted to mean a calendar day. Same privacy posture as
+    // getAppUsageStats below: only a package the user has blocked is answered
+    // for, so the page cannot use this to read the rest of the device.
+    //
+    // @JavascriptInterface calls arrive on a WebView binder thread, not the main
+    // thread, so a week of events is read here without blocking the UI.
+    @JavascriptInterface
+    fun getAppUsageHistory(packageName: String, days: Int, callbackId: String) {
+        val payload = JSONObject()
+        try {
+            if (!hasUsageAccess()) {
+                payload.put("granted", false)
+            } else {
+                payload.put("granted", true)
+                val count = days.coerceIn(1, 14)
+                val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val now = System.currentTimeMillis()
+                // Local midnights, oldest first. Calendar, not fixed 24h steps,
+                // so a DST change lands the boundary on the real midnight.
+                val dayStarts = LongArray(count)
+                val cal = Calendar.getInstance()
+                for (i in 0 until count) {
+                    cal.timeInMillis = now
+                    cal.add(Calendar.DAY_OF_YEAR, -(count - 1 - i))
+                    cal.set(Calendar.HOUR_OF_DAY, 0)
+                    cal.set(Calendar.MINUTE, 0)
+                    cal.set(Calendar.SECOND, 0)
+                    cal.set(Calendar.MILLISECOND, 0)
+                    dayStarts[i] = cal.timeInMillis
+                }
+
+                val totals = if (isBlockedApp(packageName)) {
+                    // A few hours of lookback so an app already open at the
+                    // first midnight is seen resuming rather than only pausing.
+                    val queryStart = dayStarts[0] - 3L * 60 * 60 * 1000
+                    val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+                    val events = usm.queryEvents(queryStart, now)
+                    val relevant = ArrayList<ForegroundTime.Event>()
+                    val ev = UsageEvents.Event()
+                    while (events.hasNextEvent()) {
+                        events.getNextEvent(ev)
+                        val type = ev.eventType
+                        if (!ForegroundTime.isRelevant(type)) continue
+                        if (ForegroundTime.isDeviceWide(type) || ev.packageName == packageName) {
+                            relevant.add(ForegroundTime.Event(ev.timeStamp, type, ev.className))
+                        }
+                    }
+                    ForegroundTime.perDay(relevant, queryStart, dayStarts, now)
+                } else {
+                    LongArray(count)
+                }
+
+                val list = JSONArray()
+                for (i in 0 until count) {
+                    list.put(
+                        JSONObject()
+                            .put("date", fmt.format(Date(dayStarts[i])))
+                            .put("minutes", Math.round(totals[i] / 60000.0))
+                    )
+                }
+                payload.put("days", list)
+            }
+        } catch (e: Exception) {
+            Log.e("WebAppInterface", "Error in getAppUsageHistory: ", e)
+            // Neither granted nor refused: the page falls back to Intention's
+            // own tracking and does not offer a trip to Settings that would
+            // not fix anything.
+            payload.remove("granted")
+            payload.remove("days")
+            payload.put("error", true)
+        }
+        respond(callbackId, payload)
+    }
+
+    private fun isBlockedApp(packageName: String): Boolean {
+        val storage = JSONObject(BackgroundJsHelper.getSharedStorage(context, "[\"blockedApps\"]"))
+        val arr = storage.optJSONArray("blockedApps") ?: return false
+        for (i in 0 until arr.length()) if (arr.optString(i) == packageName) return true
+        return false
     }
 
     // Returns [{date: "YYYY-MM-DD", packageName, minutes}] for the last `days`

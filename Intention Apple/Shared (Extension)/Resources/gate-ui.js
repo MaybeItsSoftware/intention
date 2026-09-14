@@ -22,8 +22,9 @@
 // the loop takes them as a `host` and keeps the rest.
 //
 // Nothing here reaches for anything only one host has: no window.intention*,
-// no tab id, no page context, and no ids beyond `int-stats-row`, which both
-// hosts render. chrome.runtime.sendMessage is the one exception — it is the
+// no tab id, no page context, and no ids beyond `int-stats-row` and
+// `int-usage`, which both hosts render. What only one host can read (the
+// device's own usage record) arrives as an argument, never by reaching for it. chrome.runtime.sendMessage is the one exception — it is the
 // only way to ask the background anything, and it exists in both.
 
 // Above providers.js's 30s per-request fetch timeout, so the background
@@ -152,6 +153,197 @@ function renderStatsRow(stats) {
     cell(stats.walkedAwayWeek || 0, 'Walked away (wk)')
   ].join('');
   statsRow.style.display = 'flex';
+}
+
+// ---------------------------------------------------------------------------
+// Usage history: the last seven days on the thing being gated.
+//
+// Shown on the gate itself, under its actions, because the moment someone
+// reaches for an app is the moment "you spent 2h 14m here today" means the
+// most. Calm on purpose: one line of fact, a flat strip of seven bars with
+// today in the one accent, and nothing that asks for anything.
+//
+// Two sources, and the renderer cannot tell them apart except by the label:
+//
+//   device     the operating system's own record of foreground time. Only a
+//              host that can read one supplies it (the Android app, through
+//              UsageStatsManager), as `deviceUsage` below.
+//   intention  Intention's own tracking -- minutes spent on passes it granted.
+//              Everywhere else, and the fallback when the device source is
+//              unavailable or not permitted.
+//
+// `deviceUsage` is the host's edge, not a branch on which host this is:
+//   read(days, done)  done({ granted: true, days: [{ date, minutes }] }) with
+//                     days oldest first ending today, or { granted: false }
+//   requestAccess()   send the user wherever that permission is granted
+// A host without one simply passes nothing.
+const USAGE_DAYS = 7;
+const USAGE_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// "0m", "45m", "2h", "2h 14m".
+function formatUsageMinutes(minutes) {
+  const total = Math.max(0, Math.round(Number(minutes) || 0));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (!h) return `${m}m`;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+// The one sentence above the bars. The average is over the seven days shown,
+// so it agrees with what the strip draws. When nothing before today has any
+// time on it, an average would only restate today at a seventh of its size,
+// so it is left off.
+function summariseUsage(days) {
+  const list = Array.isArray(days) ? days : [];
+  const minutesOf = (d) => Math.max(0, Number(d && d.minutes) || 0);
+  const today = list.length ? minutesOf(list[list.length - 1]) : 0;
+  const total = list.reduce((sum, d) => sum + minutesOf(d), 0);
+  const earlier = total - today;
+  if (total <= 0) return 'Nothing in the last 7 days';
+  const todayText = `${formatUsageMinutes(today)} today`;
+  if (earlier <= 0) return todayText;
+  return `${todayText} · ${formatUsageMinutes(total / Math.max(1, list.length))}/day this week`;
+}
+
+function usageWeekday(dateKey) {
+  const parts = String(dateKey || '').split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return '';
+  return USAGE_WEEKDAYS[new Date(parts[0], parts[1] - 1, parts[2]).getDay()];
+}
+
+// Paint `history` into `el`:
+//   { source: 'device' | 'intention', days: [{ date, minutes }], onRequestAccess? }
+// Built node by node rather than as markup: the numbers are ours, but the
+// element sits inside third-party pages in the overlay host, and there is no
+// reason to hand innerHTML anything.
+function renderUsageHistory(el, history) {
+  if (!el) return;
+  const days = (history && Array.isArray(history.days) ? history.days : []).slice(-USAGE_DAYS);
+  const device = history && history.source === 'device';
+  const total = days.reduce((sum, d) => sum + Math.max(0, Number(d && d.minutes) || 0), 0);
+  const onRequestAccess = history && history.onRequestAccess;
+  el.textContent = '';
+
+  // Intention's own record with nothing in it is not worth a strip of empty
+  // bars on a screen that is already asking something of them. Real device
+  // data at zero is a fact, and is drawn.
+  const drawStrip = days.length > 0 && (device || total > 0);
+  if (!drawStrip && !onRequestAccess) {
+    el.hidden = true;
+    return;
+  }
+
+  const make = (tag, className, text) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    if (text !== undefined) node.textContent = text;
+    el.appendChild(node);
+    return node;
+  };
+
+  if (drawStrip) {
+    const label = device ? 'Screen time' : 'Time on passes';
+    make('p', 'int-usage-label', `${label} · last 7 days`);
+    make('p', 'int-usage-summary', summariseUsage(days));
+
+    const bars = make('div', 'int-usage-bars');
+    const max = days.reduce((m, d) => Math.max(m, Number(d && d.minutes) || 0), 0);
+    const spoken = [];
+    days.forEach((day, i) => {
+      const minutes = Math.max(0, Number(day && day.minutes) || 0);
+      const isToday = i === days.length - 1;
+      const weekday = isToday ? 'Today' : usageWeekday(day && day.date);
+      spoken.push(`${weekday} ${formatUsageMinutes(minutes)}`);
+
+      const col = document.createElement('div');
+      col.className = 'int-usage-day' + (isToday ? ' int-usage-today' : '');
+      const track = document.createElement('div');
+      track.className = 'int-usage-track';
+      const bar = document.createElement('div');
+      bar.className = 'int-usage-bar';
+      const pct = max > 0 ? Math.round((minutes / max) * 100) : 0;
+      // A day with any time at all keeps a visible sliver; a day with none
+      // is the baseline hairline and nothing else.
+      bar.style.height = minutes > 0 ? `max(2px, ${pct}%)` : '0';
+      track.appendChild(bar);
+      col.appendChild(track);
+      const dow = document.createElement('span');
+      dow.className = 'int-usage-dow';
+      dow.textContent = isToday ? 'Today' : weekday;
+      col.appendChild(dow);
+      bars.appendChild(col);
+    });
+    if (bars.setAttribute) {
+      bars.setAttribute('role', 'img');
+      bars.setAttribute('aria-label', `${device ? 'Screen time' : 'Time on passes'}, last 7 days: ${spoken.join(', ')}`);
+    }
+  }
+
+  // The device record is readable but not permitted. One quiet line, once, at
+  // the bottom -- never a banner, never repeated in the conversation.
+  if (onRequestAccess) {
+    const grant = make('button', 'int-usage-grant', 'Show full screen time for this app');
+    grant.type = 'button';
+    grant.addEventListener('click', onRequestAccess);
+  }
+  el.hidden = false;
+}
+
+// Fetch and paint. Best-effort for the same reason as the stats strip: a gate
+// without its history is still a gate.
+function loadUsageHistory(domain, deviceUsage) {
+  const el = document.getElementById('int-usage');
+  if (!el) return;
+
+  const requestAccess = deviceUsage && typeof deviceUsage.requestAccess === 'function'
+    ? () => {
+        // Coming back from the system's settings is the only moment the answer
+        // can have changed, so that is when to look again -- once.
+        const onVisible = () => {
+          if (document.hidden) return;
+          document.removeEventListener('visibilitychange', onVisible);
+          loadUsageHistory(domain, deviceUsage);
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        deviceUsage.requestAccess();
+      }
+    : null;
+
+  const fromIntention = (offerAccess) => {
+    const onRequestAccess = offerAccess ? requestAccess : null;
+    try {
+      chrome.runtime.sendMessage({ action: 'getStatsForDomain', domain }, (stats) => {
+        const failed = chrome.runtime.lastError || !stats;
+        renderUsageHistory(el, {
+          source: 'intention',
+          days: failed ? [] : (stats.dailyMinutes || []),
+          onRequestAccess
+        });
+      });
+    } catch (e) {
+      console.warn('[Intention]', 'usage history message threw:', e);
+      renderUsageHistory(el, { source: 'intention', days: [], onRequestAccess });
+    }
+  };
+
+  if (!deviceUsage || typeof deviceUsage.read !== 'function') {
+    fromIntention(false);
+    return;
+  }
+  try {
+    deviceUsage.read(USAGE_DAYS, (result) => {
+      if (result && result.granted && Array.isArray(result.days)) {
+        renderUsageHistory(el, { source: 'device', days: result.days });
+        return;
+      }
+      // Only an explicit "not granted" earns the offer. A read that failed for
+      // any other reason would not be fixed by a trip to settings.
+      fromIntention(!!(result && result.granted === false));
+    });
+  } catch (e) {
+    console.warn('[Intention]', 'device usage read threw:', e);
+    fromIntention(false);
+  }
 }
 
 // The credit line above the conversation.

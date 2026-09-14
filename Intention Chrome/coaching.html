@@ -38,6 +38,10 @@
       padding: 14vh 24px calc(var(--int-bar-height) + 24px);
       display: flex;
       flex-direction: column;
+      /* The conversation scrolls inside .int-messages and never overflows
+         this; the gate's first screen (intention, actions, usage strip) can
+         on a short phone, and must scroll rather than be clipped. */
+      overflow-y: auto;
     }
 
     h1.int-heading {
@@ -339,6 +343,81 @@
       font-family: inherit;
     }
     .int-solid-btn:disabled { opacity: 0.6; cursor: default; }
+
+    /* Usage history under the gate's actions -- the third copy of the
+       overlay's rules (content.css and OVERLAY_CSS), unprefixed here. A
+       micro-label, one line of fact, a flat seven-day strip on a hairline,
+       today the one bar in the accent. */
+    .int-usage {
+      margin-top: 28px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+    .int-usage-label {
+      margin: 0 0 6px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    }
+    .int-usage-summary {
+      margin: 0 0 12px;
+      font-size: 15px;
+      line-height: 1.4;
+      color: var(--ink);
+    }
+    .int-usage-bars {
+      display: flex;
+      gap: 6px;
+      max-width: 360px;
+    }
+    .int-usage-day {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    .int-usage-track {
+      height: 40px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      border-bottom: 1px solid var(--border-input);
+    }
+    .int-usage-bar {
+      width: 100%;
+      max-width: 24px;
+      background: var(--text-dim);
+    }
+    .int-usage-today .int-usage-bar { background: var(--primary); }
+    .int-usage-dow {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-align: center;
+      white-space: nowrap;
+      color: var(--text-muted);
+      font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+    }
+    .int-usage-today .int-usage-dow { color: var(--ink); }
+    .int-usage-grant {
+      margin-top: 6px;
+      min-height: 44px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      font-size: 13px;
+      color: var(--text-muted);
+      text-decoration: underline;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .int-usage-grant:hover { color: var(--ink); }
     @keyframes int-fade-in {
       from { opacity: 0; transform: translateY(5px); }
       to { opacity: 1; transform: translateY(0); }
@@ -356,6 +435,7 @@
       <div class="int-dots" id="int-intention-dots" aria-hidden="true"></div>
       <p class="int-intention-lede" id="int-intention-lede"></p>
       <div class="int-intention-actions" id="int-intention-actions"></div>
+      <div class="int-usage" id="int-usage" hidden></div>
     </div>
     <div class="int-credit-note" id="int-credit-note" data-persistent hidden></div>
     <div class="int-stats-row" id="int-stats-row"></div>

@@ -110,6 +110,13 @@
       const cbId = window.AndroidCallbacks.register(callback);
       AndroidInterface.getAppUsageStats(days, cbId);
     },
+    // One blocked app's last `days` days of foreground time, for the gate's
+    // strip. Resolves { granted: false } without Usage Access, otherwise
+    // { granted: true, days: [{ date, minutes }] } oldest first ending today.
+    getAppUsageHistory: function(packageName, days, callback) {
+      const cbId = window.AndroidCallbacks.register(callback);
+      AndroidInterface.getAppUsageHistory(packageName, days, cbId);
+    },
     // Leaving Intention, from the page side.
     //
     // Deliberately NOT a straight call to AndroidInterface.requestUninstall().

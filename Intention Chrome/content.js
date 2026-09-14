@@ -319,6 +319,92 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
 
 #intention-root button.int-secondary:hover { color: var(--text-muted); text-decoration: underline; }
 
+/* Usage history under the gate's actions: a micro-label, one line of fact,
+   and a flat seven-day strip standing on a hairline. Today is the one bar in
+   the accent; every other day is dim ink. No radius, no fill behind the
+   bars -- it should read like a printed timetable, not a chart widget. */
+#intention-root .int-usage {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+#intention-root .int-usage-label {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+#intention-root .int-usage-summary {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+#intention-root .int-usage-bars {
+  display: flex;
+  gap: 6px;
+  max-width: 360px;
+}
+
+#intention-root .int-usage-day {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+#intention-root .int-usage-track {
+  height: 40px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  border-bottom: 1px solid var(--border-input);
+}
+
+#intention-root .int-usage-bar {
+  width: 100%;
+  max-width: 24px;
+  background: var(--text-dim);
+}
+
+#intention-root .int-usage-today .int-usage-bar { background: var(--primary); }
+
+#intention-root .int-usage-dow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+#intention-root .int-usage-today .int-usage-dow { color: var(--ink); }
+
+#intention-root .int-usage-grant {
+  margin-top: 6px;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+#intention-root .int-usage-grant:hover { color: var(--ink); }
+
 #intention-root .int-stats-row {
   display: flex;
   flex-wrap: wrap;
@@ -1874,6 +1960,7 @@ function renderIntentionGateUI({ mode, domain }) {
       <div class="int-messages" id="int-messages"></div>
       <div class="int-actions" id="int-gate-actions"></div>
       <p class="int-note" hidden></p>
+      <div class="int-usage" id="int-usage" hidden></div>
     </div>
   `;
   document.body.appendChild(root);
@@ -1893,6 +1980,10 @@ function renderIntentionGateUI({ mode, domain }) {
     : `${partHere ? `${partHere} on ` : ""}${domain}`;
 
   loadStatsRow(domain, (stats) => { domainStats = stats; });
+  // The last seven days on this site, under the actions. A browser has no
+  // device-wide record of time on a site, so there is no device source to
+  // hand in: the strip draws Intention's own tracking of passes.
+  loadUsageHistory(domain);
 
   const leave = () => {
     if (mode === "checkin") {

@@ -208,6 +208,36 @@ describe('recentDays', () => {
   });
 });
 
+// The gate's seven-day strip reads this series. Unlike recentDays it keeps
+// today and the empty days, because a strip needs every day in its place.
+describe('getStatsForDomain dailyMinutes', () => {
+  const dayKey = (ctx, back) => ctx.daysAgoKeys(back + 1)[back];
+
+  it('is seven days oldest first, ending today, with empty days as zero', async () => {
+    const probe = loadSource('tracking.js');
+    const seed = {
+      dailyStats: {
+        [dayKey(probe, 0)]: { 'reddit.com': { minutes: 12.4, grants: 1, sessions: [] } },
+        [dayKey(probe, 2)]: { 'reddit.com': { minutes: 40, grants: 2, sessions: [] }, 'x.com': { minutes: 99 } },
+        [dayKey(probe, 6)]: { 'reddit.com': { minutes: 5, grants: 1, sessions: [] } },
+        // Outside the week: not in the series.
+        [dayKey(probe, 7)]: { 'reddit.com': { minutes: 300, grants: 9, sessions: [] } }
+      }
+    };
+    const { ctx } = loadTracking({ seed });
+    const { dailyMinutes } = await ctx.getStatsForDomain('reddit.com');
+    expect(dailyMinutes.map(d => d.date)).toEqual(probe.daysAgoKeys(7).reverse());
+    expect(dailyMinutes.map(d => d.minutes)).toEqual([5, 0, 0, 0, 40, 0, 12]);
+  });
+
+  it('is seven zeros for a target with no history', async () => {
+    const { ctx } = fresh();
+    const { dailyMinutes } = await ctx.getStatsForDomain('nothing.example');
+    expect(dailyMinutes).toHaveLength(7);
+    expect(dailyMinutes.every(d => d.minutes === 0)).toBe(true);
+  });
+});
+
 // Walking away from the gate is the habit the whole tool exists to build, and
 // until now it left no record at all: gated 12 times / granted 0 looked the
 // same as never having visited.
