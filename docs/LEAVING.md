@@ -12,36 +12,17 @@ Your blocklist, your stats and your coach's notes were stored in the browser
 and went with it. There is no copy anywhere else — Intention has no account and
 keeps nothing about you.
 
-Your coaching credit is a different matter. It is held on Intention's backend
-against a random identifier, not against you, and it usually survives — but how
-you get it back depends on where you had it.
+Your API key went with it too: Intention in a browser runs the coach on your
+own provider key and nothing else, so paste the key in again after you
+reinstall. There was no coaching credit to lose.
 
-**In the Intention app (iPhone, iPad, Android).** The app still knows the
-identifier the App Store or Google Play gave it, so a reinstall on the same
-device asks the backend about that identifier before it shows anybody a
-paywall, and the balance reappears on its own the first time you open Settings.
-"Restore credit from a previous install", in Settings → AI access, asks the
-same question on demand.
-
-**In a browser.** There is nothing left to ask with. The extension's storage
-went with the extension, sync included, and a browser has no store account of
-its own — which is why credit got into it by being typed in, and is how it
-comes back:
-
-1. Open the Intention app on your phone, go to **Settings → AI access**, and
-   generate an access code. It lasts fifteen minutes and is used once.
-2. Install Intention in the browser again, open **Settings → AI access**, and
-   paste the code in.
-
-**If the device that bought the credit is gone**, only a **recovery code** can
-prove the balance was yours — there is deliberately nothing else tying it to
-you. It is minted in Settings → AI access **on the device that bought the
-credit**, and the moment to write it down is while everything still works: the
-session that can mint one dies with the device. It is long-lived and can be
-used more than once, and it goes into the same box as an access code, on
-whatever you install next. (A browser that was linked from a phone cannot mint
-one — it says so, and points at the phone, because that is where the credit was
-bought and where the code lives.)
+**In the Intention app (iPhone, iPad, Android)** your coaching credit is held
+on Intention's backend against a random identifier, not against you, and it
+usually survives. The app still knows the identifier the App Store or Google
+Play gave it, so a reinstall on the same device asks the backend about that
+identifier before it shows anybody a paywall, and the balance reappears on its
+own the first time you open Settings. "Restore credit from a previous install",
+in Settings → AI access, asks the same question on demand.
 
 If your credit does not come back, open an issue on the project's GitHub
 repository.

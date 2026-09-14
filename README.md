@@ -37,7 +37,7 @@ The coach runs on **coaching credit**, a one-time top-up bought through the App 
 - **Knows where you're going**: the coach is told the specific page — video title, channel and length, thread and subreddit, Instagram/TikTok destination, or the search term you typed. When only the address is known it is told to say so and ask, rather than guess at content it hasn't seen.
 - **Exponential difficulty**: scaling skepticism per grant per day, plus a hard daily cap (3). Past the cap the chat continues for motivational support, but no more time is given out.
 - **Positive reinforcement tone**: the system prompt pushes the AI to be warm, curious, non-judgmental — offering concrete alternatives, naming procrastination gently, celebrating the close-tab choice.
-- **A balance you can see**: the settings header carries a credit chip on every tab, and the gate says so when credit is running low. A balance survives a reinstall, and a recovery code written down beforehand survives the device.
+- **A balance you can see**: the settings header carries a credit chip on every tab, and the gate says so when credit is running low. A balance survives a reinstall on the same device.
 - **A way out that works**: removal routes through the coach, with an optional cool-off, an exit that is live from the first paint of that conversation, and an export of your list so leaving isn't punitive.
 
 ## Installation
@@ -101,9 +101,9 @@ Three states, resolved by `resolveAIRoute()` in `background.js` on every coachin
 | `byok` | A custom API key is set in Settings → Advanced | Straight from the device to that provider |
 | `locked` | Neither | Nowhere — the paywall replaces the chat, and the site stays blocked |
 
-The purchase itself is always the platform's own: StoreKit 2 on Apple (`Intention Apple/Shared (App)/IntentionStore.swift`), Play Billing on Android (`BillingManager.kt`). Browser builds, which have no store to buy through, unlock with a short-lived code minted by the mobile app; the same box also takes a recovery code.
+The purchase itself is always the platform's own: StoreKit 2 on Apple (`Intention Apple/Shared (App)/IntentionStore.swift`), Play Billing on Android (`BillingManager.kt`). Browser builds have no store to buy through and no coaching credit: the coach there runs on the user's own API key.
 
-The balance is shown rather than implied — a credit chip in the settings header on every tab, and a line at the gate when it is running low — and it is meant to survive things going wrong. On a reinstall the app asks the backend whether a balance is held against its store account id (`POST /v1/entitlement/recover`) before showing anyone a paywall. On a device that is gone, the only thread back is a **recovery code**, minted in Settings → AI access on the device that bought the credit and written down while nothing has gone wrong: there is no account behind a balance, no email and nothing to log into, which is the point and also the risk.
+The balance is shown rather than implied — a credit chip in the settings header on every tab, and a line at the gate when it is running low — and it is meant to survive things going wrong. On a reinstall the app asks the backend whether a balance is held against its store account id (`POST /v1/entitlement/recover`) before showing anyone a paywall. A device that is gone takes its credit with it: there is no account behind a balance, no email and nothing to log into, which is the point and also the risk.
 
 `server/` is the backend: it verifies App Store / Play receipts, mints entitlement tokens, and proxies coaching calls. It has no dependencies — `cd server && npm start`. See [`server/README.md`](server/README.md).
 

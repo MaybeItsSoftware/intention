@@ -70,6 +70,12 @@ function showSetupView() {
   }
   wireAddModals();
   wireIntentionStep();
+  // Chrome and Firefox have no credit to buy: the coach runs on the user's own
+  // API key there and nothing else.
+  if (BYOK_IS_PRIMARY) {
+    document.getElementById('setup-access-how').textContent =
+      'The coach runs on your own AI provider key. Nothing to set up now — only if you ever need it.';
+  }
 
   const backBtn = document.getElementById('setup-back-btn');
   const nextBtn = document.getElementById('setup-next-btn');

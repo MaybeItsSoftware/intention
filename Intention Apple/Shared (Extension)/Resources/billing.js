@@ -184,21 +184,6 @@ async function postBackend(backendUrl, path, body, token) {
   return data || {};
 }
 
-// The bearer-authenticated half, named rather than left as a fourth positional
-// argument at each call site. Two endpoints need it — minting a browser link
-// code and minting a recovery code — and they had one hand-rolled fetch
-// between them, which is how the older of the two ended up dropping the
-// backend's `code` on the floor and reporting every refusal as a bare message.
-// Both now surface `err.code`, and two callers read it. requestRecoveryCode
-// below tells `store_session_required` from a network hiccup and re-verifies
-// its stored receipt on the first, because a device that bought the credit
-// before the server stamped sessions holds a token that cannot say so. And
-// buildRecoveryBlock reads it again to pick its message, because "try again in
-// a moment" is a lie about a refusal that will never change its mind.
-function postBackendAuthed(backendUrl, path, token, body) {
-  return postBackend(backendUrl, path, body || {}, token);
-}
-
 // Hands the store's proof-of-purchase to Intention's backend, which checks it
 // with Apple/Google and mints the access token the coach calls are made with.
 // Returns the entitlement to persist.
@@ -359,104 +344,6 @@ async function attemptSilentRecovery(backendUrl, { route = null, userAsked = fal
   }
 }
 
-// The paper artefact. Minted while the entitlement is still live so that when
-// the device is gone there is something to type — which is why the settings
-// page shows it BEFORE anything has been lost, rather than offering it as a
-// remedy to someone who no longer has a session to mint one with.
-//
-// Idempotent: the same code comes back every time, so re-opening settings does
-// not scatter live secrets. `rotate` replaces it and kills the old one.
-//
-// The retry is the whole of what makes this work for anyone who was already
-// paying. The server only mints for a session that says how it proved itself
-// (`src`, see RECOVERY_CODE_SRC in server/src/app.js), and every token minted
-// before that claim existed says nothing — so every existing paying device,
-// which is most of them, got a flat 403 that a refresh would carry forward for
-// a year. It still holds the one thing that can fix that: the store receipt.
-// Re-verifying it mints a freshly stamped 'store' token, and the second attempt
-// goes through. One run, not a year, and this is the only path that upgrades a
-// legacy session — nothing else re-mints, because a consumable never comes back
-// through Transaction.unfinished to be re-verified on launch.
-//
-// `onUpgrade` is how the caller keeps the upgraded session: without persisting
-// it, the next settings open re-verifies all over again.
-async function requestRecoveryCode(entitlement, backendUrl, { rotate = false, onUpgrade = null } = {}) {
-  if (!entitlement || !entitlement.token) throw new Error('No coaching credit on this device yet.');
-  try {
-    return await postBackendAuthed(backendUrl, '/v1/entitlement/recovery-code', entitlement.token, { rotate });
-  } catch (e) {
-    // Only this one refusal is worth a second attempt, and only where there is
-    // something stronger to attempt it with. Everything else — a network
-    // failure, a revoked token, a rate limit — is reported as it stands.
-    if (e.code !== 'store_session_required' || !hasReverifiableReceipt(entitlement)) throw e;
-    const upgraded = await verifyPurchase({
-      platform: entitlement.source,
-      receipt: entitlement.receipt,
-      backendUrl
-    });
-    if (!upgraded || !upgraded.token) throw e;
-    if (onUpgrade) await onUpgrade(upgraded);
-    return postBackendAuthed(backendUrl, '/v1/entitlement/recovery-code', upgraded.token, { rotate });
-  }
-}
-
-// Whether the recovery-code block may be OFFERED for this entitlement at all.
-//
-// The server refuses to mint for a session that redeemed a 15-minute browser
-// link code, and it is right to: that code's whole guarantee is that it is
-// single use, so letting the session behind it mint a permanent multi-use
-// credential — and rotate away the code its owner has on paper — would undo
-// the guarantee after the fact. But a button that always fails is worse than no
-// button, and that is what a browser linked from a phone used to get: the block
-// renders expanded on 'byok', so it fetched on sight and printed "try again in
-// a moment" for ever.
-//
-// So the honest answer is shown instead (see renderPaywall): a browser's credit
-// belongs to the phone that bought it, and so does the recovery code.
-//
-// A stored entitlement from before the server stamped `src` says nothing at
-// all, and the receipt is what tells the two cases behind that silence apart: a
-// paying device kept one and requestRecoveryCode above can upgrade it in a
-// single run, a linked browser never had one.
-const RECOVERY_CODE_SESSIONS = ['store', 'paper'];
-
-function canMintRecoveryCode(entitlement) {
-  if (!entitlement || !entitlement.token) return false;
-  // A stored receipt answers first, and answers for every session kind: it can
-  // always be turned back into a 'store' session, which is exactly what
-  // requestRecoveryCode does on the refusal. That covers the device whose token
-  // predates the claim, and the one that recovered from its account id and then
-  // bought again — both hold a receipt, and neither should be told no.
-  if (hasReverifiableReceipt(entitlement)) return true;
-  if (entitlement.src) return RECOVERY_CODE_SESSIONS.includes(entitlement.src);
-  return false;
-}
-
-// Browser builds have no store to buy through. An access code, generated in
-// the mobile app for an existing balance, links this browser to the same
-// account — no payment happens here. The same box now also takes a written-
-// down recovery code; the server tells the two apart, so nothing here has to.
-//
-// Upper-cased on the way out, not just trimmed. Both code kinds are drawn from
-// an alphabet that has no lower case in it, and a recovery code is copied off
-// paper by someone who has just lost a device — the one moment where typing it
-// in lower case is likeliest and being told "that code isn't valid" is worst.
-// The server normalises too; doing it here as well costs nothing and means the
-// client never sends something it already knows will miss.
-async function redeemAccessCode(code, backendUrl) {
-  const data = await postBackend(backendUrl, '/v1/entitlement/redeem',
-    { code: String(code || '').trim().toUpperCase() });
-  return normalizeEntitlement({ ...data, source: 'code' });
-}
-
-// The other half of that: an app with coaching credit mints the code its
-// owner types into their browser. Nothing is sold here — it links a device to
-// an account that already has credit bought through the store.
-async function requestAccessCode(entitlement, backendUrl) {
-  if (!entitlement || !entitlement.token) throw new Error('No coaching credit on this device yet.');
-  return postBackendAuthed(backendUrl, '/v1/entitlement/code', entitlement.token, {});
-}
-
 function normalizeEntitlement(raw) {
   if (!raw) return null;
   return {
@@ -469,13 +356,8 @@ function normalizeEntitlement(raw) {
     source: raw.source || '',
     token: raw.token || '',
     // How the session behind `token` proved itself, exactly as the server
-    // stamped it: 'store' (verified a store receipt), 'paper' (redeemed a
-    // written-down recovery code), 'link' (redeemed a 15-minute browser access
-    // code) or 'account' (the surviving account id alone). Only the first two
-    // may mint a recovery code, so the client has to know which it is holding
-    // or it offers a button that can only ever be refused — see
-    // canMintRecoveryCode. Empty on anything stored before this release, which
-    // that function reads as "ask the receipt instead".
+    // stamped it ('store', 'account', or the older 'paper'/'link' from codes no
+    // build takes any more). Kept so a stored entitlement round-trips intact.
     src: raw.src || '',
     receipt: raw.receipt || null,
     balanceMicros: Number(raw.balanceMicros || 0),
@@ -577,17 +459,11 @@ function cleanProductDesc(title, desc) {
 //   entitlement   currently stored entitlement (may be null)
 //   onPurchase(productId)   -> Promise, called for a store purchase
 //   onRestore()             -> Promise, recovers an interrupted purchase
-//   onRedeem(code)          -> Promise         (byok and managed builds)
 //   onRedeemStoreCode()     -> Promise, optional (store builds only)
 //   onUseOwnKey()           -> void, optional  (byok builds only)
-//   onLinkBrowser()         -> Promise, optional (store builds only)
-//   onShowRecoveryCode({rotate}) -> Promise<{code}>, optional. Mints or
-//                           re-reads the long-lived written-down code.
 //   onRecoverFromDevice()   -> Promise<string|null>, optional (store builds).
 //                           Re-runs silent recovery on demand; resolves to a
 //                           notice when nothing was found.
-//   justPurchased           credit landed a moment ago, so the recovery code
-//                           is shown open and led with rather than tucked away
 //   accountRestored         bool|undefined — whether the platform put this
 //                           device's account id back. `undefined` means the
 //                           build cannot tell and nothing is said.
@@ -602,9 +478,8 @@ function cleanProductDesc(title, desc) {
 // through to the purchase buttons (as "add more"), it just leads with a
 // balance line instead of a lede.
 async function renderPaywall(container, opts = {}) {
-  const { entitlement, onPurchase, onRestore, onRedeem, onRedeemStoreCode, onUseOwnKey, onSaveKey,
-    onShowRecoveryCode, onRecoverFromDevice, justPurchased, accountRestored, route, compact,
-    keyDefaults } = opts;
+  const { entitlement, onPurchase, onRestore, onRedeemStoreCode, onUseOwnKey, onSaveKey,
+    onRecoverFromDevice, accountRestored, route, compact, keyDefaults } = opts;
   container.innerHTML = '';
   container.className = 'int-paywall' + (compact ? ' int-paywall-compact' : '');
 
@@ -665,56 +540,10 @@ async function renderPaywall(container, opts = {}) {
         : 'Running low. Top up in the Intention app to keep talking to your coach.'));
     }
     container.appendChild(status);
-
-    // Same balance, other devices: a browser has no store to buy through,
-    // so it's linked with a short-lived code minted here instead.
-    if (opts.onLinkBrowser && BILLING_MODE === 'store' && !compact) {
-      const linkBtn = el('button', 'secondary int-pw-link', 'Link a browser');
-      linkBtn.type = 'button';
-      const codeOut = el('p', 'int-pw-sub');
-      codeOut.hidden = true;
-      linkBtn.addEventListener('click', async () => {
-        setError('');
-        busy(linkBtn, true, 'Generating…');
-        try {
-          const result = await opts.onLinkBrowser();
-          codeOut.textContent = `Enter ${result.code} in Intention's settings in your browser. It expires in 15 minutes.`;
-          codeOut.hidden = false;
-        } catch (e) {
-          setError(String(e.message || e));
-        } finally {
-          busy(linkBtn, false);
-        }
-      });
-      container.appendChild(linkBtn);
-      container.appendChild(codeOut);
-    }
-
-    // The written-down recovery code, offered only in Chrome and Firefox now,
-    // because only those builds still have a box to paste one into. The app
-    // builds and Safari dropped both halves together: a code with nowhere to
-    // redeem it is a promise the page cannot keep. Out of the compact paywall:
-    // a blocked page is not where anyone writes something down.
-    if (onShowRecoveryCode && !compact && BILLING_MODE === 'byok' && canMintRecoveryCode(entitlement)) {
-      container.appendChild(buildRecoveryBlock({
-        el,
-        setError,
-        onShowRecoveryCode,
-        justPurchased: !!justPurchased,
-        // A browser has no store bridge and no surviving identifier of any
-        // kind — chrome.storage is wiped on uninstall, sync included — so the
-        // written-down code is the only durability mechanism there is. It does
-        // not get to hide behind a disclosure triangle.
-        expanded: true,
-        // …but open is not the same as fetched. See buildRecoveryBlock.
-        autoLoad: !!justPurchased
-      }));
-    }
   } else if (BILLING_MODE === 'byok') {
-    // Two equal routes below, so the lede can't promise one of them.
     container.appendChild(el('p', 'int-pw-lede', compact
-      ? 'Your coach needs an AI behind it. Two ways to do that:'
-      : 'Your coach needs an AI behind it. There are two ways to do that, and either one works — pick whichever suits you.'));
+      ? 'Your coach needs an AI behind it: your own API key.'
+      : 'Your coach needs an AI behind it. In a browser that means your own API key.'));
   } else {
     // Does not open by restating the step's own heading ("Turn on your coach")
     // — by the time anyone reads this they have been told twice already.
@@ -911,22 +740,17 @@ async function renderPaywall(container, opts = {}) {
     return;
   }
 
-  // A browser can't run a purchase, so credit here means "bought on a phone,
-  // redeemed with a code" — which is useless to someone who has never installed
-  // the app. Its equal-billing partner, a provider key, is the only route that
-  // can actually be finished on this device, so the two are shown side by side
-  // rather than burying the key behind an "advanced" disclosure.
+  // A browser can't run a purchase and takes no code, so a provider key is
+  // the only route there is — finishable in place rather than buried behind
+  // an "advanced" disclosure.
   const routes = el('div', 'int-pw-routes');
-
   routes.appendChild(buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults }));
-  routes.appendChild(buildCodeRoute({ el, busy, setError, onRedeem }));
-
   container.appendChild(routes);
   container.appendChild(noticeEl);
   container.appendChild(errorEl);
 }
 
-// Route 1: bring your own provider key. Finishable in place — the fields live
+// The one browser route: bring your own provider key. Finishable in place — the fields live
 // here rather than behind a jump into Settings -> Advanced.
 function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults = null }) {
   const card = el('div', 'int-pw-route');
@@ -1001,184 +825,5 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
     }
   });
 
-  return card;
-}
-
-// Route 2: credit already bought, carried onto this device with a code.
-//
-// One box, two kinds of code, because to the person typing they are the same
-// gesture and the server tells them apart: the 15-minute one-time code that
-// links a browser to a phone's balance, and the long-lived recovery code this
-// browser showed before it was reinstalled. Browser builds only — the app
-// builds and Safari no longer take a code at all.
-function buildCodeRoute({ el, busy, setError, onRedeem }) {
-  const card = el('div', 'int-pw-route');
-  card.appendChild(el('strong', null, 'Use coaching credit'));
-  card.appendChild(el('p', 'int-pw-sub',
-    'Credit is bought in the Intention app for iPhone or Android. Generate a code there under Settings → AI access, then paste it here.'));
-
-  const codeLabel = el('label', null, 'Access code');
-  codeLabel.setAttribute('for', 'int-pw-code-input');
-  const codeInput = el('input');
-  codeInput.type = 'text';
-  codeInput.id = 'int-pw-code-input';
-  codeInput.placeholder = 'INT-XXXX-XXXX';
-  const codeBtn = el('button', 'primary', 'Unlock');
-  codeBtn.type = 'button';
-
-  card.append(codeLabel, codeInput, codeBtn);
-
-  codeBtn.addEventListener('click', async () => {
-    const code = codeInput.value.trim();
-    if (!code) return;
-    setError('');
-    busy(codeBtn, true, 'Checking…');
-    try {
-      await onRedeem(code);
-    } catch (e) {
-      setError(String(e.message || e));
-    } finally {
-      busy(codeBtn, false);
-    }
-  });
-
-  return card;
-}
-
-// The written-down artefact, and the copy that has to earn its place before it
-// is needed.
-//
-// Two things are being sold to the reader here, neither of them a product.
-// First, that there IS no account behind their credit — no email, no sign-in,
-// nothing to "log back into" — so the code is not a convenience, it is the
-// only thread back. Second, that the moment to act is now, while nothing has
-// gone wrong, because the session that mints the code is exactly the thing a
-// reinstall destroys. Copy that only explains itself at the point of loss is
-// copy nobody will ever read.
-//
-// Deliberately renders no anchor, names no provider and offers no key field:
-// it ships on Apple builds, where restoring credit already bought through IAP
-// is the same class of thing as "Recover an interrupted purchase".
-function buildRecoveryBlock({ el, setError, onShowRecoveryCode, expanded, autoLoad, justPurchased }) {
-  const heading = justPurchased ? 'Save your recovery code' : 'Recovery code';
-
-  const body = el('div', 'int-pw-recovery-body');
-  body.appendChild(el('p', 'int-pw-sub', justPurchased
-    ? 'Your credit is tied to this device, not to an account. Write this code down now and you can restore your balance anywhere, any time.'
-    : 'Write this down and keep it somewhere safe. It restores your credit on a new device, or after a reinstall. '
-      + 'There is no account and no email behind your credit, so this code is the only way back to it.'));
-
-  const codeOut = el('code', 'int-pw-recovery-code', '…');
-  body.appendChild(codeOut);
-
-  const status = el('p', 'int-pw-sub int-pw-recovery-status');
-  status.hidden = true;
-  const say = (msg) => {
-    status.textContent = msg || '';
-    status.hidden = !msg;
-  };
-
-  // Shown until a code has actually been fetched, and only where this block
-  // renders open. An open block used to fetch on sight, which made merely
-  // opening Settings a backend request — on a browser build that request goes
-  // out even while the coach is running on the user's own API key, which is a
-  // path PRIVACY.md promises never touches Intention's backend. Keeping the
-  // block open and the request behind a press keeps both true: the code is
-  // still the first thing you see on the build where it is the only durability
-  // that exists, and nothing is asked for until it is asked for.
-  const revealBtn = el('button', 'secondary int-pw-recovery-reveal', 'Show my recovery code');
-  revealBtn.type = 'button';
-
-  const actions = el('div', 'int-pw-recovery-actions');
-  const copyBtn = el('button', 'secondary', 'Copy code');
-  copyBtn.type = 'button';
-  const rotateBtn = el('button', 'secondary', 'Generate a new code');
-  rotateBtn.type = 'button';
-  actions.append(copyBtn, rotateBtn);
-  body.append(status, revealBtn, actions);
-
-  // The code placeholder and the two actions on it are meaningless until
-  // something has been fetched, so they stay out of the way behind the press.
-  const showCodeUI = (on) => {
-    revealBtn.hidden = !!on;
-    codeOut.hidden = !on;
-    actions.hidden = !on;
-  };
-  showCodeUI(false);
-
-  let loaded = false;
-  async function load(rotate) {
-    if (loaded && !rotate) return;
-    loaded = true;
-    showCodeUI(true);
-    setError('');
-    copyBtn.disabled = true;
-    rotateBtn.disabled = true;
-    try {
-      const result = await onShowRecoveryCode({ rotate: !!rotate });
-      codeOut.textContent = (result && result.code) || '';
-      say(rotate ? 'Your old code has stopped working. Write this one down instead.' : '');
-    } catch (e) {
-      // Its own line rather than the paywall's error slot: failing to fetch a
-      // code the user has not asked for yet must not read as "your credit is
-      // in trouble", which is what a red error under a live balance says.
-      loaded = false;
-      codeOut.textContent = '';
-      // Back to the press. A failed fetch leaves nothing to copy or rotate,
-      // and the button is also how the user retries.
-      showCodeUI(false);
-      // A refusal and a hiccup are different news, and telling someone to try
-      // again in a moment when the answer will never change is the worse of
-      // the two lies. canMintRecoveryCode keeps this block off the screen for
-      // the session kind the server refuses outright, so reaching here means
-      // something rarer — a receipt that no longer verifies, say.
-      say(e && e.code === 'store_session_required'
-        ? 'A recovery code can only be shown on the device that bought the credit.'
-        : "Couldn't get a recovery code right now. Try again in a moment.");
-    } finally {
-      copyBtn.disabled = false;
-      rotateBtn.disabled = false;
-    }
-  }
-
-  copyBtn.addEventListener('click', async () => {
-    const code = codeOut.textContent.trim();
-    if (!code) return;
-    try {
-      await navigator.clipboard.writeText(code);
-      say('Copied.');
-    } catch (e) {
-      // Clipboard access is refused often enough (no gesture, no permission,
-      // an older WebView) that a failure here has to say what to do instead.
-      say('Copy it down by hand — this device blocked the clipboard.');
-    }
-  });
-
-  rotateBtn.addEventListener('click', () => load(true));
-  revealBtn.addEventListener('click', () => load(false));
-
-  // Expanded where the code is the only durability mechanism that exists, or
-  // where credit has just landed and this is the thing to do about it;
-  // collapsed elsewhere, so a settings page that mostly gets opened for other
-  // reasons is not led by a secret.
-  //
-  // `autoLoad` is a narrower thing than `expanded` and only the moment right
-  // after a purchase earns it: the user is already mid-transaction with the
-  // backend, the whole point of that screen is "write this down now", and a
-  // purchase cannot have happened on the custom-key path. Everywhere else the
-  // block renders open but silent until pressed.
-  if (expanded) {
-    const card = el('div', 'int-pw-recovery int-pw-recovery-open');
-    card.appendChild(el('strong', null, heading));
-    card.appendChild(body);
-    if (autoLoad) load(false);
-    return card;
-  }
-
-  const card = el('details', 'int-pw-recovery');
-  const summary = el('summary', null, heading);
-  card.appendChild(summary);
-  card.appendChild(body);
-  card.addEventListener('toggle', () => { if (card.open) load(false); });
   return card;
 }

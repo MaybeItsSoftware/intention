@@ -24,8 +24,6 @@ There is one deliberate exception to that second path, described under "Reportin
 
 Requests are processed and returned; conversations are not stored, not logged, and not used to train anything. A running coaching-credit balance (how much of your top-up is left) is stored against that same hashed identifier and decreases as the coach is used; it holds no message content, and it persists so that credit you have paid for survives a server restart.
 
-If you ask the Chrome or Firefox extension for a recovery code — the code you write down so that credit you have paid for is still yours after a reinstall or a lost phone — the backend stores that code alongside the same hashed identifier, so that typing it back in can find your balance again. It holds nothing else: no message content, no device information, and still no name, email or store account. Generating a fresh one replaces the old code rather than adding to it, and if you would rather it did not exist, ask for it to be removed as described under "Your controls" below.
-
 Like almost any web server, the backend also writes an access log of the requests it receives: a request id, the method, the path (never the query string), the response status, how long it took, and the client IP address. Alongside it the backend logs the few events it has to be able to account for — a coach request's token counts and what it cost, a change to a balance, and the fact that a device asked for a balance it had lost — each against the same one-way hashed identifier described above. None of it contains message content or an entitlement token. It exists to debug outages, to reconcile spend, and to spot abuse.
 
 ## What Intention stores locally
@@ -78,19 +76,15 @@ The store's own purchase receipt is also sent to Intention's backend each time y
 
 ### Requests about your coaching credit
 
-Coaching credit involves several further requests to Intention's backend. None of them carries any part of a conversation. The two described in detail below are the ones worth spelling out, because of what they could otherwise be mistaken for; the rest are the ordinary machinery of a purchase and are listed after them.
+Coaching credit involves several further requests to Intention's backend. None of them carries any part of a conversation. The one described in detail below is the one worth spelling out, because of what it could otherwise be mistaken for; the rest are the ordinary machinery of a purchase and are listed after it.
 
 - **Looking for credit that a reinstall left behind** (`POST /v1/entitlement/recover`). Coaching credit is attached to a random identifier your device generates once and keeps — Apple's Keychain, or the Android app-backup file described under "Your controls" — because there is no account behind it to look you up by. When this device holds no working coaching credit, and only then, the app asks the backend whether a balance is still attached to that identifier. It sends the identifier and which store you bought through, and nothing else: no name, no email, no store account, no message content. Nothing is written to the backend's records on either the hit or the miss — the identifier you sent is not stored, and a miss creates nothing at all; a hit is noted in the ordinary server log described above, as the same one-way hash the log already carries for a coach request. Its answer is either your balance or "nothing here". A "nothing here" is remembered locally for 24 hours so the question isn't repeated on every settings open, which makes this at most one request per device per day; a "here it is" ends the asking altogether. Pressing "Restore credit from a previous install" in Settings sends exactly the same request on demand.
 
   We spell this one out because of what it could be mistaken for. A request that goes out per install, on a schedule, carrying an identifier that survives reinstalls, is shaped like an "is this copy still out there" ping — the very thing Intention deliberately does not do (there is no analytics, no crash reporting, and no uninstall callback). It exists only to give people back credit they paid for, it is not sent on the custom-API-key path, and this paragraph is here so that the shape of it is on the record rather than left to be discovered.
 
-- **Your recovery code** (`POST /v1/entitlement/recovery-code`). Sent when you press "Show my recovery code", when you ask for a new one, and — on the one screen that appears immediately after a purchase, where writing the code down is the whole point — when that screen opens. It is never sent merely because you opened Settings: the block is shown open (it appears only in Chrome and Firefox, where the written-down code is the only way back to your credit), but it holds the code behind that press precisely so that opening Settings is not a request. It is authenticated with the entitlement token above and sends nothing but that request; what the backend keeps as a result is described under "What the developer collects".
-
-  If your credit was bought before this feature existed, showing the code for the first time also re-sends your store receipt to `POST /v1/entitlement/verify` — the same receipt, to the same place, as when you bought it. It is how the backend recognises the older session; it grants nothing and buys nothing.
-
 ### The page your browser opens after you remove the extension
 
-When you remove Intention from Chrome or Firefox, the browser opens a public page on GitHub explaining what was lost and how to recover coaching credit ([docs/LEAVING.md](docs/LEAVING.md)). This happens through `chrome.runtime.setUninstallURL`, entirely inside the browser and *after* Intention is already gone: no code of ours runs, there is no callback, and the address carries no identifier of any kind. **That request goes to GitHub, not to Intention — Intention is not told that you uninstalled it, and has no way to be.**
+When you remove Intention from Chrome or Firefox, the browser opens a public page on GitHub explaining what was lost ([docs/LEAVING.md](docs/LEAVING.md)). This happens through `chrome.runtime.setUninstallURL`, entirely inside the browser and *after* Intention is already gone: no code of ours runs, there is no callback, and the address carries no identifier of any kind. **That request goes to GitHub, not to Intention — Intention is not told that you uninstalled it, and has no way to be.**
 
 It deliberately does not point at Intention's backend, which writes the access log described above for every request it receives. Pointing it there would have turned every removal into a logged event — an uninstall ping — which is precisely the thing this policy says Intention does not do.
 
@@ -98,12 +92,10 @@ The remaining coaching-credit requests, for completeness, all to the same backen
 
 - `POST /v1/entitlement/verify` — hands the store's receipt over to be checked with Apple or Google. Sent when you buy credit, and again if a stored entitlement stops verifying or needs re-stamping.
 - `POST /v1/entitlement/refresh` — asks what your balance is now, using the token you already hold. Sent when the app has reason to think its cached copy is stale.
-- `POST /v1/entitlement/redeem` — sent when you type a code in, and carries only that code.
-- `POST /v1/entitlement/code` — mints the short-lived code that links a browser to credit bought in the app. Sent when you press "Link a browser".
 
 Apart from all of the above, from the requests to the site itself described earlier, and from a report you choose to send, Intention makes no network requests on any platform.
 
-Where "not on the custom-API-key path" is claimed above, it means the request is not made *because of* coaching: the recovery requests check the route and ask nothing on it. It does not mean the four requests in this list are unreachable — if you bought coaching credit and later switched to your own key, pressing a button that is about that credit still sends the request that button is for. Nothing about your conversations goes with it, on any path.
+Where "not on the custom-API-key path" is claimed above, it means the request is not made *because of* coaching: the recovery requests check the route and ask nothing on it. It does not mean the requests in this list are unreachable — if you bought coaching credit and later switched to your own key, pressing a button that is about that credit still sends the request that button is for. Nothing about your conversations goes with it, on any path.
 
 ## Reporting a coach message
 
@@ -137,7 +129,7 @@ On the coaching-credit path these are sent to Intention's backend and on to its 
 - View your purchase history in the App Store or Google Play. Coaching credit is a one-time top-up, not a subscription — there's nothing recurring to manage or cancel.
 - Save a copy of your blocklist from Settings → Blocking → Leaving Intention. The file it writes stays on your device; nothing is uploaded, and it deliberately excludes your API key, your coaching credit and your usage history.
 - Uninstalling the extension or app deletes all locally stored data (blocklist, stats, context, entitlement, key) per your browser's or OS's standard app/extension-storage cleanup behavior. One exception on Android: the random identifier your coaching credit is attached to is included in Android's own app backup, deliberately, so that credit you have paid for is still yours if you reinstall. It is a random value with nothing else attached to it, and clearing the app's backup through your Google account removes it.
-- There is no account and no telemetry opt-out to make. If you want the developer-side record of your balance removed, open an issue — the only data held is the hashed account identifier, the remaining balance, and any recovery code you asked for, all described above.
+- There is no account and no telemetry opt-out to make. If you want the developer-side record of your balance removed, open an issue — the only data held is the hashed account identifier, and the remaining balance, both described above.
 
 ## Changes to this policy
 

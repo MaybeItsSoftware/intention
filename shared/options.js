@@ -487,7 +487,7 @@ function wireCustomKeySection(state) {
   document.getElementById('custom-key-summary-note').textContent =
     BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
   document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
-    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here switches the coach back to coaching credit.'
+    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here turns the coach off until you add another.'
     : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
 
   const provSel = document.getElementById('provider-select-2');

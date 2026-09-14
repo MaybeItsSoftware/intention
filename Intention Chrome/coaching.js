@@ -185,11 +185,6 @@ async function showPaywall() {
         backendUrl: config?.backendUrl
       });
       await afterUnlock(entitlement);
-    },
-    onRedeem: async (code) => {
-      const entitlement = await redeemAccessCode(code, config?.backendUrl);
-      if (!entitlementIsActive(entitlement)) throw new Error("That code isn't active.");
-      await afterUnlock(entitlement);
     }
     // Deliberately no onRedeemStoreCode here. This paywall is always compact
     // (see above), and renderPaywall only offers the store's redemption sheet

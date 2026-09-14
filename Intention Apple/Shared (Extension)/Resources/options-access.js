@@ -228,17 +228,8 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       await rerender();
       await onAccessChanged();
     },
-    onRedeem: async (code) => {
-      const backendUrl = await currentBackendUrl();
-      const entitlement = await redeemAccessCode(code, backendUrl);
-      if (!entitlementIsActive(entitlement)) throw new Error('That code isn\'t active.');
-      await persistEntitlement(entitlement);
-      await rerender();
-      await onAccessChanged();
-    },
     // A store-issued code (App Store promo / Play promo), redeemed through
-    // the store's own sheet — a different thing from onRedeem's access code,
-    // which only moves an existing balance to a browser. This one grants.
+    // the store's own sheet. This one grants.
     onRedeemStoreCode: async () => {
       const result = await redeemStoreCode();
       if (!result || result.status === 'cancelled') return;
@@ -266,29 +257,6 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       await verifyAndStore(result.platform || storePlatform(), result.receipt);
       await rerender();
       await onAccessChanged();
-    },
-    onLinkBrowser: async () => {
-      const backendUrl = await currentBackendUrl();
-      return requestAccessCode(entitlement, backendUrl);
-    },
-    // The written-down code, shown wherever there is a session that may mint
-    // one. Which sessions those are is billing.js's canMintRecoveryCode, and
-    // the paywall applies it rather than this file: a browser that redeemed a
-    // fifteen-minute link code from a phone holds a bearer good enough to spend
-    // the balance but not to escalate itself into a permanent credential, and
-    // the server has always refused it. What changed is that we no longer offer
-    // the button and then print an error — it says where the code lives.
-    //
-    // onUpgrade catches the other half. A device that bought its credit before
-    // the server stamped sessions gets its receipt re-verified mid-request, and
-    // persisting the freshly stamped token here is what makes that a one-time
-    // upgrade rather than something every settings open pays for again.
-    onShowRecoveryCode: async ({ rotate = false } = {}) => {
-      const backendUrl = await currentBackendUrl();
-      return requestRecoveryCode(entitlement, backendUrl, {
-        rotate,
-        onUpgrade: (upgraded) => persistEntitlement(upgraded)
-      });
     },
     // The manual form of the silent check, for the person who has just
     // restored a backup or signed back into their store account and knows more

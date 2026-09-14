@@ -1626,10 +1626,8 @@ function cleanEntitlement(entitlement) {
     source: String(entitlement.source || ''),
     token: String(entitlement.token || ''),
     // How the session behind that token proved itself, as the server stamped
-    // it. The options page reads it to decide whether a recovery code may be
-    // offered at all (canMintRecoveryCode in billing.js), so like
-    // recoveryCheckedAt below it has to be on this list or it is dropped on
-    // every save and the page re-learns nothing.
+    // it. Like recoveryCheckedAt below it has to be on this list or it is
+    // dropped on every save.
     src: String(entitlement.src || ''),
     receipt: entitlement.receipt || null,
     balanceMicros: Number(entitlement.balanceMicros || 0),
