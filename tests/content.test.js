@@ -1799,3 +1799,54 @@ describe('an unfinished setup on a site where only some parts are blocked', () =
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Always-allowed accounts, with the worker dead
+// ---------------------------------------------------------------------------
+//
+// The storage path has to reach the worker's verdict on its own, and on Safari
+// it usually is the path. An allowed account's page opens here, a move off it
+// gates, and a video that only a lookup could vouch for stays gated — the
+// content script cannot make that lookup, so it must not guess.
+describe('an always-allowed account, decided from storage alone', () => {
+  const withAccounts = (href, domain = 'instagram.com', allowedAccounts = ['natgeo']) => loadContent({
+    storage: {
+      setupComplete: true,
+      blockedDomains: [domain],
+      domainLimits: { [domain]: { maxGrants: 3, allowedAccounts } }
+    },
+    dom: { href },
+    sendMessage: () => {}
+  });
+
+  it('leaves the account\'s profile open', async () => {
+    vi.useFakeTimers();
+    const dom = withAccounts('https://www.instagram.com/natgeo/');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(false);
+  });
+
+  it('gates everyone else', async () => {
+    vi.useFakeTimers();
+    const dom = withAccounts('https://www.instagram.com/someoneelse/');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  it('gates when an in-page move leaves the account', async () => {
+    vi.useFakeTimers();
+    const dom = withAccounts('https://www.instagram.com/natgeo/');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(false);
+    dom.window.location.href = 'https://www.instagram.com/explore/';
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  it('keeps a YouTube video gated, since only the worker can ask whose it is', async () => {
+    vi.useFakeTimers();
+    const dom = withAccounts('https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com', ['veritasium']);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+});

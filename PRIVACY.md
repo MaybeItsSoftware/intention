@@ -72,6 +72,8 @@ Either way, handling by the LLM provider is governed by that provider's privacy 
 
 To fill in that description of what you were opening, your device may also make one request **to the site itself** — YouTube's, TikTok's or Reddit's public preview endpoint, or, for anything else, a plain cookie-less fetch of the page's `<head>` to read its title. It carries no cookies, so it always sees the logged-out version of the page, and it goes to that site, not to Intention. The result is cached only for the current browsing session and is never written to disk.
 
+If you have told Intention to always allow particular YouTube channels, opening a YouTube video on a blocked YouTube also sends that video's address to YouTube's same public preview endpoint, so Intention can tell whose video it is before deciding whether to stop you. It goes only to YouTube, carries no cookies, happens only when you have such a list, and the answer (the channel's handle) is kept in memory only, never on disk.
+
 The store's own purchase receipt is also sent to Intention's backend each time you buy coaching credit, so it can be verified with Apple or Google. Apple and Google receive your payment details; Intention never does.
 
 ### Requests about your coaching credit

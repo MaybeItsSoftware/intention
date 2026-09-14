@@ -1277,6 +1277,10 @@ function describePendingChange(p, labels) {
     case 'increase_app_limit': return `${name}: ${describeIntention(resolveIntention(p.newValue))}`;
     case 'narrow_block_scope':
     case 'narrow_app_block_scope': return `Block less of ${name}`;
+    case 'allow_accounts': {
+      const handles = (Array.isArray(p.newValue) ? p.newValue : []).map(h => `@${h}`);
+      return `Always allow ${handles.join(', ') || 'an account'} on ${name}`;
+    }
     case 'disable_all': return 'Turn off all blocking';
     case 'decrease_leave_delay': return `Cool-off: ${formatLeaveDelay(p.newValue) || 'none'}`;
     default: return 'A change to your rules';

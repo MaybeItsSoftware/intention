@@ -1023,11 +1023,16 @@ async function checkFromStorage(host) {
   //
   // resolvePartVerdict fails closed: a malformed entry, an id from a newer
   // build inside an 'only' list, an address it cannot parse, all gate.
-  matchedPartRule = hasPartRule(partEntry) ? sanitizePartRule(partEntry) : null;
+  //
+  // An always-allowed account opens its pages here too, wherever the address
+  // names the account. A YouTube video does not, and its channel can only be
+  // looked up by the worker — so with the worker dead that one case gates,
+  // which is the direction this path has to be wrong in.
+  matchedPartRule = hasPageRule(partEntry) ? pageRuleFor(partEntry) : null;
   const partVerdict = resolvePartVerdict(partEntry, window.location.href);
   matchedPartId = partVerdict.partId;
   if (!partVerdict.gated) {
-    armUrlWatch("parts", matchedPartRule || sanitizePartRule(partEntry));
+    armUrlWatch("parts", matchedPartRule || pageRuleFor(partEntry));
     subscribePartRuleChanges();
     setupInterruptionListener();
     return;
@@ -1371,7 +1376,7 @@ function subscribePartRuleChanges() {
       if (area !== "local" || !changes || !changes.domainLimits) return;
       if (!urlWatchReasons.parts || handled) return;
       const entry = limitEntryFor(matchedDomain, { domainLimits: changes.domainLimits.newValue || {} });
-      if (!hasPartRule(entry)) {
+      if (!hasPageRule(entry)) {
         // No rule left to be outside of: either the whole host is blocked
         // again, or it is not blocked at all. Both answers come from the
         // ordinary path, so hand it back to it.
@@ -1379,7 +1384,7 @@ function subscribePartRuleChanges() {
         runCheck();
         return;
       }
-      armUrlWatch("parts", sanitizePartRule(entry));
+      armUrlWatch("parts", pageRuleFor(entry));
       // armUrlWatch banks the current address as "already judged", which is
       // exactly wrong here: the address has not moved, the RULE has, and this
       // page has to be judged again under it.

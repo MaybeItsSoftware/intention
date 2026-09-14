@@ -4494,3 +4494,140 @@ describe('the config the leaving card reads', () => {
     expect(chrome.storage._store.setupCompletedAt).toBeGreaterThanOrEqual(before);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Always-allowed accounts
+// ---------------------------------------------------------------------------
+//
+// An account on the list opens its own pages and nothing else: no gate, no
+// open spent, no backstop. Adding one is a loosening like any other — it waits
+// for tomorrow unless the coach agrees — and a whole-map write cannot sneak
+// one in. A YouTube video needs one lookup to know its channel, and every way
+// that lookup can fail leaves the video gated.
+describe('always-allowed accounts in the worker', () => {
+  const ALLOW = (entry = {}) => ({
+    ...CONFIGURED,
+    setupComplete: true,
+    blockedDomains: ['instagram.com', 'youtube.com'],
+    domainLimits: {
+      ...CONFIGURED.domainLimits,
+      'instagram.com': { maxGrants: 3, allowedAccounts: ['natgeo'], ...entry },
+      'youtube.com': { maxGrants: 3, allowedAccounts: ['veritasium'] }
+    }
+  });
+  const WATCH = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+  const oembed = (authorUrl, status = 200) => makeMockFetch((url) =>
+    (String(url).startsWith('https://www.youtube.com/oembed') ? { status, json: { author_url: authorUrl } } : { status: 404, json: {} }));
+  const lookupsIn = (fetch) => fetch.calls.filter(c => String(c.url).includes('/oembed?format=json&url='));
+
+  it('does not gate the account\'s profile, and hands the page the rule to watch', async () => {
+    const { ctx } = loadBackground({ seed: ALLOW() });
+    const res = await ctx.checkPageMatch('www.instagram.com', 3, null, 'https://www.instagram.com/natgeo/');
+    expect(res.isBlocked).toBe(false);
+    expect(res.matchedDomain).toBe('instagram.com');
+    expect(res.partRule).toEqual({ scope: 'all', parts: [], allowedAccounts: ['natgeo'] });
+  });
+
+  it('still gates everyone else, and a post whose address names nobody', async () => {
+    const { ctx } = loadBackground({ seed: ALLOW() });
+    expect((await ctx.checkPageMatch('www.instagram.com', 3, null, 'https://www.instagram.com/someone/')).isBlocked).toBe(true);
+    expect((await ctx.checkPageMatch('www.instagram.com', 3, null, 'https://www.instagram.com/p/C1aBcDeF/')).isBlocked).toBe(true);
+  });
+
+  it('drops the host redirect, since the address decides now', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { ...ALLOW(), blockedDomains: ['instagram.com', 'reddit.com'] } });
+    const dnr = statefulDnr(chrome);
+    await ctx.syncBlockingRules();
+    expect(dnr.redirectedDomains()).toEqual(['||reddit.com^']);
+  });
+
+  it('stands the backstop down on the account\'s page, and not elsewhere', async () => {
+    const { ctx, chrome } = loadBackground({ seed: ALLOW() });
+    chrome.tabs._byId[4] = { id: 4, url: 'https://www.instagram.com/natgeo/' };
+    await ctx.enforceGateBackstop(4, 'https://www.instagram.com/natgeo/');
+    expect(chrome.tabs._updates).toHaveLength(0);
+    chrome.tabs._byId[4] = { id: 4, url: 'https://www.instagram.com/explore/' };
+    await ctx.enforceGateBackstop(4, 'https://www.instagram.com/explore/');
+    expect(chrome.tabs._updates).toHaveLength(1);
+  });
+
+  describe('a YouTube video', () => {
+    it('opens once YouTube says the channel is on the list, and asks only once', async () => {
+      const fetch = oembed('https://www.youtube.com/@Veritasium');
+      const { ctx } = loadBackground({ seed: ALLOW(), fetch });
+      const res = await ctx.checkPageMatch('www.youtube.com', 3, null, WATCH);
+      expect(res.isBlocked).toBe(false);
+      expect(lookupsIn(fetch)).toHaveLength(1);
+      expect(lookupsIn(fetch)[0].init.credentials).toBe('omit');
+      // The next check of the same video reuses the answer.
+      await ctx.checkPageMatch('www.youtube.com', 3, null, `${WATCH}&t=5`);
+      expect(lookupsIn(fetch)).toHaveLength(1);
+    });
+
+    it.each([
+      ['another channel', () => oembed('https://www.youtube.com/@someoneelse')],
+      ['no handle in the answer', () => oembed('https://www.youtube.com/channel/UC123')],
+      ['an error status', () => oembed('https://www.youtube.com/@veritasium', 500)],
+      ['a network failure', () => makeMockFetch(() => { throw new Error('offline'); })]
+    ])('stays gated on %s', async (_why, makeFetch) => {
+      const { ctx } = loadBackground({ seed: ALLOW(), fetch: makeFetch() });
+      expect((await ctx.checkPageMatch('www.youtube.com', 3, null, WATCH)).isBlocked).toBe(true);
+    });
+
+    it('never asks when there is no list', async () => {
+      const fetch = oembed('https://www.youtube.com/@veritasium');
+      const seed = ALLOW();
+      delete seed.domainLimits['youtube.com'].allowedAccounts;
+      const { ctx } = loadBackground({ seed, fetch });
+      expect((await ctx.checkPageMatch('www.youtube.com', 3, null, WATCH)).isBlocked).toBe(true);
+      expect(lookupsIn(fetch)).toHaveLength(0);
+    });
+  });
+
+  describe('writing the list', () => {
+    it('lets saveSettings take an account off, and holds back one put on', async () => {
+      const { ctx, chrome } = loadBackground({ seed: ALLOW({ allowedAccounts: ['natgeo', 'nasa'] }) });
+      await ctx.saveSettings({
+        domainLimits: { 'instagram.com': { maxGrants: 3, allowedAccounts: ['nasa', 'someoneelse'] } }
+      });
+      expect(chrome.storage._store.domainLimits['instagram.com'].allowedAccounts).toEqual(['nasa']);
+    });
+
+    it('stores an emptied list as no key at all', async () => {
+      const { ctx, chrome } = loadBackground({ seed: ALLOW() });
+      await ctx.saveSettings({ domainLimits: { 'instagram.com': { maxGrants: 3, allowedAccounts: [] } } });
+      expect('allowedAccounts' in chrome.storage._store.domainLimits['instagram.com']).toBe(false);
+    });
+
+    it('queues an addition from settings for tomorrow', async () => {
+      const { ctx, chrome } = loadBackground({ seed: ALLOW() });
+      const resp = await ctx.handleMessage(
+        { action: 'applySettingChange', changeType: 'allow_accounts', domain: 'instagram.com', newValue: ['nasa'] },
+        EXT_PAGE
+      );
+      expect(resp.scheduled).toBe(true);
+      expect(chrome.storage._store.domainLimits['instagram.com'].allowedAccounts).toEqual(['natgeo']);
+      const [pending] = chrome.storage._store.pendingChanges;
+      expect(pending).toMatchObject({ changeType: 'allow_accounts', domain: 'instagram.com', newValue: ['nasa'] });
+      expect(pending.effectiveAt).toBe(ctx.nextDayStart(pending.requestedAt));
+    });
+
+    it('merges an approved addition with whatever is stored when it applies', async () => {
+      const { ctx, chrome } = loadBackground({ seed: ALLOW() });
+      const dnr = statefulDnr(chrome);
+      const res = await ctx.applySettingChange({ changeType: 'allow_accounts', domain: 'instagram.com', newValue: ['@NASA', 'natgeo', '../bad'] });
+      expect(res.allowedAccounts).toEqual(['natgeo', 'nasa']);
+      const entry = chrome.storage._store.domainLimits['instagram.com'];
+      expect(entry.allowedAccounts).toEqual(['natgeo', 'nasa']);
+      expect(entry.maxGrants).toBe(3);
+      expect(dnr.redirectedDomains()).toEqual([]);
+    });
+
+    it('refuses an addition for a site it cannot read accounts on, or with nothing usable', async () => {
+      const { ctx, chrome } = loadBackground({ seed: { ...ALLOW(), blockedDomains: ['instagram.com', 'reddit.com'] } });
+      expect(await ctx.applySettingChange({ changeType: 'allow_accounts', domain: 'reddit.com', newValue: ['spez'] })).toBe(null);
+      expect(await ctx.applySettingChange({ changeType: 'allow_accounts', domain: 'instagram.com', newValue: ['not a handle'] })).toBe(null);
+      expect(chrome.storage._store.domainLimits['reddit.com']).toEqual(SPENT);
+    });
+  });
+});

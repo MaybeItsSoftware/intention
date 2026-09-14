@@ -1096,6 +1096,17 @@ Judge the new wording, not the act of editing. A genuine correction \u2014 they 
     changeDesc = `NARROW what is blocked on ${domain}. Right now: ${currentValue}. They want: ${newValue} \u2014 which leaves more of ${domain} open to them without ever talking to you again.
 
 Judge the shape of the carve-out, not the act of asking. A part with a definite end \u2014 messages, one named subreddit, one specific channel \u2014 is a real errand and a fine thing to leave open, and you should say so. A part with no end \u2014 a feed, a Reels tab, an explore page \u2014 is the thing they blocked the ${kind} FOR, and letting it through under a narrower name is the block with extra steps.`;
+  } else if (changeType === 'allow_accounts') {
+    // Sentences again, rendered in background.js by
+    // describeAllowedAccountsForHuman, for the same "[object Object]" reason.
+    const asSentence = (value) => (typeof value === 'string' && value.trim())
+      ? value.trim().slice(0, 400)
+      : `no accounts are always allowed on ${domain}`;
+    currentValue = asSentence(currentValue);
+    newValue = asSentence(newValue);
+    changeDesc = `ALWAYS ALLOW a specific account on ${domain}. Right now: ${currentValue}. They want: ${newValue} \u2014 so that account's profile and posts open without an intention in front of them, every time, from now on.
+
+Judge the account, not the act of asking. One person or organisation whose posts are a real reason to be on ${domain} \u2014 a course they follow, a family member, a source their work depends on \u2014 is a bounded thing to leave open, and you should say so. An account that posts an endless stream of entertainment is the feed they blocked, under a single name.`;
   } else if (changeType === 'disable_all') {
     changeDesc = `DISABLE all blocking \u2014 clearing their entire blocklist so NONE of their chosen sites or apps are blocked anymore.`;
   } else if (changeType === 'decrease_leave_delay') {
