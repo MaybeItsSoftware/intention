@@ -42,12 +42,10 @@ PBXPROJ = os.path.join(
 HTML_ROOTS = {
     "Intention Safari (iOS)": [
         os.path.join("Intention Apple", "Shared (App)", "Resources"),
-        os.path.join("Intention Apple", "Shared (App)", "Resources", "Base.lproj"),
         "Intention Chrome",
     ],
     "Intention Safari (macOS)": [
         os.path.join("Intention Apple", "Shared (App)", "Resources"),
-        os.path.join("Intention Apple", "Shared (App)", "Resources", "Base.lproj"),
         "Intention Chrome",
     ],
     "Intention Safari Extension (iOS)": [
