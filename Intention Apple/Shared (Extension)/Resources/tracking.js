@@ -82,8 +82,8 @@ const CONFIG_KEYS = [
   'entitlement',
   'setupComplete',
   // These are configuration, not activity data. They have to cross the App
-  // Group too: otherwise an encrypted restore in the native app updates its
-  // WebView but leaves Safari using the previous coaching mode and reasons.
+  // Group too: otherwise a list restored in the native app updates its
+  // WebView but leaves Safari using the previous reasons and queued changes.
   'serviceReasons', 'pendingChanges',
   // The cool-off the user put on removing Intention. It rides this bridge
   // because on Apple platforms the settings page the user changes it on is the

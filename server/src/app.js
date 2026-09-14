@@ -6,8 +6,7 @@ import {
   adjustBalance, getBalanceMicros, markCredited,
   getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode,
   hasBalanceRecord, generateRecoveryCode, lookupRecoveryCode, hasRecoveryCode,
-  getTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros,
-  getSyncVault, setSyncVault, store
+  getTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
@@ -91,12 +90,6 @@ const RECOVER_FAILS = { limit: 10, windowMs: HOUR };
 const CHAT_LIMIT = { limit: 30, windowMs: MINUTE };
 const CODE_LIMIT = { limit: 10, windowMs: HOUR };
 const RECOVERY_CODE_LIMIT = { limit: 10, windowMs: HOUR };
-// Sync is intentionally manual, so this is generous for ordinary use while
-// still preventing an authenticated token from turning FileStore's fsync path
-// into an unbounded write loop.
-const SYNC_LIMIT = { limit: 60, windowMs: HOUR };
-const MAX_SYNC_CIPHERTEXT_CHARS = 200_000;
-const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
 
 export async function handleRequest({ method, path, headers = {}, body = null, query = {}, ip = '' }, deps = {}) {
   const backing = deps.store || store;
@@ -122,8 +115,6 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
       case '/v1/entitlement/redeem': return redeemEndpoint(body, backing, limiter, ip);
       case '/v1/entitlement/recover': return recoverEndpoint(body, backing, limiter, ip);
       case '/v1/entitlement/recovery-code': return recoveryCodeEndpoint(headers, body, backing, limiter);
-      case '/v1/sync/vault/read': return syncVaultReadEndpoint(headers, backing, limiter);
-      case '/v1/sync/vault/write': return syncVaultWriteEndpoint(headers, body, backing, limiter);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
       case '/v1/report': return reportEndpoint(headers, body, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
@@ -744,68 +735,6 @@ function recoveryCodeEndpoint(headers, body, backing, limiter) {
     productId: claims.productId
   }, { backing, rotate });
   return json(200, issued);
-}
-
-// ---- Encrypted settings sync ---------------------------------------------
-//
-// This service never receives a recovery code, a plaintext profile, or a
-// client-side encryption key. It holds only an AES-GCM IV and ciphertext. The
-// authenticated entitlement token decides *which* opaque slot may be read or
-// written; the recovery code is independently used in the client to unlock
-// its contents. That separation means a database backup is not a list of
-// people's blocked sites, context, or API keys.
-
-function syncVaultReadEndpoint(headers, backing, limiter) {
-  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
-  if (!limiter.check('sync-vault', claims.sub, SYNC_LIMIT.limit, SYNC_LIMIT.windowMs)) {
-    return rateLimited();
-  }
-  return json(200, { vault: getSyncVault(claims.sub, backing) });
-}
-
-function validSyncVault(vault) {
-  if (!vault || typeof vault !== 'object') return false;
-  const { iv, ciphertext } = vault;
-  // AES-GCM's standard 96-bit nonce is exactly 16 base64url characters with
-  // no padding. The ciphertext has a 128-bit auth tag, so it cannot be empty.
-  return typeof iv === 'string' && iv.length === 16 && BASE64URL_RE.test(iv)
-    && typeof ciphertext === 'string' && ciphertext.length >= 22
-    && ciphertext.length <= MAX_SYNC_CIPHERTEXT_CHARS && BASE64URL_RE.test(ciphertext);
-}
-
-function syncVaultWriteEndpoint(headers, body, backing, limiter) {
-  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
-  if (!limiter.check('sync-vault', claims.sub, SYNC_LIMIT.limit, SYNC_LIMIT.windowMs)) {
-    return rateLimited();
-  }
-  if (!validSyncVault(body?.vault)) {
-    return json(400, { error: 'A valid encrypted vault is required.', code: 'bad_request' });
-  }
-  const baseRevision = Number(body?.baseRevision);
-  if (!Number.isSafeInteger(baseRevision) || baseRevision < 0) {
-    return json(400, { error: 'A valid vault revision is required.', code: 'bad_request' });
-  }
-
-  const existing = getSyncVault(claims.sub, backing);
-  const currentRevision = Number(existing?.revision || 0);
-  // Compare-and-set means two devices cannot quietly erase one another's
-  // changes. A client must explicitly download the newer copy before it can
-  // replace it, rather than this endpoint picking a winner behind its back.
-  if (baseRevision !== currentRevision) {
-    return json(409, {
-      error: 'A newer encrypted copy exists. Restore it before uploading again.',
-      code: 'sync_conflict',
-      revision: currentRevision
-    });
-  }
-  const vault = {
-    iv: body.vault.iv,
-    ciphertext: body.vault.ciphertext,
-    revision: currentRevision + 1,
-    updatedAt: Date.now()
-  };
-  setSyncVault(claims.sub, vault, backing);
-  return json(200, { vault });
 }
 
 // ---- Coaching proxy -------------------------------------------------------

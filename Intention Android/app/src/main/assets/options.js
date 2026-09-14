@@ -636,7 +636,6 @@ async function showSettingsView(state) {
 
   await refreshAccessUI('access-paywall');
   wireAccessRefreshOnReturn('access-paywall');
-  setupEncryptedSync();
   await refreshCreditChip();
   bindOnce('credit-chip', 'click', () => {
     setSettingsSection('settings');

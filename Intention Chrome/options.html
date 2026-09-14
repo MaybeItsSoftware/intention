@@ -268,34 +268,6 @@
           <div id="access-status" class="status"></div>
         </section>
 
-        <section class="card" data-section="settings" id="encrypted-sync-card">
-          <h2>Encrypted settings sync</h2>
-          <p class="subtitle">Move your blocking rules and coach context between your own devices without an account. Your separate sync key unlocks the copy; Intention’s server stores only encrypted ciphertext.</p>
-          <ol class="row-info-note">
-            <li>On this device, create and save a sync key, then save an encrypted copy.</li>
-            <li>On a new device, restore coaching access with your normal recovery code first.</li>
-            <li>Enter this sync key there and restore the encrypted copy.</li>
-          </ol>
-          <p class="row-info-note">This does not copy API keys, coaching credit, browsing/activity history, chat transcripts, or active passes. The sync key is only stored on this device if you turn on automatic sync.</p>
-          <label for="sync-key">Sync key</label>
-          <div class="input-group">
-            <input type="password" id="sync-key" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="SYNC-XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX">
-          </div>
-          <button type="button" id="sync-create-key" class="secondary" style="width: 100%;">Create a separate sync key</button>
-          <button type="button" id="sync-upload" class="secondary" style="width: 100%;">Save an encrypted copy from this device</button>
-          <button type="button" id="sync-restore" class="secondary" style="width: 100%; margin-top: 8px;">Restore an encrypted copy to this device</button>
-          <button type="button" id="sync-restore-newer" class="secondary" style="width: 100%; margin-top: 8px;" hidden>Restore the newer encrypted copy</button>
-          <label class="checkbox-row" style="margin-top: 14px;"><input type="checkbox" id="sync-auto"> Automatically save encrypted changes from this device</label>
-          <div id="sync-status" class="status"></div>
-          <details class="advanced-card-body" style="margin-top: 12px;">
-            <summary>Sync diagnostics</summary>
-            <p class="subtitle">Shows only local sync state and whether the encrypted-copy service can be reached. It never includes your settings, recovery code, sync key, API key, or coaching credit.</p>
-            <button type="button" id="sync-diagnostics-refresh" class="secondary" style="width: 100%;">Refresh sync diagnostics</button>
-            <button type="button" id="sync-diagnostics-copy" class="secondary" style="width: 100%; margin-top: 8px;">Copy safe support report</button>
-            <pre id="sync-diagnostics" class="status" aria-live="polite">Not checked yet.</pre>
-          </details>
-        </section>
-
         <section class="card" data-section="settings">
           <h2>Privacy</h2>
           <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
@@ -478,7 +450,6 @@
   <script src="options.js"></script>
   <script src="options-wizard.js"></script>
   <script src="options-access.js"></script>
-  <script src="sync.js"></script>
   <script src="options-lists.js"></script>
   <script src="options-rows.js"></script>
   <script src="options-coach.js"></script>

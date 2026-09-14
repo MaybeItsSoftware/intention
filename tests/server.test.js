@@ -356,55 +356,6 @@ describe('browser access codes', () => {
   });
 });
 
-describe('encrypted settings vault', () => {
-  const vault = {
-    iv: 'aGVsbG8td29ybGQh',
-    ciphertext: 'c2FmZS1lbmNyeXB0ZWQtcHJvZmlsZS10YWc'
-  };
-
-  it('stores and returns only an opaque encrypted payload', async () => {
-    const d = deps();
-    const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
-    const headers = { authorization: `Bearer ${verified.body.token}` };
-
-    const empty = await post('/v1/sync/vault/read', {}, headers, d);
-    expect(empty.status).toBe(200);
-    expect(empty.body.vault).toBeNull();
-
-    const written = await post('/v1/sync/vault/write', { vault, baseRevision: 0 }, headers, d);
-    expect(written.status).toBe(200);
-    expect(written.body.vault).toMatchObject({ ...vault, revision: 1 });
-    expect(Object.keys(written.body.vault).sort()).toEqual(['ciphertext', 'iv', 'revision', 'updatedAt']);
-
-    const read = await post('/v1/sync/vault/read', {}, headers, d);
-    expect(read.status).toBe(200);
-    expect(read.body.vault).toMatchObject({ ...vault, revision: 1 });
-  });
-
-  it('requires a current entitlement and rejects malformed vaults', async () => {
-    expect((await post('/v1/sync/vault/read', {}, {})).status).toBe(401);
-    const d = deps();
-    const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
-    const headers = { authorization: `Bearer ${verified.body.token}` };
-    const bad = await post('/v1/sync/vault/write', {
-      vault: { iv: 'not-a-nonce', ciphertext: 'plain text' }, baseRevision: 0
-    }, headers, d);
-    expect(bad.status).toBe(400);
-  });
-
-  it('does not silently overwrite a copy changed on another device', async () => {
-    const d = deps();
-    const verified = await post('/v1/entitlement/verify', { platform: 'apple', receipt: 'jws' }, {}, d);
-    const headers = { authorization: `Bearer ${verified.body.token}` };
-    await post('/v1/sync/vault/write', { vault, baseRevision: 0 }, headers, d);
-    const conflict = await post('/v1/sync/vault/write', {
-      vault: { ...vault, ciphertext: 'bmV3ZXItdmF1bHQtd2l0aC10YWc' }, baseRevision: 0
-    }, headers, d);
-    expect(conflict.status).toBe(409);
-    expect(conflict.body.code).toBe('sync_conflict');
-  });
-});
-
 // A consumable receipt is spent the moment it is verified, so after a
 // reinstall there is nothing left to re-verify and no live token to refresh.
 // These two routes are the entire answer to "I paid, and the app has

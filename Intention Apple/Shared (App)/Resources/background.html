@@ -131,7 +131,7 @@
     })();
   </script>
   <!-- Load the shared business logic scripts, same order as manifest.json's
-       background.scripts list. All nine, not a subset: background.js's own
+       background.scripts list. All eight, not a subset: background.js's own
        importScripts() call is a no-op in a page context (it only exists in a
        worker), so anything omitted here is simply an undefined global the
        first time a message handler reaches for it. -->
@@ -142,7 +142,6 @@
   <script src="tracking.js"></script>
   <script src="page_context.js"></script>
   <script src="rules.js"></script>
-  <script src="sync-background.js"></script>
   <script src="background.js"></script>
 </head>
 <body>
