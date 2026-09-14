@@ -104,6 +104,12 @@ function showSetupView() {
       try { heading.focus({ preventScroll: true }); } catch (e) {}
     }
     try { window.scrollTo({ top: 0, behavior: 'auto' }); } catch (e) {}
+    // The document no longer scrolls during setup — the page and its one
+    // .setup-scroll region do. Both are reused across pages (every purpose
+    // page is the same section, re-rendered), so without this the second
+    // service would open halfway down the first one's chips.
+    el.scrollTop = 0;
+    el.querySelectorAll('.setup-scroll').forEach((region) => { region.scrollTop = 0; });
     saveSetupDraft();
   };
   showSetupStep = showStep;

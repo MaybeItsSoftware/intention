@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- viewport-fit=cover: the page owns the whole screen and insets itself
+       with env(safe-area-inset-*) — see the setup layout in options.css. On
+       Android the native root pads for the system bars instead and consumes
+       the insets, so env() reads 0 there and nothing is counted twice. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Intention Settings</title>
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="paywall.css">
@@ -44,10 +48,14 @@
       <section class="setup-step setup-page" id="setup-step-apps" hidden>
         <h3 class="setup-question" id="setup-apps-title">Which apps pull you in?</h3>
         <p class="setup-lede" id="setup-apps-subtitle">Tap the ones you want a moment of friction in front of.</p>
-        <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
-        <button type="button" id="setup-apps-recommend-more" class="recommend-more" hidden></button>
+        <!-- The one part of this page allowed to scroll: the catalogue and
+             the picks can outgrow a phone, the question and the buttons can't. -->
+        <div class="setup-scroll">
+          <div id="setup-apps-recommend-grid" class="recommend-grid"></div>
+          <button type="button" id="setup-apps-recommend-more" class="recommend-more" hidden></button>
+          <ul id="setup-apps-list" class="setup-picked"></ul>
+        </div>
         <button type="button" id="setup-open-add-app-btn" class="secondary add-row-btn">+ Find another app</button>
-        <ul id="setup-apps-list" class="setup-picked"></ul>
         <p class="setup-check" id="setup-ios-apps-status" hidden></p>
         <button type="button" id="setup-ios-authorize-btn" class="secondary add-row-btn" hidden>Allow Screen Time</button>
       </section>
@@ -55,10 +63,12 @@
       <section class="setup-step setup-page" id="setup-step-sites" hidden>
         <h3 class="setup-question">Which websites pull you in?</h3>
         <p class="setup-lede">Tap the ones you want a moment of friction in front of.</p>
-        <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
-        <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
+        <div class="setup-scroll">
+          <div id="setup-sites-recommend-grid" class="recommend-grid"></div>
+          <button type="button" id="setup-sites-recommend-more" class="recommend-more" hidden></button>
+          <ul id="setup-websites-list" class="setup-picked"></ul>
+        </div>
         <button type="button" id="setup-open-add-site-btn" class="secondary add-row-btn">+ Type a website</button>
-        <ul id="setup-websites-list" class="setup-picked"></ul>
         <p class="setup-aside" id="setup-sites-empty-hint">Pick at least one site or app to carry on.</p>
       </section>
 
@@ -95,7 +105,7 @@
         <span class="setup-mark" id="setup-reason-mark" aria-hidden="true"></span>
         <h3 class="setup-question" id="setup-reason-question"></h3>
         <p class="setup-lede">Tap any that apply. Leave it blank and the coach will simply ask.</p>
-        <div id="setup-reason-body"></div>
+        <div id="setup-reason-body" class="setup-scroll"></div>
         <button type="button" id="setup-purpose-skip-btn" class="setup-link">Skip the rest</button>
       </section>
 
@@ -111,16 +121,18 @@
       <section class="setup-step setup-page" id="setup-step-done" hidden>
         <p class="setup-tick" aria-hidden="true">✓</p>
         <h3 class="setup-question" id="setup-done-title">Your intentions</h3>
-        <ul class="setup-done-list" id="setup-done-list"></ul>
+        <ul class="setup-done-list setup-scroll" id="setup-done-list"></ul>
         <p class="setup-lede" id="setup-done-note"></p>
       </section>
 
+      <!-- Above the nav rather than under it: under it, an always-reserved
+           status line was a dead band between the buttons and the screen edge. -->
+      <div id="setup-status" class="status"></div>
       <div class="setup-nav">
         <button id="setup-back-btn" class="secondary" type="button">Back</button>
         <button id="setup-next-btn" class="primary" type="button">Continue</button>
         <button id="setup-save-btn" class="primary" type="button" hidden>Start</button>
       </div>
-      <div id="setup-status" class="status"></div>
     </main>
 
     <main id="settings-view" hidden>
