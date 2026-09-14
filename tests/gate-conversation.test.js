@@ -46,6 +46,8 @@ function makeElement(tag = 'div') {
       node.removed = true;
       if (node.parent) node.parent.children = node.parent.children.filter(c => c !== node);
     },
+    attributes: {},
+    setAttribute(name, value) { node.attributes[name] = String(value); },
     addEventListener(type, fn) { (node.handlers[type] = node.handlers[type] || []).push(fn); },
     removeEventListener() {},
     focus() {},
@@ -373,5 +375,250 @@ describe('a superseded response', () => {
     g.conversation.attemptSend('two');
     await settle();
     expect(g.host.granted).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seven-day usage strip on the gate.
+//
+// Both hosts call loadUsageHistory; only the Android app gate hands it a
+// device source. What is pinned here is the edge: which source wins, when the
+// user is offered a trip to Settings (only on an explicit "not granted"), and
+// that coming back from it looks again.
+// ---------------------------------------------------------------------------
+
+function makeUsagePage({ stats = null, lastError = null } = {}) {
+  const usageEl = makeElement();
+  usageEl.hidden = true;
+  // A real element drops its children when textContent is set, which is how
+  // the strip clears itself before a repaint. The shared stub only stores the
+  // string, so model that here.
+  let usageText = '';
+  Object.defineProperty(usageEl, 'textContent', {
+    get: () => usageText,
+    set: (value) => { usageText = String(value); usageEl.children = []; }
+  });
+  const docHandlers = {};
+  const sent = [];
+  const document = {
+    body: makeElement('body'),
+    documentElement: makeElement('html'),
+    hidden: false,
+    createElement: makeElement,
+    getElementById: (id) => (id === 'int-usage' ? usageEl : null),
+    querySelector: () => null,
+    addEventListener(type, fn) { (docHandlers[type] = docHandlers[type] || []).push(fn); },
+    removeEventListener(type, fn) {
+      docHandlers[type] = (docHandlers[type] || []).filter(h => h !== fn);
+    }
+  };
+  const chrome = {
+    runtime: {
+      lastError: null,
+      sendMessage(message, cb) {
+        sent.push(message);
+        chrome.runtime.lastError = lastError;
+        if (cb) cb(stats);
+        chrome.runtime.lastError = null;
+      }
+    }
+  };
+  const sandbox = {
+    document,
+    window: { location: { href: '' }, addEventListener() {}, removeEventListener() {} },
+    console: { log() {}, warn() {}, error() {} },
+    chrome,
+    navigator: { userAgent: 'Chrome/120' },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    Math, JSON, Promise, Error, Object, Array, String, Number, Date
+  };
+  sandbox.globalThis = sandbox;
+  const context = vm.createContext(sandbox);
+  evaluateScripts(context, filesForContext('content', { only: ['report.js', 'gate-ui.js'] }));
+  const fireVisibility = (hidden) => {
+    document.hidden = hidden;
+    for (const fn of [...(docHandlers.visibilitychange || [])]) fn();
+  };
+  return { sandbox, usageEl, sent, docHandlers, fireVisibility };
+}
+
+// Seven days oldest first ending today, as both sources deliver them.
+function week(minutes) {
+  const out = [];
+  const last = minutes.length - 1;
+  minutes.forEach((m, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (last - i));
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    out.push({ date: key, minutes: m });
+  });
+  return out;
+}
+
+const byClass = (node, name) => {
+  const found = [];
+  const walk = (n) => {
+    if (n.className && n.className.split(' ').includes(name)) found.push(n);
+    (n.children || []).forEach(walk);
+  };
+  walk(node);
+  return found;
+};
+const labelOf = (el) => byClass(el, 'int-usage-label')[0].textContent;
+
+describe('formatting the usage line', () => {
+  it('formats minutes as hours and minutes', () => {
+    const { sandbox } = makeUsagePage();
+    expect(sandbox.formatUsageMinutes(0)).toBe('0m');
+    expect(sandbox.formatUsageMinutes(45)).toBe('45m');
+    expect(sandbox.formatUsageMinutes(120)).toBe('2h');
+    expect(sandbox.formatUsageMinutes(134.4)).toBe('2h 14m');
+    expect(sandbox.formatUsageMinutes(-3)).toBe('0m');
+    expect(sandbox.formatUsageMinutes('nope')).toBe('0m');
+  });
+
+  it('says today and the daily average across the seven days shown', () => {
+    const { sandbox } = makeUsagePage();
+    // 700 minutes over 7 days = 100/day; today is 134.
+    expect(sandbox.summariseUsage(week([100, 100, 100, 66, 100, 100, 134])))
+      .toBe('2h 14m today · 1h 40m/day this week');
+  });
+
+  it('leaves the average off when nothing before today has time on it', () => {
+    const { sandbox } = makeUsagePage();
+    expect(sandbox.summariseUsage(week([0, 0, 0, 0, 0, 0, 14]))).toBe('14m today');
+    expect(sandbox.summariseUsage(week([0, 0, 0, 0, 0, 0, 0]))).toBe('Nothing in the last 7 days');
+  });
+});
+
+describe('the usage strip', () => {
+  it('draws seven bars scaled to the busiest day, with today marked', () => {
+    const { sandbox, usageEl } = makeUsagePage();
+    sandbox.renderUsageHistory(usageEl, { source: 'device', days: week([30, 0, 60, 15, 0, 0, 45]) });
+
+    expect(usageEl.hidden).toBe(false);
+    const cols = byClass(usageEl, 'int-usage-day');
+    expect(cols).toHaveLength(7);
+    expect(cols.map(c => c.className.includes('int-usage-today')))
+      .toEqual([false, false, false, false, false, false, true]);
+    const heights = byClass(usageEl, 'int-usage-bar').map(b => b.style.height);
+    expect(heights[2]).toBe('max(2px, 100%)');
+    expect(heights[1]).toBe('0');
+    expect(heights[6]).toBe('max(2px, 75%)');
+    expect(byClass(usageEl, 'int-usage-dow')[6].textContent).toBe('Today');
+    expect(labelOf(usageEl)).toMatch(/^Screen time/);
+    // Readable without seeing the bars.
+    const bars = byClass(usageEl, 'int-usage-bars')[0];
+    expect(bars.attributes.role).toBe('img');
+    expect(bars.attributes['aria-label']).toContain('Today 45m');
+  });
+
+  it("labels Intention's own record as time on passes", () => {
+    const { sandbox, usageEl } = makeUsagePage();
+    sandbox.renderUsageHistory(usageEl, { source: 'intention', days: week([0, 0, 0, 0, 0, 10, 5]) });
+    expect(labelOf(usageEl)).toMatch(/^Time on passes/);
+  });
+
+  // A device reading of zero is a fact worth showing; an empty week of passes
+  // is just an empty chart on a screen already asking something.
+  it('stays hidden for an empty week of passes, but draws an empty device week', () => {
+    const passes = makeUsagePage();
+    passes.sandbox.renderUsageHistory(passes.usageEl, { source: 'intention', days: week([0, 0, 0, 0, 0, 0, 0]) });
+    expect(passes.usageEl.hidden).toBe(true);
+
+    const device = makeUsagePage();
+    device.sandbox.renderUsageHistory(device.usageEl, { source: 'device', days: week([0, 0, 0, 0, 0, 0, 0]) });
+    expect(device.usageEl.hidden).toBe(false);
+    expect(byClass(device.usageEl, 'int-usage-day')).toHaveLength(7);
+  });
+
+  it('offers access with one quiet button, even with no strip to draw', () => {
+    const { sandbox, usageEl } = makeUsagePage();
+    let asked = 0;
+    sandbox.renderUsageHistory(usageEl, { source: 'intention', days: [], onRequestAccess: () => { asked += 1; } });
+    expect(usageEl.hidden).toBe(false);
+    expect(byClass(usageEl, 'int-usage-day')).toHaveLength(0);
+    const grant = byClass(usageEl, 'int-usage-grant');
+    expect(grant).toHaveLength(1);
+    grant[0].click();
+    expect(asked).toBe(1);
+  });
+});
+
+describe('loadUsageHistory: which source the gate shows', () => {
+  it("with no device source, draws Intention's own week from the background", () => {
+    const page = makeUsagePage({ stats: { dailyMinutes: week([0, 0, 20, 0, 0, 0, 10]) } });
+    page.sandbox.loadUsageHistory('reddit.com');
+    expect(page.sent).toEqual([{ action: 'getStatsForDomain', domain: 'reddit.com' }]);
+    expect(labelOf(page.usageEl)).toMatch(/^Time on passes/);
+    expect(byClass(page.usageEl, 'int-usage-grant')).toHaveLength(0);
+  });
+
+  it('prefers the device record when it is granted, without asking the background', () => {
+    const page = makeUsagePage({ stats: { dailyMinutes: week([0, 0, 0, 0, 0, 0, 1]) } });
+    const reads = [];
+    page.sandbox.loadUsageHistory('com.instagram.android', {
+      read: (days, done) => { reads.push(days); done({ granted: true, days: week([90, 80, 70, 60, 50, 40, 30]) }); },
+      requestAccess() {}
+    });
+    expect(reads).toEqual([7]);
+    expect(page.sent).toEqual([]);
+    expect(labelOf(page.usageEl)).toMatch(/^Screen time/);
+    expect(byClass(page.usageEl, 'int-usage-summary')[0].textContent).toBe('30m today · 1h/day this week');
+    expect(byClass(page.usageEl, 'int-usage-grant')).toHaveLength(0);
+  });
+
+  it("falls back to Intention's record and offers access when not granted, then looks again on return", () => {
+    const page = makeUsagePage({ stats: { dailyMinutes: week([0, 0, 0, 0, 0, 5, 3]) } });
+    let granted = false;
+    let opened = 0;
+    const device = {
+      read: (days, done) => done(granted ? { granted: true, days: week([1, 2, 3, 4, 5, 6, 7]) } : { granted: false }),
+      requestAccess: () => { opened += 1; }
+    };
+    page.sandbox.loadUsageHistory('com.instagram.android', device);
+
+    expect(page.sent).toHaveLength(1);
+    expect(labelOf(page.usageEl)).toMatch(/^Time on passes/);
+    const grant = byClass(page.usageEl, 'int-usage-grant')[0];
+    expect(grant.textContent).toBe('Show full screen time for this app');
+
+    grant.click();
+    expect(opened).toBe(1);
+    // Leaving for Settings changes nothing; coming back reads again.
+    page.fireVisibility(true);
+    expect(labelOf(page.usageEl)).toMatch(/^Time on passes/);
+    granted = true;
+    page.fireVisibility(false);
+    expect(labelOf(page.usageEl)).toMatch(/^Screen time/);
+    expect(byClass(page.usageEl, 'int-usage-grant')).toHaveLength(0);
+    // Once: the listener took itself off.
+    expect(page.docHandlers.visibilitychange).toEqual([]);
+  });
+
+  it('does not offer Settings when the device read failed for another reason', () => {
+    const page = makeUsagePage({ stats: { dailyMinutes: week([0, 0, 0, 0, 0, 0, 4]) } });
+    page.sandbox.loadUsageHistory('com.instagram.android', {
+      read: (days, done) => done({ error: true }),
+      requestAccess() {}
+    });
+    expect(labelOf(page.usageEl)).toMatch(/^Time on passes/);
+    expect(byClass(page.usageEl, 'int-usage-grant')).toHaveLength(0);
+  });
+
+  it('survives a device source that throws and a background that cannot answer', () => {
+    const page = makeUsagePage({ stats: null, lastError: { message: 'gone' } });
+    expect(() => page.sandbox.loadUsageHistory('com.instagram.android', {
+      read() { throw new Error('bridge missing'); },
+      requestAccess() {}
+    })).not.toThrow();
+    expect(page.usageEl.hidden).toBe(true);
+  });
+
+  it('does nothing on a host that renders no strip', () => {
+    const page = makeUsagePage();
+    page.sandbox.document.getElementById = () => null;
+    expect(() => page.sandbox.loadUsageHistory('reddit.com')).not.toThrow();
+    expect(page.sent).toEqual([]);
   });
 });

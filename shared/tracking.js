@@ -401,6 +401,16 @@ async function getStatsForDomain(domain) {
 
   recentDays.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
+  // The same week as a fixed series, oldest first and ending today, with the
+  // days that recorded nothing present as zeros. recentDays above is the
+  // coach's evidence and skips empty days; this is what the gate draws its
+  // seven-day strip from, and a strip needs every day in its place. Read out
+  // of the dailyStats already loaded -- no new storage.
+  const dailyMinutes = weekKeys.slice().reverse().map(date => ({
+    date,
+    minutes: Math.round((dailyStats[date] && dailyStats[date][domain] && dailyStats[date][domain].minutes) || 0)
+  }));
+
   return {
     minutesToday: Math.round(minutesToday),
     minutesWeek: Math.round(minutesWeek),
@@ -415,6 +425,7 @@ async function getStatsForDomain(domain) {
     reasonsToday,
     sessionsToday,
     recentDays,
+    dailyMinutes,
     walkedAwayToday,
     walkedAwayWeek
   };
