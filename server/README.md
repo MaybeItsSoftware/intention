@@ -52,9 +52,6 @@ npm start               # or: npm run dev
 | `GET /health` | — | Liveness |
 | `POST /v1/entitlement/verify` | — | `{ platform, receipt, accountToken? }` → credits the top-up (once), returns entitlement + token |
 | `POST /v1/entitlement/refresh` | — | `{ token }` → re-checked token, live balance (never re-grants) |
-| `POST /v1/entitlement/code` | Bearer | Mint a one-time code linking a browser to this account's balance |
-| `POST /v1/entitlement/redeem` | — | `{ code }` → entitlement + token, live balance (takes either code kind) |
-| `POST /v1/entitlement/recovery-code` | Bearer (store or recovery session) | `{ rotate? }` → the account's long-lived recovery code (same one every time unless `rotate`) |
 | `POST /v1/entitlement/recover` | — | `{ platform, accountToken }` → entitlement + token for a balance that already exists, or 404 `no_balance_for_account` |
 | `POST /v1/chat` | Bearer | `{ system, messages, tools }` → `{ text, toolCalls, balanceMicros, balanceGbp }` |
 | `POST /v1/webhooks/apple` | Apple JWS | App Store Server Notifications V2 (refund/revocation clawback) |
@@ -74,7 +71,8 @@ query stops returning it, and Apple's `currentEntitlements` excludes
 consumables by design — so once a device is reinstalled or replaced there is
 no receipt left for `/v1/entitlement/verify` to check, and no live token for
 `/v1/entitlement/refresh` to renew. Without a way back in, paid credit is
-orphaned. Two routes exist for that, and they cover different amounts of loss:
+orphaned. One route exists for that, and it covers a reinstall on the same
+device, not a lost one:
 
 - **The account id survived.** Apple keeps it in the Keychain
   (`kSecAttrSynchronizable`), Android in `intention_billing.xml`, which Auto
@@ -87,62 +85,21 @@ orphaned. Two routes exist for that, and they cover different amounts of loss:
   in front of it, and the endpoint **writes nothing on either the hit or the
   miss path** — a miss that created a zero balance would make every later
   guess of that UUID succeed.
-- **Nothing survived.** `POST /v1/entitlement/recovery-code`, called from
-  inside the app while the entitlement is still live, returns a code the user
-  can write down. It redeems through the ordinary `/v1/entitlement/redeem`
-  box, and unlike the 15-minute browser-link code it is multi-use and lives
-  ~13 months. Calling it again returns the same code; `{ rotate: true }`
-  replaces it and kills the old one.
 
-  Reading it back is free and read-only: only minting and rotating are charged
-  against the 10/hour/subject throttle (opening Settings is not minting), and
-  the TTL is re-stamped at most once a week rather than on every read, because
-  each re-stamp is two whole-ledger `fsync`s on `FileStore` and the read paths
-  — every Settings open, every unauthenticated redeem attempt — are not rare.
-  Against a 400-day TTL a week of resolution is indistinguishable from a
-  millisecond's.
+If nothing survived — a new device, or a wiped one without its backup — the
+credit is gone. There is no account, email or code behind a balance.
 
-  A live bearer is **not** enough to mint one. Tokens carry a `src` claim
-  saying how the session proved itself — `store` (verified a store receipt),
-  `link` (redeemed a 15-minute browser access code), `paper` (redeemed a
-  recovery code), `account` (`/v1/entitlement/recover`) — and only `store` and
-  `paper` may mint or rotate. Otherwise a browser access code, whose whole
-  guarantee is that it is single-use, could be escalated into a permanent
-  multi-use credential, and `{ rotate: true }` would let its holder silently
-  invalidate the code the owner has on paper. A token minted before `src`
-  existed is refused too.
-
-  That last case is every device that was already paying when this shipped, so
-  it needs a way out, and re-verification is not something that happens by
-  itself: a consumable never returns through `Transaction.unfinished` or Play's
-  INAPP query, and `/v1/entitlement/refresh` carries the missing claim forward
-  unchanged, so a legacy session would otherwise stand until the token's
-  absolute 365-day lifetime ran out. The way out is on the client and it is
-  explicit: on this 403, `billing.js`'s `requestRecoveryCode` re-posts the
-  **stored** receipt to `/v1/entitlement/verify`, which mints a properly
-  stamped `store` token, persists it, and retries once. One settings open, not
-  a year. A browser that redeemed a link code holds no receipt and is never
-  upgraded, which is the intent — the client reads `src` off the entitlement
-  response and doesn't offer the button there at all, rather than offering one
-  that can only 403.
-
-  `src` is therefore echoed in the response body of every mint site as well as
-  sealed in the token. It tells the client nothing it does not already hold —
-  it is a claim in the token in its hand — and without it the client cannot
-  tell a session that may mint from one that never will.
-
-Both code kinds also answer to `bumpTokenVersion`. The subject's version is
-captured on the code record when it is minted and checked at redemption, since
-redemption otherwise mints a token stamped with the *current* version — so
-without the check, the longest-lived credential the server hands out would be
-the one credential revocation could not touch.
+Tokens carry a `src` claim saying how the session proved itself: `store`
+(verified a store receipt) or `account` (`/v1/entitlement/recover`). A refresh
+carries it forward unchanged, and it is echoed in the response body as well as
+sealed in the token.
 
 ### Which subject a verify answers for
 
 `/v1/entitlement/verify` accepts an optional bearer token, and when it is
 valid, current and for the same platform, that token's subject is credited
 instead of the store-attested one. This is what stops a device that recovered
-by code from splitting in two: it holds a token for one subject while its
+its account from splitting in two: it holds a token for one subject while its
 freshly generated local UUID attests as another, so without the override its
 next top-up would credit a balance the user cannot see. The override is
 additive-only and can only ever name a subject the caller already holds a live
@@ -165,10 +122,7 @@ device still needs the client to attach its bearer, because a never-before-
 seen transaction has no credit record to resolve from. Closing that would mean
 a durable attested-subject → owning-subject alias, and the only session that
 could ever write one is a recovery session — which is precisely the session
-that must not be able to permanently re-point a device at another account. So
-a recovered device that never tops up and lets its token lineage lapse (365
-days) has to type its recovery code again. The code is multi-use for exactly
-that reason, and the failure mode is "type it again", not "the money is gone".
+that must not be able to permanently re-point a device at another account.
 
 ## Configuration
 

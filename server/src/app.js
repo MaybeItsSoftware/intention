@@ -4,8 +4,7 @@ import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, safeEqualString, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, markCredited,
-  getCreditRecord, refundTopUp, generateAccessCode, redeemAccessCode,
-  hasBalanceRecord, generateRecoveryCode, lookupRecoveryCode, hasRecoveryCode,
+  getCreditRecord, refundTopUp, hasBalanceRecord,
   getTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros, store
 } from './store.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
@@ -49,11 +48,10 @@ const HOUR = 60 * MINUTE;
 // Per-IP limits on everything reachable without a token, checked before the
 // route switch so expensive work (receipt verification, JWS parsing) never
 // starts for a flood. Sized well above legitimate client behaviour — verify
-// fires on app launch, redeem once per browser link.
+// fires on app launch.
 const IP_LIMITS = {
   '/v1/entitlement/verify': { limit: 30, windowMs: 10 * MINUTE },
   '/v1/entitlement/refresh': { limit: 60, windowMs: 10 * MINUTE },
-  '/v1/entitlement/redeem': { limit: 30, windowMs: HOUR },
   // Unauthenticated by necessity — the whole point is that the caller has
   // nothing left but the account UUID — so this and the miss lockout below
   // are the only things standing in front of it.
@@ -68,12 +66,7 @@ const IP_LIMITS = {
   '/v1/report': { limit: 20, windowMs: HOUR }
 };
 
-// Failed redemptions are tracked separately from volume: a miss means someone
-// is guessing codes, and this bound is what makes the short human-typeable
-// format safe against brute force (32^8 codes at 10 misses/hour/IP).
-const REDEEM_FAILS = { limit: 10, windowMs: HOUR };
-
-// The same shape for /v1/entitlement/recover, and for the same reason: a miss
+// Failed recoveries are tracked separately from volume: a miss
 // means someone is guessing account UUIDs. Ten an hour per IP is what keeps a
 // 122-bit v4 UUID unguessable in practice rather than only in theory.
 //
@@ -88,8 +81,6 @@ const RECOVER_FAILS = { limit: 10, windowMs: HOUR };
 
 // Per-subject limits, checked inside the endpoints once the token is known.
 const CHAT_LIMIT = { limit: 30, windowMs: MINUTE };
-const CODE_LIMIT = { limit: 10, windowMs: HOUR };
-const RECOVERY_CODE_LIMIT = { limit: 10, windowMs: HOUR };
 
 export async function handleRequest({ method, path, headers = {}, body = null, query = {}, ip = '' }, deps = {}) {
   const backing = deps.store || store;
@@ -111,10 +102,7 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
     switch (path) {
       case '/v1/entitlement/verify': return await verifyEndpoint(body, headers, deps, backing);
       case '/v1/entitlement/refresh': return refreshEndpoint(body, backing);
-      case '/v1/entitlement/code': return codeEndpoint(headers, backing, limiter);
-      case '/v1/entitlement/redeem': return redeemEndpoint(body, backing, limiter, ip);
       case '/v1/entitlement/recover': return recoverEndpoint(body, backing, limiter, ip);
-      case '/v1/entitlement/recovery-code': return recoveryCodeEndpoint(headers, body, backing, limiter);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
       case '/v1/report': return reportEndpoint(headers, body, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
@@ -282,11 +270,7 @@ function assertedAccountToken(value) {
 function refreshEndpoint(body, backing) {
   const claims = assertTokenCurrent(verifyToken(body?.token, config.tokenSecret), backing);
   // src rides along unchanged: a refresh proves the token is still live, not
-  // that the session behind it got any stronger. A token minted before src
-  // existed keeps carrying nothing, and stays on the fail-closed side of
-  // recoveryCodeEndpoint until the device re-posts its stored receipt to
-  // /v1/entitlement/verify — which is a thing the client now does, on that
-  // endpoint's own 403, rather than something waited on. See RECOVERY_CODE_SRC.
+  // that the session behind it got any stronger.
   return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing,
     { src: claims.src, priorClaims: claims }));
 }
@@ -516,14 +500,12 @@ async function googleWebhookEndpoint(body, headers, deps, backing, query = {}) {
 // session in front of it apart, which `sub` alone cannot say:
 //
 //   'store'   — verified a store receipt (the paying device)
-//   'link'    — redeemed a 15-minute, single-use browser access code
-//   'paper'   — redeemed a long-lived recovery code
 //   'account' — /v1/entitlement/recover, on a surviving account UUID alone
 //
 // Required rather than defaulted, and read out of an options object rather
-// than a fifth positional, because the one consumer (recoveryCodeEndpoint)
-// fails *closed* on anything it does not recognise. A new mint site that
-// forgets to name itself therefore mints a weaker token, not a stronger one.
+// than a fifth positional, so a new mint site has to say how it proved itself.
+// Nothing reads it to grant anything today; tokens from before the browser
+// codes were removed may still carry 'link' or 'paper'.
 function entitlementResponse(subject, platform, productId, backing, { src, priorClaims = null } = {}) {
   const balanceMicros = getBalanceMicros(subject, backing);
   const now = Date.now();
@@ -548,13 +530,8 @@ function entitlementResponse(subject, platform, productId, backing, { src, prior
     balanceMicros,
     balanceGbp: microsToGbp(balanceMicros),
     balanceCredits: microsToCredits(balanceMicros),
-    // Echoed in the body as well as sealed in the token, because the client
-    // has to know the strength of the session it is holding *before* it offers
-    // an action only some sessions may take. Without it a browser that redeemed
-    // a link code was shown a "Recovery code" button that could only ever come
-    // back 403 — an offered button that always fails being worse than none. It
-    // discloses nothing the caller does not already possess: it is a claim in
-    // the token in their hand.
+    // Echoed in the body as well as sealed in the token, so the client can
+    // store it with the entitlement.
     src,
     // A token proves "known, verified purchaser," not "has balance" — it's
     // always issued so a zero-balance account can still refresh/top up.
@@ -574,52 +551,6 @@ function assertTokenCurrent(claims, backing) {
 
 function microsToGbp(micros) {
   return Math.round(micros / 10000) / 100;
-}
-
-// A signed-in mobile app mints a short-lived code so the same credit balance
-// can unlock the browser extension, where there is no store to buy through.
-function codeEndpoint(headers, backing, limiter) {
-  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
-  if (!limiter.check('code', claims.sub, CODE_LIMIT.limit, CODE_LIMIT.windowMs)) {
-    return rateLimited();
-  }
-  const { code, expiresAt } = generateAccessCode({
-    sub: claims.sub,
-    platform: claims.platform,
-    productId: claims.productId
-  }, { backing });
-  return json(200, { code, expiresAt });
-}
-
-function redeemEndpoint(body, backing, limiter, ip) {
-  if (limiter.atLimit('redeem-fail', ip || 'unknown', REDEEM_FAILS.limit)) {
-    return rateLimited();
-  }
-  // One endpoint, two kinds of code: the 15-minute single-use link code above,
-  // then the long-lived multi-use recovery code. Both are typed into the same
-  // box by someone who has no idea there is a difference, and the volume and
-  // miss limits already in front of this route cover both.
-  const link = redeemAccessCode(body?.code, backing);
-  const claims = link || lookupRecoveryCode(body?.code, backing);
-  // A code is a credential that outlives the token it was minted from, so it
-  // has to answer to bumpTokenVersion too. Redemption goes through
-  // entitlementResponse, which *re-reads* the current version to stamp the
-  // token it issues — so without this check a revoked subject's recovery code
-  // would keep minting fresh, current tokens for ever, and the one revocation
-  // lever the server has would be dead on the longest-lived credential it
-  // hands out. The version at mint time is captured on the code record
-  // (store.js); a record from before that field existed carries 0, which is
-  // also what an unrevoked subject reads, so nothing pre-existing breaks.
-  const revoked = claims && Number(claims.tv || 0) !== getTokenVersion(claims.sub, backing);
-  if (!claims || revoked) {
-    limiter.record('redeem-fail', ip || 'unknown', REDEEM_FAILS.windowMs);
-    // Deliberately the same body either way: which of "no such code",
-    // "already spent" and "revoked" it was is not something a guesser gets
-    // to learn.
-    return json(404, { error: 'That code is not valid or has already been used.', code: 'entitlement_invalid' });
-  }
-  return json(200, entitlementResponse(claims.sub, claims.platform, claims.productId, backing,
-    { src: link ? 'link' : 'paper' }));
 }
 
 // Turning a surviving account id back into a live entitlement.
@@ -674,67 +605,6 @@ function recoverEndpoint(body, backing, limiter, ip) {
 // would re-key — and so orphan — every balance that already exists.
 function accountTokenCandidates(token) {
   return [...new Set([token, token.toLowerCase(), token.toUpperCase()])];
-}
-
-// Which kinds of session may mint or rotate the paper artefact.
-//
-// A live bearer is not enough, because a bearer is exactly what
-// /v1/entitlement/redeem hands to whoever types a browser access code — and
-// that code's whole documented guarantee is that it is single use, so one
-// shared or shoulder-surfed after the fact is already spent. Letting the
-// session behind it mint a recovery code would turn a fifteen-minute,
-// one-shot link into a permanent, multi-use credential, and `{rotate:true}`
-// would let its holder silently 404 the code the owner has written down.
-//
-// So: 'store', the paying device, which can still prove purchase to Apple or
-// Google and is where the recovery code belongs. And 'paper', a session that
-// redeemed a recovery code — it already holds the strongest artefact there
-// is, so re-showing or rotating it escalates nothing. 'link' and 'account'
-// are refused, and so is a token minted before `src` existed.
-//
-// That last case is every device that was already paying when this shipped,
-// which is most of them, so it needs a way out and this comment used to claim
-// one it did not have: nothing re-verifies a store receipt on launch. A
-// consumable is finished at purchase, so it never comes back through
-// Transaction.unfinished or Play's INAPP query to be re-checked, and a refresh
-// carries the missing claim forward unchanged — the legacy session would have
-// stood until the token's 365-day absolute lifetime ran out.
-//
-// The way out is now explicit and client-side: on this 403 the client re-posts
-// its STORED receipt to /v1/entitlement/verify, which mints a properly stamped
-// 'store' token, and retries once (requestRecoveryCode in billing.js). One
-// settings open, not a year. A browser that redeemed a link code holds no
-// receipt and so is never upgraded, which is the intent — it is told where its
-// recovery code actually lives instead of being offered a button that 403s.
-const RECOVERY_CODE_SRC = new Set(['store', 'paper']);
-
-// The paper artefact: minted from inside the app while the entitlement is
-// still live, so that when the device is gone the user has something to type.
-// Idempotent, so re-opening Settings shows the same code rather than issuing
-// a second key to the same balance.
-function recoveryCodeEndpoint(headers, body, backing, limiter) {
-  const claims = assertTokenCurrent(verifyToken(bearer(headers), config.tokenSecret), backing);
-  if (!RECOVERY_CODE_SRC.has(claims.src)) {
-    return json(403, {
-      error: 'A recovery code can only be created on the device that bought the credit.',
-      code: 'store_session_required'
-    });
-  }
-  const rotate = body?.rotate === true;
-  // Charge the throttle to minting only. Opening Settings is an idempotent
-  // read — that is the entire reason the same code comes back every time —
-  // and charging it meant the eleventh visit in an hour answered 429 and no
-  // recovery code, on the screen whose only job is to show one.
-  const minting = rotate || !hasRecoveryCode(claims.sub, backing);
-  if (minting && !limiter.check('recovery-code', claims.sub, RECOVERY_CODE_LIMIT.limit, RECOVERY_CODE_LIMIT.windowMs)) {
-    return rateLimited();
-  }
-  const issued = generateRecoveryCode({
-    sub: claims.sub,
-    platform: claims.platform,
-    productId: claims.productId
-  }, { backing, rotate });
-  return json(200, issued);
 }
 
 // ---- Coaching proxy -------------------------------------------------------
