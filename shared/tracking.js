@@ -148,6 +148,155 @@ async function syncConfigFromNative() {
 }
 
 // ---------------------------------------------------------------------------
+// Website activity → native app (Apple platforms only). One way, by design.
+//
+// dailyStats lives in the Safari extension's own storage, which neither app can
+// read, so the iPhone and Mac apps had no idea how long anyone spent on a
+// blocked site: the dashboard showed app time and nothing else. It cannot ride
+// CONFIG_KEYS — that bridge is two-way, and two writers merging a counter that
+// both of them increment is how minutes get counted twice or lost.
+//
+// So the extension pushes a slimmed copy of its recent days under a source id of
+// its own (one per Safari profile, per device), the native handler keeps one
+// entry per source outside the shared config blob, and the app only ever reads
+// it — adding every source into its own figures (mergeDailyStats below). The
+// app never writes `webActivity`, and nothing pushed here is ever pulled back.
+//
+// Numbers only. Session reasons stay in the extension: the dashboard needs how
+// much and how often, not what the user told the coach.
+const ACTIVITY_PUSH_THROTTLE_MS = 60000;
+const ACTIVITY_PUSH_DAYS = 35;
+const ACTIVITY_NUMERIC_FIELDS = ['minutes', 'grants', 'negotiated', 'walkedAway', 'quickChecks'];
+
+let lastActivityPushAt = 0;
+let activityPushTimer = null;
+
+// Firefox has sendNativeMessage too, with nothing listening. IS_APPLE_BUILD
+// comes from providers.js wherever that is loaded; where it is not (tracking.js
+// on its own) the native-messaging check alone decides.
+function canPushActivity() {
+  if (!hasNativeMessaging()) return false;
+  return typeof IS_APPLE_BUILD !== 'boolean' || IS_APPLE_BUILD;
+}
+
+function activityForNative(dailyStats, keys) {
+  const days = {};
+  for (const k of keys) {
+    const entries = dailyStats && dailyStats[k];
+    if (!entries || typeof entries !== 'object') continue;
+    const out = {};
+    for (const [domain, site] of Object.entries(entries)) {
+      if (!site || typeof site !== 'object') continue;
+      const slim = {};
+      for (const f of ACTIVITY_NUMERIC_FIELDS) {
+        const n = Number(site[f]);
+        if (n > 0) slim[f] = n;
+      }
+      if (Object.keys(slim).length) out[domain] = slim;
+    }
+    if (Object.keys(out).length) days[k] = out;
+  }
+  return days;
+}
+
+async function getActivitySourceId() {
+  const { activitySourceId } = await getStorage(['activitySourceId']);
+  if (activitySourceId) return activitySourceId;
+  const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : `src-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  await setStorage({ activitySourceId: id });
+  return id;
+}
+
+async function pushActivityToNative() {
+  if (!canPushActivity()) return;
+  lastActivityPushAt = Date.now();
+  try {
+    const { dailyStats = {}, setupCompletedAt = 0 } = await getStorage(['dailyStats', 'setupCompletedAt']);
+    const sourceId = await getActivitySourceId();
+    const days = activityForNative(dailyStats, daysAgoKeys(ACTIVITY_PUSH_DAYS));
+    const result = browser.runtime.sendNativeMessage(NATIVE_APP_ID, {
+      action: 'pushActivity',
+      sourceId,
+      days,
+      // The app's streak starts counting from here when the user set Intention
+      // up in Safari rather than in the app.
+      startedAt: Number(setupCompletedAt) || 0
+    });
+    if (result && typeof result.catch === 'function') await result.catch(() => {});
+  } catch (e) {
+    // No native host reachable — ignore.
+  }
+}
+
+// Called after every dailyStats write. Leading edge when the last push is old
+// enough, otherwise one trailing push, so the final minutes of a sitting still
+// arrive rather than waiting for the next write.
+function scheduleActivityPush() {
+  if (!canPushActivity() || activityPushTimer) return;
+  const wait = ACTIVITY_PUSH_THROTTLE_MS - (Date.now() - lastActivityPushAt);
+  if (wait <= 0) {
+    pushActivityToNative();
+    return;
+  }
+  activityPushTimer = setTimeout(() => {
+    activityPushTimer = null;
+    pushActivityToNative();
+  }, wait);
+}
+
+// The app's side: its own dailyStats (app usage on Android, anything the
+// in-app host recorded) plus every pushed source, summed per day and target.
+// Pure, and a no-op returning `local` itself when nothing was pushed — which is
+// always the case inside a browser extension.
+function mergeDailyStats(local, webActivity) {
+  const sources = webActivity && typeof webActivity === 'object' ? Object.values(webActivity) : [];
+  if (!sources.length) return local || {};
+  const merged = {};
+  for (const [k, entries] of Object.entries(local || {})) {
+    merged[k] = {};
+    for (const [d, site] of Object.entries(entries || {})) merged[k][d] = { ...site };
+  }
+  for (const source of sources) {
+    const days = source && source.days;
+    if (!days || typeof days !== 'object') continue;
+    for (const [k, entries] of Object.entries(days)) {
+      if (!entries || typeof entries !== 'object') continue;
+      if (!merged[k]) merged[k] = {};
+      for (const [d, site] of Object.entries(entries)) {
+        if (!site || typeof site !== 'object') continue;
+        const into = merged[k][d] || (merged[k][d] = { minutes: 0, grants: 0, sessions: [] });
+        for (const f of ACTIVITY_NUMERIC_FIELDS) {
+          const n = Number(site[f]);
+          if (n > 0) into[f] = (Number(into[f]) || 0) + n;
+        }
+      }
+    }
+  }
+  return merged;
+}
+
+// Every read-only view of usage goes through here; every write keeps using
+// raw dailyStats. `setupCompletedAt` falls back to the earliest start a source
+// reported, so a Mac app opened after setting up in Safari doesn't show a
+// streak that began today.
+async function getDisplayStats(extraKeys = []) {
+  const stored = await getStorage(['dailyStats', 'webActivity', 'setupCompletedAt', ...extraKeys]);
+  const sources = stored.webActivity && typeof stored.webActivity === 'object' ? Object.values(stored.webActivity) : [];
+  let startedAt = Number(stored.setupCompletedAt) || 0;
+  if (!startedAt) {
+    const starts = sources.map(src => Number(src && src.startedAt) || 0).filter(n => n > 0);
+    if (starts.length) startedAt = Math.min(...starts);
+  }
+  return {
+    ...stored,
+    dailyStats: mergeDailyStats(stored.dailyStats || {}, stored.webActivity),
+    setupCompletedAt: startedAt
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Candidate-site tally — what the suggestion grid ranks on.
 //
 // The grid used to be a fixed list in a fixed order, so someone who only ever
@@ -202,6 +351,7 @@ async function withDailyStats(mutator) {
       for (const old of allKeys.slice(365)) delete dailyStats[old];
     }
   });
+  scheduleActivityPush();
 }
 
 async function recordGrant(domain, minutes, reason, options) {
@@ -313,7 +463,7 @@ async function recordWalkAway(domain) {
 }
 
 async function getStatsForDomain(domain) {
-  const { dailyStats = {}, allTimeStats = {} } = await getStorage(['dailyStats', 'allTimeStats']);
+  const { dailyStats = {}, allTimeStats = {} } = await getDisplayStats(['allTimeStats']);
   const todayKey = dateKey();
   const weekKeys = daysAgoKeys(7);
   const monthKeys = daysAgoKeys(30);
@@ -432,7 +582,7 @@ async function getStatsForDomain(domain) {
 }
 
 async function getUsageLog(days = 30) {
-  const { dailyStats = {} } = await getStorage(['dailyStats']);
+  const { dailyStats = {} } = await getDisplayStats();
   const keys = daysAgoKeys(days);
   const entries = [];
 
@@ -450,7 +600,7 @@ async function getUsageLog(days = 30) {
 }
 
 async function getStatsSummary() {
-  const { dailyStats = {}, setupCompletedAt = 0 } = await getStorage(['dailyStats', 'setupCompletedAt']);
+  const { dailyStats = {}, setupCompletedAt = 0 } = await getDisplayStats();
   const todayKey = dateKey();
   const weekKeys = daysAgoKeys(7);
 

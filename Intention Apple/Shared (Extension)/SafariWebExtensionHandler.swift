@@ -61,6 +61,16 @@ class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             AppGroupStorage.stampExtensionHeartbeat()
             return [ "ok": true ]
 
+        case "pushActivity":
+            // One way: the app reads this and never sends it back. See
+            // pushActivityToNative in tracking.js for why it isn't config.
+            let sourceId = dict["sourceId"] as? String ?? ""
+            let days = dict["days"] as? [String: Any] ?? [:]
+            let startedAt = (dict["startedAt"] as? NSNumber)?.doubleValue ?? 0
+            AppGroupStorage.mergeWebActivity(sourceId: sourceId, days: days, startedAt: startedAt)
+            AppGroupStorage.stampExtensionHeartbeat()
+            return [ "ok": true ]
+
         case "pullConfig":
             AppGroupStorage.stampExtensionHeartbeat()
             return [ "config": AppGroupStorage.configSubset() ]

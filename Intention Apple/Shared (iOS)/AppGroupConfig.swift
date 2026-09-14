@@ -37,4 +37,15 @@ enum AppGroupConfig {
     ]
 
     static let extensionLastSeenAtKey = "extensionLastSeenAt"
+
+    // Website activity pushed by each Safari extension install (tracking.js's
+    // pushActivityToNative). Its own UserDefaults key rather than a field in
+    // the shared JSON blob: the extension writes it every minute of browsing,
+    // and a read-modify-write of the whole blob from another process would
+    // race the app's own writes to chat history and settings. Surfaced to the
+    // app's JS under the same name, read-only.
+    static let webActivityKey = "webActivity"
+    // A source that hasn't pushed in this long is an old profile or a Safari
+    // that's been removed; its days are older than anything shown anyway.
+    static let webActivityStaleAfter: TimeInterval = 35 * 24 * 60 * 60
 }

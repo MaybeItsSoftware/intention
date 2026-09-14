@@ -841,6 +841,9 @@ syncBlockingRules();
 migrateSessionKeys();
 // No-op outside the Safari Web Extension runtime — see tracking.js.
 syncConfigFromNative();
+// Likewise: hands the apps this browser's recent website time, so their
+// dashboards are current as soon as Safari wakes the extension.
+pushActivityToNative();
 
 chrome.action.onClicked.addListener(async () => {
   const optionsUrl = chrome.runtime.getURL('options.html');
@@ -2389,7 +2392,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     const isLeaveChange = changeType === 'uninstall' || changeType === 'decrease_leave_delay';
     let leaveFacts = {};
     if (isLeaveChange) {
-      const leaveStored = await getStorage(['blockedDomains', 'blockedApps', 'leaveDelayMinutes', 'setupCompletedAt', 'dailyStats']);
+      // getDisplayStats rather than raw dailyStats: inside the apps, the days
+      // someone spent in Safari count as days they have been at this too.
+      const leaveStored = await getDisplayStats(['blockedDomains', 'blockedApps', 'leaveDelayMinutes']);
       // When they started. `setupCompletedAt` is written by saveSetup, so
       // anyone who set Intention up before that key existed has none — and
       // the earliest day they have usage for is the same answer reached from
