@@ -937,14 +937,17 @@ describe('somewhere to type a code', () => {
     expect(allText(container)).toContain('Recovery or access code');
   });
 
-  it('renders it on a store build with no credit too', async () => {
+  // The app builds dropped the "Restore coaching credit" box: the store's own
+  // restore and "Restore credit from a previous install" are what remain there.
+  it('does not render it on a store build', async () => {
     const b = bridge();
     b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
     const { ctx, container } = loadPaywall({ window: b, userAgent: ANDROID_UA });
     await ctx.renderPaywall(container, {
       entitlement: null, onRestore: async () => {}, onPurchase: async () => {}, onRedeem: async () => {}
     });
-    expect(byId(container, 'int-pw-code-input')).toBeTruthy();
+    expect(byId(container, 'int-pw-code-input')).toBe(null);
+    expect(allText(container)).not.toContain('Restore coaching credit');
   });
 
   // The compact paywall renders inside a blocked page, which is the worst
@@ -1204,17 +1207,13 @@ describe('restoring credit from a previous install', () => {
 describe('the code box', () => {
   const codeInput = (container) => flatten(container).find(n => n.id === 'int-pw-code-input');
 
-  // On a store build the label says "Recovery or access code" and the hint
+  // In Safari the label says "Recovery or access code" and the hint
   // underneath says to paste the one from the old device — so the shape shown
   // has to be a recovery code's. It is four groups (RECOVERY_BODY_LEN is 16 in
   // server/src/store.js), not the two a browser link code has.
   it('shows the recovery code shape where a recovery code is what is asked for', async () => {
-    const b = bridge();
-    b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
-    const { ctx, container } = loadPaywall({ window: b, userAgent: SAFARI_UA });
-    await ctx.renderPaywall(container, {
-      entitlement: null, onRestore: async () => {}, onPurchase: async () => {}, onRedeem: async () => {}
-    });
+    const { ctx, container } = loadPaywall({ userAgent: SAFARI_UA });
+    await ctx.renderPaywall(container, { entitlement: null, onRedeem: async () => {} });
     expect(allText(container)).toContain('Recovery or access code');
     expect(codeInput(container).placeholder).toBe('INT-XXXX-XXXX-XXXX-XXXX');
   });

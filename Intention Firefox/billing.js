@@ -593,7 +593,7 @@ function cleanProductDesc(title, desc) {
 //   entitlement   currently stored entitlement (may be null)
 //   onPurchase(productId)   -> Promise, called for a store purchase
 //   onRestore()             -> Promise, recovers an interrupted purchase
-//   onRedeem(code)          -> Promise         (byok builds only)
+//   onRedeem(code)          -> Promise         (byok and managed builds)
 //   onRedeemStoreCode()     -> Promise, optional (store builds only)
 //   onUseOwnKey()           -> void, optional  (byok builds only)
 //   onLinkBrowser()         -> Promise, optional (store builds only)
@@ -833,16 +833,7 @@ async function renderPaywall(container, opts = {}) {
     // build cannot tell" and says nothing at all.
     if (!active && accountRestored === false) {
       container.appendChild(el('p', 'int-pw-note',
-        "This looks like a fresh install, so credit you bought before isn't attached to this device yet. "
-        + 'If you saved a recovery code, paste it below — it works straight away.'));
-    }
-
-    // Store builds get the code box too. An Apple user with credit bought in
-    // the app and a Safari extension that cannot see it, and anyone holding a
-    // recovery code from a device they no longer own, both end up here with
-    // nothing to type into otherwise.
-    if (onRedeem && !active && !compact) {
-      container.appendChild(buildCodeRoute({ el, busy, setError, onRedeem, storeMode: true }));
+        "This looks like a fresh install, so credit you bought before isn't attached to this device yet."));
     }
 
     container.appendChild(noticeEl);
@@ -1056,8 +1047,9 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
 // gesture and the server tells them apart: the 15-minute one-time code that
 // links a browser to a phone's balance, and the long-lived recovery code
 // written down before a device was lost. `storeMode` only changes what the box
-// is CALLED — on a browser the likely code is a fresh link from a phone, on a
-// store build it is almost always paper from an install that is gone.
+// is CALLED — on a browser the likely code is a fresh link from a phone, in
+// Safari it is almost always paper from an install that is gone. The app builds
+// themselves (store mode) no longer render it.
 function buildCodeRoute({ el, busy, setError, onRedeem, storeMode = false }) {
   const card = el('div', 'int-pw-route');
   card.appendChild(el('strong', null, storeMode ? 'Restore coaching credit' : 'Use coaching credit'));

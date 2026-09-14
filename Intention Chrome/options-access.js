@@ -306,7 +306,7 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
       const recovered = await recoverStrandedCredit(fresh?.entitlement || null,
         { force: true, route: fresh?.route || null });
       if (!entitlementIsActive(recovered)) {
-        return 'No credit is attached to this device. If you bought credit before, paste your recovery code below.';
+        return 'No credit is attached to this device.';
       }
       await rerender();
       await onAccessChanged();
