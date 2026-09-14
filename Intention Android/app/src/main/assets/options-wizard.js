@@ -913,7 +913,7 @@ function renderWelcomeStep() {
   }
 }
 
-// ---- Step: Safari extension (iOS app only) ----
+// ---- Step: Safari extension (iPhone and Mac apps only) ----
 
 function wireSafariStep() {
   document.getElementById('setup-safari-settings-btn').addEventListener('click', () => {
@@ -941,18 +941,35 @@ async function refreshSafariStatus() {
   const hintEl = document.getElementById('setup-safari-skip-hint');
   const st = await new Promise(resolve => window.intentionExtension.status(resolve));
 
-  // The Settings path moved in iOS 18, so the host reports the one that
-  // matches this device rather than the page guessing. The button below opens
-  // the Settings app itself (iOS has no public deep link into the Extensions
-  // page), so the first step is still spelled out in full for the last few taps.
-  const path = (st && st.settingsPath) || 'Settings → Apps → Safari → Extensions';
+  // The host reports the path that matches this device (it moved in iOS 18,
+  // and the Mac says Settings or Preferences depending on macOS) rather than
+  // the page guessing. On iOS the button opens the Settings app itself (no
+  // public deep link into the Extensions page), so the first step is spelled
+  // out in full; on the Mac it lands on Intention's own row in Safari.
+  const isMac = !!(st && st.platform === 'mac');
+  const path = (st && st.settingsPath) || (isMac ? 'Safari → Settings → Extensions' : 'Settings → Apps → Safari → Extensions');
+  const lede = document.getElementById('setup-safari-lede');
+  if (lede) {
+    lede.textContent = isMac
+      ? 'Website blocking runs inside Safari, and only you can switch it on — macOS doesn\u2019t let an app do it for you.'
+      : 'Website blocking runs inside Safari, and only you can switch it on — iOS doesn\u2019t let an app do it for you.';
+  }
+  settingsBtn.textContent = isMac ? 'Open Safari Settings' : 'Open Settings';
+  const steps = isMac
+    ? [
+      `Click "Open Safari Settings" below. It opens ${path} with Intention selected.`,
+      'Tick the box next to Intention.',
+      'Under Permissions, set it to Allow on every website, or it can only see the sites you approve one at a time.',
+      'This page notices on its own once the box is ticked.'
+    ]
+    : [
+      `Tap "Open Settings" below, then go to ${path}.`,
+      'Turn on Intention Safari Extension.',
+      'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
+      'Come back here and tap "I turned it on" — this page notices on its own once the extension has run.'
+    ];
   listEl.innerHTML = '';
-  for (const text of [
-    `Tap "Open Settings" below, then go to ${path}.`,
-    'Turn on Intention Safari Extension.',
-    'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
-    'Come back here and tap "I turned it on" — this page notices on its own once the extension has run.'
-  ]) {
+  for (const text of steps) {
     const li = document.createElement('li');
     li.textContent = text;
     listEl.appendChild(li);
@@ -964,9 +981,14 @@ async function refreshSafariStatus() {
   openBtn.hidden = active;
   hintEl.hidden = active;
   statusEl.className = active ? 'setup-check ok' : 'setup-check';
+  // The Mac reads the switch itself, so there is no "go and wake it up" step
+  // and no need for the open-Safari button.
+  if (isMac) openBtn.hidden = true;
   statusEl.textContent = active
     ? 'The Safari extension is on and running. Nothing else to do here.'
-    : 'Not running yet. After turning it on, open Safari and load any page once. That’s what wakes the extension up.';
+    : isMac
+      ? 'Not on yet.'
+      : 'Not running yet. After turning it on, open Safari and load any page once. That’s what wakes the extension up.';
 }
 
 // Drops empty answers and anything written about a service the user has since

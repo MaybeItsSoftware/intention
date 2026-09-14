@@ -4,10 +4,16 @@
   }
 
   // Injected into the visible options.html WKWebView (see ViewController.swift's
-  // setUpIOSBridge()). Only needs to shim chrome.runtime.sendMessage/getURL —
+  // setUpNativeBridge()) — in the iPhone app and the Mac app alike. Only needs to shim chrome.runtime.sendMessage/getURL —
   // options.js never touches chrome.storage directly, it always goes through
   // sendBg() -> chrome.runtime.sendMessage() to background.js, which in this
   // app-hosted context runs in the hidden WKWebView owned by BackgroundJSHost.
+  // Set by ViewController just before this script runs. The class lets
+  // options.css size the page for a resizable desktop window rather than a
+  // phone, without any shared JS needing to know which app it is in.
+  const platform = window.__intentionPlatform === 'mac' ? 'mac' : 'ios';
+  document.documentElement.classList.add('platform-' + platform);
+
   window.IntentionCallbacks = {
     _nextId: 1,
     _registry: {},
@@ -114,7 +120,7 @@
   }
 
   window.intentionExtension = {
-    // Resolves { active, settingsPath, lastSeenAt }.
+    // Resolves { active, platform: 'ios' | 'mac', settingsPath, lastSeenAt }.
     status: function(callback) { extensionCall('status', null, callback); },
     openSettings: function(callback) { extensionCall('openSettings', null, callback); },
     openSafari: function(callback) { extensionCall('openSafari', null, callback); },
@@ -132,6 +138,11 @@
     status: function(callback) { billingCall('status', null, callback); },
     manage: function(callback) { billingCall('manage', null, callback); }
   };
+
+  // The Mac has no Screen Time API for third-party apps. Leaving this object
+  // off is what keeps every app-blocking card and wizard step out of the Mac
+  // window (HAS_IOS_APP_BLOCKING in options.js).
+  if (platform === 'mac') return;
 
   window.intentionScreenTime = {
     status: function(callback) { screenTimeCall('status', null, callback); },

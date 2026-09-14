@@ -7,6 +7,34 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AD10C0DE0000000000000A01 /* parts.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006000 /* parts.js */; };
+		AD10C0DE0000000000000A02 /* rules.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006001 /* rules.js */; };
+		AD10C0DE0000000000000A03 /* gate-ui.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006002 /* gate-ui.js */; };
+		AD10C0DE0000000000000A04 /* options-access.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006003 /* options-access.js */; };
+		AD10C0DE0000000000000A05 /* options-coach.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006004 /* options-coach.js */; };
+		AD10C0DE0000000000000A06 /* options-lists.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006005 /* options-lists.js */; };
+		AD10C0DE0000000000000A07 /* options-rows.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006006 /* options-rows.js */; };
+		AD10C0DE0000000000000A08 /* options-wizard.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006007 /* options-wizard.js */; };
+		AD10C0DE0000000000000A09 /* report.js in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005200 /* report.js */; };
+		AD10C0DE0000000000000A0A /* background.html in Resources */ = {isa = PBXBuildFile; fileRef = F7AA81643104FBF47EF49C27 /* background.html */; };
+		AD10C0DE0000000000000A0B /* ios-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 8B14A43335CF347D3C27E481 /* ios-bridge.js */; };
+		AD10C0DE0000000000000A0C /* options.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0742FE985EF00BC0D7F /* options.html */; };
+		AD10C0DE0000000000000A0D /* options.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0702FE985EF00BC0D7F /* options.js */; };
+		AD10C0DE0000000000000A0E /* options.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0772FE985EF00BC0D7F /* options.css */; };
+		AD10C0DE0000000000000A0F /* paywall.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005400 /* paywall.css */; };
+		AD10C0DE0000000000000A10 /* tokens.css in Resources */ = {isa = PBXBuildFile; fileRef = 5275E5AA0000000000005300 /* tokens.css */; };
+		AD10C0DE0000000000000A11 /* providers.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0762FE985EF00BC0D7F /* providers.js */; };
+		AD10C0DE0000000000000A12 /* billing.js in Resources */ = {isa = PBXBuildFile; fileRef = BB10C0DE000000000000FE01 /* billing.js */; };
+		AD10C0DE0000000000000A13 /* coaching.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1012FE985EF00BC0D7F /* coaching.html */; };
+		AD10C0DE0000000000000A14 /* coaching.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1042FE985EF00BC0D7F /* coaching.js */; };
+		AD10C0DE0000000000000A15 /* content.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06D2FE985EF00BC0D7F /* content.css */; };
+		AD10C0DE0000000000000A16 /* prompts.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7F /* prompts.js */; };
+		AD10C0DE0000000000000A17 /* page_context.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06C2FE985EF00BC0D7E /* page_context.js */; };
+		AD10C0DE0000000000000A18 /* tracking.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0722FE985EF00BC0D7F /* tracking.js */; };
+		AD10C0DE0000000000000A19 /* sites.js in Resources */ = {isa = PBXBuildFile; fileRef = 5175E5AA0000000000005001 /* sites.js */; };
+		AD10C0DE0000000000000A1A /* background.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D06E2FE985EF00BC0D7F /* background.js */; };
+		AD10C0DE0000000000000A1B /* fonts in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D1072FE985EF00BC0D7F /* fonts */; };
+		AD10C0DE0000000000000B01 /* BackgroundJSHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6E8DE891D3027AFE96FF98E /* BackgroundJSHost.swift */; };
 		5375E5AA0000000000007000 /* parts.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006000 /* parts.js */; };
 		5375E5AA0000000000007001 /* rules.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006001 /* rules.js */; };
 		5375E5AA0000000000007002 /* gate-ui.js in Resources */ = {isa = PBXBuildFile; fileRef = 5375E5AA0000000000006002 /* gate-ui.js */; };
@@ -60,13 +88,10 @@
 		66B8D03D2FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 66B8D03C2FE985EF00BC0D7F /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		66B8D0472FE985EF00BC0D7F /* Intention Safari Extension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 66B8D0462FE985EF00BC0D7F /* Intention Safari Extension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		66B8D04C2FE985EF00BC0D7F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0112FE985EE00BC0D7F /* Main.html */; };
-		66B8D04D2FE985EF00BC0D7F /* Main.html in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0112FE985EE00BC0D7F /* Main.html */; };
 		66B8D04E2FE985EF00BC0D7F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0132FE985EE00BC0D7F /* Icon.png */; };
 		66B8D04F2FE985EF00BC0D7F /* Icon.png in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0132FE985EE00BC0D7F /* Icon.png */; };
 		66B8D0502FE985EF00BC0D7F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0142FE985EE00BC0D7F /* Style.css */; };
-		66B8D0512FE985EF00BC0D7F /* Style.css in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0142FE985EE00BC0D7F /* Style.css */; };
 		66B8D0522FE985EF00BC0D7F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0152FE985EE00BC0D7F /* Script.js */; };
-		66B8D0532FE985EF00BC0D7F /* Script.js in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0152FE985EE00BC0D7F /* Script.js */; };
 		66B8D0542FE985EF00BC0D7F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0162FE985EE00BC0D7F /* ViewController.swift */; };
 		66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66B8D0162FE985EE00BC0D7F /* ViewController.swift */; };
 		66B8D0562FE985EF00BC0D7F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 66B8D0172FE985EE00BC0D7F /* Assets.xcassets */; };
@@ -876,12 +901,36 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD10C0DE0000000000000A01 /* parts.js in Resources */,
+				AD10C0DE0000000000000A02 /* rules.js in Resources */,
+				AD10C0DE0000000000000A03 /* gate-ui.js in Resources */,
+				AD10C0DE0000000000000A04 /* options-access.js in Resources */,
+				AD10C0DE0000000000000A05 /* options-coach.js in Resources */,
+				AD10C0DE0000000000000A06 /* options-lists.js in Resources */,
+				AD10C0DE0000000000000A07 /* options-rows.js in Resources */,
+				AD10C0DE0000000000000A08 /* options-wizard.js in Resources */,
+				AD10C0DE0000000000000A09 /* report.js in Resources */,
+				AD10C0DE0000000000000A0A /* background.html in Resources */,
+				AD10C0DE0000000000000A0B /* ios-bridge.js in Resources */,
+				AD10C0DE0000000000000A0C /* options.html in Resources */,
+				AD10C0DE0000000000000A0D /* options.js in Resources */,
+				AD10C0DE0000000000000A0E /* options.css in Resources */,
+				AD10C0DE0000000000000A0F /* paywall.css in Resources */,
+				AD10C0DE0000000000000A10 /* tokens.css in Resources */,
+				AD10C0DE0000000000000A11 /* providers.js in Resources */,
+				AD10C0DE0000000000000A12 /* billing.js in Resources */,
+				AD10C0DE0000000000000A13 /* coaching.html in Resources */,
+				AD10C0DE0000000000000A14 /* coaching.js in Resources */,
+				AD10C0DE0000000000000A15 /* content.css in Resources */,
+				AD10C0DE0000000000000A16 /* prompts.js in Resources */,
+				AD10C0DE0000000000000A17 /* page_context.js in Resources */,
+				AD10C0DE0000000000000A18 /* tracking.js in Resources */,
+				AD10C0DE0000000000000A19 /* sites.js in Resources */,
+				AD10C0DE0000000000000A1A /* background.js in Resources */,
+				AD10C0DE0000000000000A1B /* fonts in Resources */,
 				66B8D04F2FE985EF00BC0D7F /* Icon.png in Resources */,
-				66B8D0512FE985EF00BC0D7F /* Style.css in Resources */,
 				66B8D0362FE985EF00BC0D7F /* Main.storyboard in Resources */,
-				66B8D0532FE985EF00BC0D7F /* Script.js in Resources */,
 				66B8D0572FE985EF00BC0D7F /* Assets.xcassets in Resources */,
-				66B8D04D2FE985EF00BC0D7F /* Main.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1022,6 +1071,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AD10C0DE0000000000000B01 /* BackgroundJSHost.swift in Sources */,
 				66B8D0552FE985EF00BC0D7F /* ViewController.swift in Sources */,
 				66B8D0332FE985EF00BC0D7F /* AppDelegate.swift in Sources */,
 				CE510BB9AADCBEF64B46E9CD /* JSBridgeCodec.swift in Sources */,

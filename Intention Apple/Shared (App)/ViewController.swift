@@ -63,11 +63,10 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             self.webView.isInspectable = true
         }
 
-#if os(iOS)
-        self.webView.scrollView.isScrollEnabled = true
-        // Main.storyboard doesn't constrain the webview to the view's bounds
-        // (only a stale design-time frame) — pin it explicitly so options.html
-        // actually gets a real, correctly-sized viewport on every device.
+        // The storyboard's webview carries only a design-time frame, so pin it
+        // explicitly or options.html never gets a real, correctly-sized
+        // viewport (on iOS) or stops following the window as it resizes (on
+        // the Mac).
         self.webView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             self.webView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -75,14 +74,22 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             self.webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             self.webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
-        setUpIOSBridge()
+
+        // Both apps are the same thing now: the extension's own options page,
+        // with the coach and its bookkeeping running in-process in
+        // BackgroundJSHost against the App Group. The Mac window used to be a
+        // separate status page with no progress in it at all.
+        setUpNativeBridge()
         BackgroundJSHost.shared.start()
         // Listen for renewals / Ask-to-Buy approvals for as long as the app is
         // alive, or StoreKit never finishes those transactions.
-        if #available(iOS 15.0, *) {
+        if #available(iOS 15.0, macOS 12.0, *) {
             Task { await IntentionStore.shared.start() }
         }
         loadOptionsPage()
+
+#if os(iOS)
+        self.webView.scrollView.isScrollEnabled = true
         setUpExtensionBanner()
         NotificationCenter.default.addObserver(
             self,
@@ -91,28 +98,12 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             object: nil
         )
 #elseif os(macOS)
-        // Same story as iOS above: the storyboard's webview carries only a
-        // design-time frame (translatesAutoresizingMaskIntoConstraints = NO
-        // with no constraints), which went unnoticed while the window was a
-        // fixed 425x325. Now that it resizes to fit the coaching-credit
-        // section, the webview has to follow it or it stays its nib size and
-        // leaves the rest of the window blank.
-        self.webView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            self.webView.topAnchor.constraint(equalTo: view.topAnchor),
-            self.webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            self.webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            self.webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-        self.webView.configuration.userContentController.add(self, name: "controller")
-        // Same bridge name the iOS options page uses, so Script.js can drive
-        // the StoreKit purchase flow from the Mac app's own window — the Mac
-        // App Store build must sell coaching credit through StoreKit too.
-        self.webView.configuration.userContentController.add(self, name: "intentionNative")
-        if #available(macOS 12.0, *) {
-            Task { await IntentionStore.shared.start() }
-        }
-        self.webView.loadFileURL(Bundle.main.url(forResource: "Main", withExtension: "html")!, allowingReadAccessTo: Bundle.main.resourceURL!)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
 #endif
     }
 
@@ -121,9 +112,12 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         super.viewWillAppear(animated)
         updateExtensionBanner()
     }
+#endif
 
     @objc private func appDidBecomeActive() {
+#if os(iOS)
         updateExtensionBanner()
+#endif
         // Coming back from Settings or Safari is exactly when the setup
         // wizard's "is the extension on yet?" answer changes, and a WKWebView
         // gets no dependable visibilitychange for an app switch — so tell the
@@ -139,7 +133,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         BackgroundJSHost.shared.catchUpOnDueWork()
         // Backup for the DeviceActivityMonitor extension: passes shorter than
         // DeviceActivity's ~15-minute schedule floor are re-shielded here.
-#if canImport(FamilyControls)
+#if os(iOS) && canImport(FamilyControls)
         if #available(iOS 16.0, *) {
             AppBlockingManager.shared.reapplyIfPassExpired()
         }
@@ -149,7 +143,6 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
-#endif
 
     // options.html is loaded from the bundle and this web view has no chrome of
     // its own — no back button, no address bar. A tapped link would replace the
@@ -182,66 +175,30 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         NSLog("[Intention] webView didFailProvisionalNavigation: %@", String(describing: error))
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-#if os(macOS)
-        webView.evaluateJavaScript("show('mac')")
-
-        SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: extensionBundleIdentifier) { (state, error) in
-            guard let state = state, error == nil else {
-                // Insert code to inform the user that something went wrong.
-                return
-            }
-
-            DispatchQueue.main.async {
-                if #available(macOS 13, *) {
-                    webView.evaluateJavaScript("show('mac', \(state.isEnabled), true)")
-                } else {
-                    webView.evaluateJavaScript("show('mac', \(state.isEnabled), false)")
-                }
-            }
-        }
-#endif
-    }
-
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-#if os(iOS)
         guard message.name == "intentionNative" else { return }
         handleBridgeMessage(message.body)
-#elseif os(macOS)
-        if message.name == "intentionNative" {
-            guard let dict = message.body as? [String: Any],
-                  dict["type"] as? String == "billing" else { return }
-            handleBillingMessage(
-                action: dict["action"] as? String ?? "",
-                dict: dict,
-                callbackId: dict["callbackId"] as? String ?? ""
-            )
-            return
-        }
-        guard message.name == "controller" else { return }
-        guard let body = message.body as? String, body == "open-preferences" else {
-            return
-        }
-
-        SFSafariApplication.showPreferencesForExtension(withIdentifier: extensionBundleIdentifier) { error in
-            guard error == nil else {
-                // Insert code to inform the user that something went wrong.
-                return
-            }
-
-            DispatchQueue.main.async {
-                NSApp.terminate(self)
-            }
-        }
-#endif
     }
 
-#if os(iOS)
     // MARK: - Options WebView + native bridge
 
-    private func setUpIOSBridge() {
+    private func setUpNativeBridge() {
         let contentController = webView.configuration.userContentController
         contentController.add(self, name: "intentionNative")
+
+        // Read by ios-bridge.js before it builds the shims: the Mac has no
+        // Screen Time, so it must not advertise window.intentionScreenTime, and
+        // the page styles itself for a resizable desktop window.
+#if os(macOS)
+        let platform = "mac"
+#else
+        let platform = "ios"
+#endif
+        contentController.addUserScript(WKUserScript(
+            source: "window.__intentionPlatform = \(JSBridgeCodec.jsLiteral(platform));",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
 
         if let bridgeURL = Bundle.main.url(forResource: "ios-bridge", withExtension: "js"),
            let source = try? String(contentsOf: bridgeURL, encoding: .utf8) {
@@ -269,10 +226,12 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             BackgroundJSHost.shared.sendMessage(message) { [weak self] response in
                 self?.invokeBridgeCallback(callbackId, result: response)
             }
+#if os(iOS)
         case "screenTime":
             let action = dict["action"] as? String ?? ""
             let callbackId = dict["callbackId"] as? String ?? ""
             handleScreenTimeMessage(action: action, dict: dict, callbackId: callbackId)
+#endif
         case "billing":
             let action = dict["action"] as? String ?? ""
             let callbackId = dict["callbackId"] as? String ?? ""
@@ -304,7 +263,63 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         }
     }
 
-    // MARK: - Safari extension enablement bridge
+#if os(macOS)
+    // MARK: - Safari extension enablement bridge (Mac)
+    //
+    // The Mac can simply ask Safari, which is better than the iOS heartbeat:
+    // the answer is the switch itself, not "has it run lately". A failed query
+    // (Safari not running, a launch race) falls back to the heartbeat rather
+    // than reporting "off" on no evidence.
+
+    private var safariExtensionSettingsPath: String {
+        if #available(macOS 13.0, *) {
+            return "Safari \u{2192} Settings \u{2192} Extensions"
+        }
+        return "Safari \u{2192} Preferences \u{2192} Extensions"
+    }
+
+    private func handleExtensionMessage(action: String, dict: [String: Any], callbackId: String) {
+        switch action {
+        case "status":
+            SFSafariExtensionManager.getStateOfSafariExtension(withIdentifier: extensionBundleIdentifier) { state, error in
+                DispatchQueue.main.async {
+                    let seenAt = AppGroupStorage.extensionLastSeenAt()
+                    let active: Bool
+                    if let state, error == nil {
+                        active = state.isEnabled
+                    } else {
+                        active = seenAt.map { Date().timeIntervalSince($0) < 24 * 60 * 60 } ?? false
+                    }
+                    self.invokeBridgeCallback(callbackId, result: [
+                        "active": active,
+                        "platform": "mac",
+                        "settingsPath": self.safariExtensionSettingsPath,
+                        "lastSeenAt": seenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
+                    ])
+                }
+            }
+        case "openSettings":
+            // Lands on Intention's own row in Safari's Extensions settings. The
+            // switch itself is the user's to throw.
+            SFSafariApplication.showPreferencesForExtension(withIdentifier: extensionBundleIdentifier) { _ in }
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "openSafari":
+            if let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") {
+                NSWorkspace.shared.open(safari)
+            }
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "setSetupComplete":
+            // Nothing native waits on this on the Mac; AppDelegate's
+            // disabled-extension notice keys off the real switch instead.
+            invokeBridgeCallback(callbackId, result: ["ok": true])
+        default:
+            invokeBridgeCallback(callbackId, result: ["error": "unknown extension action: \(action)"])
+        }
+    }
+#endif
+
+#if os(iOS)
+    // MARK: - Safari extension enablement bridge (iOS)
     //
     // Backs the setup wizard's "Turn on the Safari extension" step. Same
     // heartbeat the banner below reads — the difference is that the wizard can
@@ -318,6 +333,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
             invokeBridgeCallback(callbackId, result: [
                 "active": isFresh,
+                "platform": "ios",
                 "settingsPath": safariExtensionSettingsPath,
                 "lastSeenAt": seenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
             ])
@@ -414,7 +430,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     //
     // There's no iOS API to directly query whether the user has enabled the
     // Safari Web Extension (SFSafariExtensionManager.getStateOfSafariExtension
-    // above is macOS-only). Instead we use a heartbeat: the extension's native
+    // is macOS-only). Instead we use a heartbeat: the extension's native
     // handler (SafariWebExtensionHandler.swift) stamps a timestamp in the App
     // Group every time Safari actually invokes it, piggybacking on the
     // pullConfig native-messaging sync. If that heartbeat is stale (or has
