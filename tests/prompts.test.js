@@ -1732,6 +1732,28 @@ describe('where the part block lands in the prompt', () => {
   });
 });
 
+describe('the settings gate for an always-allowed account', () => {
+  const build = (currentValue, newValue) => P.buildSettingsGateSystemPrompt({
+    domain: 'instagram.com', coachInstructions: '{{usage}}',
+    changeType: 'allow_accounts', currentValue, newValue,
+    minutesTodaySite: 0, minutesTodayAll: 0, minutesWeekAll: 0, reasonsToday: []
+  });
+
+  it('renders both lists as sentences and judges the account', () => {
+    const out = build('no accounts are always allowed on instagram.com', '@natgeo is always allowed on instagram.com');
+    expect(out).toContain('ALWAYS ALLOW a specific account on instagram.com');
+    expect(out).toContain('Right now: no accounts are always allowed on instagram.com');
+    expect(out).toContain('They want: @natgeo is always allowed on instagram.com');
+    expect(out).toContain('Your default answer is NO');
+  });
+
+  it('never renders a list as an object', () => {
+    const out = build([], ['natgeo']);
+    expect(out).not.toContain('[object Object]');
+    expect(out).not.toContain('natgeo,');
+  });
+});
+
 describe('the settings gate for a narrowing', () => {
   const build = (changeType, currentValue, newValue) => P.buildSettingsGateSystemPrompt({
     domain: 'instagram.com', coachInstructions: '{{usage}}',

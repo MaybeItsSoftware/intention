@@ -893,3 +893,84 @@ describe('section rules on an app row', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe('always-allowed accounts', () => {
+  const build = (entry, target = 'instagram.com') =>
+    ctx.buildRowAccountsField(target, target, entry, noop);
+  const chipLabels = (field) => findAll(field, 'row-part-chip').map(c => c.children[0].textContent);
+  const typeAndAdd = async (field, text) => {
+    const group = find(field, 'row-accounts-input');
+    group.children[0].value = text;
+    await fire(group.children[1], 'click');
+  };
+
+  it('lists the stored accounts and says what they open', () => {
+    const field = build({ maxGrants: 3, allowedAccounts: ['natgeo', 'nasa'] });
+    expect(chipLabels(field)).toEqual(['@natgeo', '@nasa']);
+    expect(find(field, 'row-parts-helper').textContent)
+      .toContain('@natgeo and @nasa are always allowed on instagram.com');
+  });
+
+  it('is only offered on a site whose addresses name an account', () => {
+    const body = (target, kind) => {
+      const li = makeElement('li');
+      ctx.buildRowBody({
+        li, fields: makeElement('div'), target, label: target,
+        limitInfo: { maxGrants: 3 }, kind, serviceReasons: {}, rerender: noop
+      });
+      return li;
+    };
+    expect(find(body('instagram.com', ctx.ROW_KINDS.domain), 'row-accounts-field')).toBeTruthy();
+    expect(find(body('youtube.com', ctx.ROW_KINDS.domain), 'row-accounts-field')).toBeTruthy();
+    expect(find(body('reddit.com', ctx.ROW_KINDS.domain), 'row-accounts-field')).toBeUndefined();
+    expect(find(body('com.instagram.android', ctx.ROW_KINDS.app), 'row-accounts-field')).toBeUndefined();
+  });
+
+  it('saves an account taken off straight away, because it blocks more', async () => {
+    config.domainLimits['instagram.com'] = { maxGrants: 3, allowedAccounts: ['natgeo', 'nasa'] };
+    const field = build(config.domainLimits['instagram.com']);
+    await fire(findAll(field, 'row-part-chip-remove')[0], 'click');
+    expect(gates).toEqual([]);
+    expect(saved).toHaveLength(1);
+    expect(saved[0].domainLimits['instagram.com'].allowedAccounts).toEqual(['nasa']);
+  });
+
+  it('deletes the key when the last account comes off', async () => {
+    config.domainLimits['instagram.com'] = { maxGrants: 3, allowedAccounts: ['natgeo'] };
+    const field = build(config.domainLimits['instagram.com']);
+    await fire(find(field, 'row-part-chip-remove'), 'click');
+    expect('allowedAccounts' in saved[0].domainLimits['instagram.com']).toBe(false);
+  });
+
+  it('asks before putting one on, whether typed or pasted as a link', async () => {
+    const field = build({ maxGrants: 3 });
+    await typeAndAdd(field, 'https://www.instagram.com/NatGeo/');
+    expect(saved).toEqual([]);
+    expect(gates).toHaveLength(1);
+    expect(gates[0]).toMatchObject({
+      changeType: 'allow_accounts',
+      domain: 'instagram.com',
+      currentValue: [],
+      newValue: ['natgeo'],
+      title: 'Always allow @natgeo?'
+    });
+  });
+
+  it('carries additions already waiting for tomorrow, so a second does not cancel the first', async () => {
+    config.pendingChanges = [{ changeType: 'allow_accounts', domain: 'instagram.com', newValue: ['nasa'], effectiveAt: 1 }];
+    const field = build({ maxGrants: 3 });
+    await typeAndAdd(field, '@natgeo');
+    expect(gates[0].newValue).toEqual(['nasa', 'natgeo']);
+  });
+
+  it('refuses something that is not an account on this site, and asks nothing', async () => {
+    const field = build({ maxGrants: 3 });
+    await typeAndAdd(field, 'reels');
+    await typeAndAdd(field, 'https://www.youtube.com/@natgeo');
+    expect(gates).toEqual([]);
+    expect(saved).toEqual([]);
+    expect(find(field, 'int-pw-error').hidden).toBe(false);
+  });
+});

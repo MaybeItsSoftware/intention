@@ -968,6 +968,132 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
   return field;
 }
 
+// ---- Always-allowed accounts (buildRowAccountsField) -----------------------
+//
+// "Block Instagram, but not @natgeo." A list of handles whose profile and
+// posts open without an intention in front of them. What an account's "posts"
+// can honestly mean on each site is parts.js's business (the ALLOWED ACCOUNTS
+// header there); this field only says it in the user's words.
+//
+// It obeys the row's one rule with no subtlety at all: taking an account off
+// the list is a tightening and saves itself, putting one on is a loosening and
+// waits for tomorrow unless the coach allows it now. Sites only, and only the
+// sites parts.js can read an author off — an app shows no address, and
+// Android's accessibility rules for this app are static section tables, not
+// a reading of whose name is on screen.
+const ACCOUNTS_EXPLAINER = {
+  instagram: 'Opens their profile and any post or reel reached from it (the address names them). A post opened from your feed or a shared link does not name its author, so it stays behind your intention.',
+  x: 'Opens their profile and their posts. Anything else on X stays behind your intention.',
+  tiktok: 'Opens their profile and their videos. Anything else on TikTok stays behind your intention.',
+  youtube: 'Opens their channel and their videos. Intention asks YouTube whose video it is before letting it through, so a video can take a moment to be recognised — and one it cannot check stays behind your intention.'
+};
+
+function accountsExplainerFor(target) {
+  const host = String(target || '').toLowerCase();
+  if (/(^|\.)instagram\.com$/.test(host)) return ACCOUNTS_EXPLAINER.instagram;
+  if (/(^|\.)(x|twitter)\.com$/.test(host)) return ACCOUNTS_EXPLAINER.x;
+  if (/(^|\.)tiktok\.com$/.test(host)) return ACCOUNTS_EXPLAINER.tiktok;
+  return ACCOUNTS_EXPLAINER.youtube;
+}
+
+function buildRowAccountsField(target, label, limitInfo, rerender) {
+  const stored = sanitizeAllowedAccounts(limitInfo && limitInfo.allowedAccounts);
+
+  const field = document.createElement('div');
+  field.className = 'row-field row-parts-field row-accounts-field';
+  field.appendChild(microLabel('Always allowed'));
+
+  const helper = document.createElement('p');
+  helper.className = 'row-parts-helper';
+  helper.textContent = stored.length
+    ? `${describeAllowedAccountsForHuman(stored, label)}. ${accountsExplainerFor(target)}`
+    : `No accounts yet. Add one to keep their pages open on ${label}. ${accountsExplainerFor(target)}`;
+
+  const chips = document.createElement('div');
+  chips.className = 'row-parts-chips';
+  for (const handle of stored) {
+    const chip = document.createElement('span');
+    chip.className = 'row-part-chip';
+    const text = document.createElement('span');
+    text.textContent = `@${handle}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'row-part-chip-remove';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `Stop always allowing @${handle} on ${label}`);
+    // Taking one off blocks more: straight to storage, nothing asked.
+    remove.addEventListener('click', async () => {
+      const state = await getConfig();
+      const currentLimits = state.domainLimits || {};
+      const entry = { ...(currentLimits[target] || limitInfo || {}) };
+      const next = sanitizeAllowedAccounts(entry.allowedAccounts).filter(h => h !== handle);
+      if (next.length) entry.allowedAccounts = next;
+      else delete entry.allowedAccounts;
+      currentLimits[target] = entry;
+      await sendBg({ action: 'saveSettings', config: { domainLimits: currentLimits } });
+      await rerender();
+    });
+    chip.append(text, remove);
+    chips.appendChild(chip);
+  }
+
+  const group = document.createElement('div');
+  group.className = 'input-group row-accounts-input';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = '@username';
+  input.setAttribute('aria-label', `An account to always allow on ${label}`);
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'secondary row-parts-add';
+  addBtn.textContent = 'Add account';
+  group.append(input, addBtn);
+
+  const error = document.createElement('p');
+  error.className = 'int-pw-error';
+  error.hidden = true;
+
+  // Putting one on opens their pages: a loosening, so it is asked for. Any
+  // additions already waiting for tomorrow ride along, because a queued change
+  // is replaced rather than stacked — asking for a second account must not
+  // quietly cancel the first.
+  const submit = async () => {
+    const handle = normalizeAccountInput(input.value, target);
+    if (!handle) {
+      error.textContent = `That doesn't look like an account on ${label}. Type the username, or paste a link to their profile.`;
+      error.hidden = false;
+      return;
+    }
+    error.hidden = true;
+    if (stored.includes(handle)) {
+      input.value = '';
+      return;
+    }
+    const state = await getConfig();
+    const waiting = ((state && state.pendingChanges) || [])
+      .filter(p => p && p.changeType === 'allow_accounts' && p.domain === target)
+      .flatMap(p => sanitizeAllowedAccounts(p.newValue));
+    const adds = sanitizeAllowedAccounts(waiting.concat([handle]));
+    input.value = '';
+    requestLoosening({
+      isApp: false,
+      changeType: 'allow_accounts',
+      domain: target,
+      currentValue: stored,
+      newValue: adds,
+      title: `Always allow @${handle}?`,
+      subtitle: `Right now ${describeAllowedAccountsForHuman(stored, label)}. ` +
+        `This keeps @${handle}'s pages on ${label} open to you without an intention in front of them.`,
+      onApproved: rerender
+    });
+  };
+  addBtn.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+
+  field.append(helper, chips, group, error);
+  return field;
+}
+
 // Everything under the head hairline, for both lists: the intention, always
 // visible, and the rest folded under one disclosure — which parts are blocked
 // and what the target is for are things you set once, not things to scan past
@@ -1004,12 +1130,18 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
   more.className = 'row-more';
   const summary = document.createElement('summary');
   summary.className = 'micro-label';
-  summary.textContent = 'Parts and purpose';
+  const hasAccounts = !kind.isApp && accountsSupportedFor(target);
+  summary.textContent = hasAccounts ? 'Parts, accounts and purpose' : 'Parts and purpose';
   more.appendChild(summary);
   // Which parts of the target are blocked. A part rule decides whether the
   // block applies at all, so it binds whatever the intention says.
   if (kind.hasParts) {
     more.appendChild(buildRowPartsField(target, label, limitInfo, kind, rerender));
+  }
+  // Which accounts on it are never blocked — the same kind of decision, so it
+  // sits directly under the parts.
+  if (hasAccounts) {
+    more.appendChild(buildRowAccountsField(target, label, limitInfo, rerender));
   }
   more.appendChild(buildRowReasonFields(target, label, kind, serviceReasons, allBlockedTargets()));
   li.appendChild(more);

@@ -158,7 +158,12 @@ async function enforceGateBackstop(tabId, url) {
   // allowed page, and navigate a page the user was explicitly allowed to be on
   // to the coach three seconds after it loaded. resolvePartVerdict fails
   // closed, so anything it cannot evaluate still gates here.
-  if (!resolvePartVerdict(limitEntryFor(matchedDomain, { domainLimits }), url).gated) return;
+  //
+  // Through resolvePageVerdict rather than straight to parts.js, because an
+  // allowed channel's video on YouTube is only known to be open once its
+  // channel has been looked up — and the content script, which asked the same
+  // question through checkPageMatch, rendered nothing on the strength of it.
+  if (!(await resolvePageVerdict(limitEntryFor(matchedDomain, { domainLimits }), url)).gated) return;
   // A live pass stands the backstop down — but only for the page it actually
   // covers. On Safari this is the second line of defence and there is no DNR
   // behind it, so a scoped pass whose page the tab has since left has to leave
@@ -579,7 +584,7 @@ async function domainsNeedingRedirect() {
   // the way the ABP syntax says it does — and, like the scoped-pass construct
   // above, it would stay off wherever allowOutranksRedirect() says no.
   return blockedDomains.filter(domain =>
-    !passed.has(domain) && !hasPartRule(limitEntryFor(domain, { domainLimits })));
+    !passed.has(domain) && !hasPageRule(limitEntryFor(domain, { domainLimits })));
 }
 
 // May a priority-2 `allow` session rule be trusted to out-rank a priority-1
@@ -1418,12 +1423,13 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   // different pieces of logic. An entry with no part rule answers gated:true,
   // which is what every target has always answered.
   const partEntry = matchedDomain ? limitEntryFor(matchedDomain, stored) : null;
-  const verdict = resolvePartVerdict(partEntry, pageUrl);
+  const verdict = await resolvePageVerdict(partEntry, pageUrl);
   // The rule itself, sanitised, for the page to keep. The content script arms
   // its URL watcher with it: an address that is allowed now can become one that
   // is not, through a pushState the worker may never hear about, and the page
-  // needs the rule in hand to answer that on its own.
-  const partRule = hasPartRule(partEntry) ? sanitizePartRule(partEntry) : null;
+  // needs the rule in hand to answer that on its own. It carries the allowlist
+  // too when there is one (pageRuleFor), for the same reason.
+  const partRule = hasPageRule(partEntry) ? pageRuleFor(partEntry) : null;
   // A pass that has since expired leaves the domain's redirect rule dropped
   // (see syncBlockingRules) — visiting it again is the moment to notice and
   // put the rule back. A live pass that does NOT cover this page is the same
@@ -1763,9 +1769,10 @@ function sanitizeLimitsPartRules(limits) {
   const out = {};
   for (const [target, entry] of Object.entries(limits)) {
     if (!entry || typeof entry !== 'object') { out[target] = entry; continue; }
-    if (!('scope' in entry) && !('parts' in entry)) { out[target] = entry; continue; }
-    const clean = sanitizePartRule(entry);
-    const next = { ...entry };
+    const withAccounts = sanitizeLimitsAllowedAccounts(entry);
+    if (!('scope' in withAccounts) && !('parts' in withAccounts)) { out[target] = withAccounts; continue; }
+    const clean = sanitizePartRule(withAccounts);
+    const next = { ...withAccounts };
     // A rule that decides nothing is stored as no rule at all, both keys gone,
     // so the entry reads exactly as it did before the feature existed.
     if (hasPartRule(clean)) {
@@ -1778,6 +1785,19 @@ function sanitizeLimitsPartRules(limits) {
     out[target] = next;
   }
   return out;
+}
+
+// The allowlist half of the same cleaning, for one entry: through
+// sanitizeAllowedAccounts, with an empty list stored as no key at all, for the
+// same byte-identical reason as the part rule. An entry without the key comes
+// back as the very same object.
+function sanitizeLimitsAllowedAccounts(entry) {
+  if (!('allowedAccounts' in entry)) return entry;
+  const clean = sanitizeAllowedAccounts(entry.allowedAccounts);
+  const next = { ...entry };
+  if (clean.length) next.allowedAccounts = clean;
+  else delete next.allowedAccounts;
+  return next;
 }
 
 // The DIRECTION half of the same choke point.
@@ -1844,7 +1864,115 @@ function holdPartRuleDirection(next, stored) {
 async function limitsForWrite(key, limits) {
   const cleaned = sanitizeLimitsPartRules(limits);
   const stored = (await getStorage([key]))[key];
-  return holdIntentionDirection(holdPartRuleDirection(cleaned, stored), stored);
+  return holdAllowedAccountsDirection(holdIntentionDirection(holdPartRuleDirection(cleaned, stored), stored), stored);
+}
+
+// The allowlist's direction guard. Taking an account off the list is a
+// tightening and lands; putting one on opens that account's pages, and may
+// only arrive through requestSettingChange (tomorrow) or the coach
+// (applySettingChange's 'allow_accounts'). A whole-map write that adds one
+// has the addition dropped and keeps everything else it said, removals
+// included — the same shape as holdPartRuleDirection.
+function holdAllowedAccountsDirection(next, stored) {
+  if (!next || typeof next !== 'object') return next;
+  const before = (stored && typeof stored === 'object') ? stored : {};
+  const out = {};
+  for (const [target, entry] of Object.entries(next)) {
+    if (!entry || typeof entry !== 'object') { out[target] = entry; continue; }
+    const prior = before[target] && typeof before[target] === 'object' ? before[target] : {};
+    const was = sanitizeAllowedAccounts(prior.allowedAccounts);
+    const want = sanitizeAllowedAccounts(entry.allowedAccounts);
+    if (!allowedAccountsEditIsLoosening(was, want)) { out[target] = entry; continue; }
+    const kept = want.filter(handle => was.includes(handle));
+    const held = { ...entry };
+    if (kept.length) held.allowedAccounts = kept;
+    else delete held.allowedAccounts;
+    out[target] = held;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Allowed accounts: the one page verdict that needs the network
+// ---------------------------------------------------------------------------
+//
+// parts.js decides everything an address can prove on its own. A YouTube
+// video's address names no channel, so for an entry that always allows some
+// channels, "whose video is this?" is asked of YouTube's public oEmbed
+// endpoint — the request page_context.js already makes for the title, to the
+// site the user is already loading, without cookies.
+//
+// It fails closed at every step: no answer inside the timeout, a non-200, a
+// body of the wrong shape, an author with no @handle — each leaves the page
+// gated, exactly as it would be with no allowlist at all. Answers live in
+// memory for the life of the worker, keyed by the video id parts.js mints, and
+// are never written to storage; a failure is remembered only briefly, so the
+// next visit asks again.
+//
+// The timeout sits inside the content script's per-attempt budget
+// (CHECK_ATTEMPT_TIMEOUT_MS, 1.2s), and a retry that lands while the request is
+// still out waits on the same request rather than starting another.
+const ACCOUNT_LOOKUP_TIMEOUT_MS = 1000;
+const ACCOUNT_LOOKUP_TTL_MS = 6 * 60 * 60 * 1000;
+const ACCOUNT_LOOKUP_FAILURE_TTL_MS = 60 * 1000;
+const ACCOUNT_LOOKUP_CACHE_MAX = 200;
+const accountLookupCache = new Map();
+const accountLookupInFlight = new Map();
+
+async function fetchLookupAccount(lookup) {
+  if (typeof fetch !== 'function') return null;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), ACCOUNT_LOOKUP_TIMEOUT_MS) : null;
+  try {
+    const init = { credentials: 'omit' };
+    if (controller) init.signal = controller.signal;
+    const res = await fetch(lookup.fetchUrl, init);
+    if (!res || !res.ok) return null;
+    return accountFromLookupResponse(await res.json());
+  } catch (e) {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function lookupVerifiedAccount(lookup) {
+  const cached = accountLookupCache.get(lookup.key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.account ? { key: lookup.key, account: cached.account } : null;
+  }
+  let pending = accountLookupInFlight.get(lookup.key);
+  if (!pending) {
+    pending = fetchLookupAccount(lookup).then((account) => {
+      if (accountLookupCache.size >= ACCOUNT_LOOKUP_CACHE_MAX) {
+        accountLookupCache.delete(accountLookupCache.keys().next().value);
+      }
+      accountLookupCache.set(lookup.key, {
+        account,
+        expiresAt: Date.now() + (account ? ACCOUNT_LOOKUP_TTL_MS : ACCOUNT_LOOKUP_FAILURE_TTL_MS)
+      });
+      return account;
+    }).finally(() => accountLookupInFlight.delete(lookup.key));
+    accountLookupInFlight.set(lookup.key, pending);
+  }
+  const account = await pending;
+  return account ? { key: lookup.key, account } : null;
+}
+
+// resolvePartVerdict, plus the lookup when it is the only thing standing
+// between an allowed account and its video. Everything an address can prove
+// is still parts.js's answer; this only supplies the one fact it cannot hold.
+async function resolvePageVerdict(entry, url) {
+  const verdict = resolvePartVerdict(entry, url);
+  if (!verdict.gated) return verdict;
+  const lookup = accountLookupFor(entry, url);
+  if (!lookup) return verdict;
+  try {
+    const verified = await lookupVerifiedAccount(lookup);
+    return verified ? resolvePartVerdict(entry, url, verified) : verdict;
+  } catch (e) {
+    return verdict;
+  }
 }
 
 // The intention half of the same guard. A whole-map write may lower opens or
@@ -2252,6 +2380,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     // object, and must not be handed prose.
     const isScopeChange = SCOPE_CHANGE_TYPES.includes(changeType);
     const isIntentionChange = changeType === 'increase_limit' || changeType === 'increase_app_limit';
+    // An allowlist's values are lists of handles, and the new one carries only
+    // the additions — so the coach reads the list as it would stand after.
+    const isAccountChange = changeType === 'allow_accounts';
     // The leaving conversation is about the install, not about a target, so it
     // is the one settings gate that needs the aggregate picture: how long they
     // have been at this and how much is on their list. Read only for the two
@@ -2280,9 +2411,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       domain: displayName,
       changeType,
       currentValue: isScopeChange ? describeScopeForHuman(currentValue, displayName)
-        : isIntentionChange ? describeIntentionForHuman(currentValue) : currentValue,
+        : isIntentionChange ? describeIntentionForHuman(currentValue)
+          : isAccountChange ? describeAllowedAccountsForHuman(currentValue, displayName) : currentValue,
       newValue: isScopeChange ? describeScopeForHuman(newValue, displayName)
-        : isIntentionChange ? describeIntentionForHuman(newValue) : newValue,
+        : isIntentionChange ? describeIntentionForHuman(newValue)
+          : isAccountChange ? describeAllowedAccountsForHuman(
+            sanitizeAllowedAccounts(currentValue).concat(sanitizeAllowedAccounts(newValue)), displayName)
+            : newValue,
       userContext,
       contextProjects,
       contextReasons,
@@ -2490,6 +2625,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       // that change" after a conversation about which SECTIONS stay blocked
       // tells the user nothing about what is now open to them.
       else if (changeType === 'narrow_block_scope' || changeType === 'narrow_app_block_scope') acceptanceFallback = `Alright \u2014 I've changed which parts of ${displayName} are blocked. The rest is yours.`;
+      else if (changeType === 'allow_accounts') acceptanceFallback = `Alright \u2014 that account stays open on ${displayName} from now on.`;
       else if (changeType === 'disable_all') acceptanceFallback = `Understood \u2014 I've turned off blocking for now. Be intentional with it.`;
       // Two shapes, because approving a removal with a cool-off set does not
       // remove anything — and a farewell line under a screen that still says
@@ -2785,6 +2921,26 @@ async function applySettingChange({ domain, changeType, newValue }) {
     return { changeType, domain, [key]: limits, scope: next.scope, parts: next.parts };
   }
 
+  // Always allowing one or more accounts on a site. The value is the handles
+  // to ADD, not the whole list: a request queued last night must not put back
+  // an account taken off this morning, so it is merged with what is stored at
+  // the moment it applies. Sites only — no app can prove whose screen it is
+  // showing (see the ALLOWED ACCOUNTS header in parts.js).
+  if (changeType === 'allow_accounts') {
+    if (!domain || !accountsSupportedFor(domain)) return null;
+    const adds = sanitizeAllowedAccounts(Array.isArray(newValue) ? newValue : [newValue]);
+    if (!adds.length) return null;
+    const limits = { ...domainLimits };
+    const entry = { ...(limits[domain] || { maxGrants: INTENTION_DEFAULTS.maxGrants }) };
+    const merged = sanitizeAllowedAccounts(sanitizeAllowedAccounts(entry.allowedAccounts).concat(adds));
+    entry.allowedAccounts = merged;
+    limits[domain] = entry;
+    await setStorage({ domainLimits: limits });
+    // Which hosts carry a redirect depends on whether they have a page rule.
+    await syncBlockingRules();
+    return { changeType, domain, domainLimits: limits, allowedAccounts: merged };
+  }
+
   // `increase_quick_check` / `increase_app_quick_check` used to be handled
   // here. The quick check is retired, nothing can request either change type
   // any more, and an unrecognised changeType falls through to the null below
@@ -2945,7 +3101,7 @@ const IMMEDIATE_CHANGE_TYPES = ['edit_site_purpose', 'edit_site_legitimate', 'un
 
 const DEFERRED_CHANGE_TYPES = [
   'remove', 'remove_app', 'increase_limit', 'increase_app_limit',
-  'narrow_block_scope', 'narrow_app_block_scope', 'disable_all', 'decrease_leave_delay'
+  'narrow_block_scope', 'narrow_app_block_scope', 'allow_accounts', 'disable_all', 'decrease_leave_delay'
 ];
 
 async function requestSettingChange({ changeType, domain, newValue }) {

@@ -643,7 +643,31 @@ function sanitizePartRule(raw) {
 // A parts value that is not an array, a parts entry that is not a string, an
 // entry whose prototype has been tampered with, a URL new URL() rejects, a
 // javascript: URL — all of them land on the same fail-closed answer.
-function resolvePartVerdict(entry, url) {
+//
+// ALLOWED ACCOUNTS are applied last, and only ever in one direction: a URL the
+// rule gates may still be opened because it belongs to an account the user
+// always allows (see the ALLOWED ACCOUNTS section below). They can never gate
+// something the part rule leaves open, and every way that half can fail —
+// a hostile list, an address with no author in it, a lookup that did not
+// come back — leaves the part verdict exactly as it was.
+//
+// `verified` is optional and is only ever the result of a lookup the caller
+// made for THIS url (background.js's resolvePageVerdict): { key, account }.
+// It is accepted only when its key is the key accountLookupFor mints from the
+// same address, so an author fetched for one video can never open another.
+function resolvePartVerdict(entry, url, verified) {
+  const verdict = partRuleVerdict(entry, url);
+  if (!verdict.gated) return verdict;
+  try {
+    const account = allowedAccountForUrl(entry, url, verified);
+    return account ? { gated: false, partId: null, scope: verdict.scope, account } : verdict;
+  } catch (e) {
+    return verdict;
+  }
+}
+
+// The part-rule half of resolvePartVerdict, on its own.
+function partRuleVerdict(entry, url) {
   const closed = { gated: true, partId: null, scope: 'all' };
   try {
     const scope = normalizeScopeValue(entry && entry.scope);
@@ -737,6 +761,325 @@ function partEditIsLoosening(before, after) {
     return b.parts.some(id => !a.parts.includes(id));
   } catch (e) {
     return true;
+  }
+}
+
+// ===========================================================================
+// ALLOWED ACCOUNTS — people whose pages stay open on a blocked site
+// ===========================================================================
+//
+// "Block Instagram, but never stop me looking at @natgeo." A part rule cannot
+// say that: a part is a SECTION of a site, and an account is a person whose
+// profile and posts are scattered across every section of it. So this is a
+// second, independent list on the limits entry — `allowedAccounts`, bare
+// lowercase handles — applied after the part rule, and only ever to open.
+//
+// What it can prove, and so what it does, is decided by the address:
+//
+//   instagram.com  /natgeo/…, /natgeo/p/<code>/, /natgeo/reel/<code>/ and
+//                  /stories/natgeo/…. A bare /p/<code>/ or /reel/<code>/ —
+//                  what the home feed and a shared link use — names no author,
+//                  and stays gated. Instagram's oEmbed needs a Meta app token,
+//                  and reading the author off the page would mean deciding
+//                  after the page had rendered, from markup a single-page app
+//                  does not keep in step with its address.
+//   x.com          /natgeo and everything under it, /natgeo/status/<id>
+//   twitter.com    included. /i/web/status/<id> names no author: gated.
+//   tiktok.com     /@natgeo and everything under it, /@natgeo/video/<id>
+//                  included.
+//   youtube.com    /@natgeo and everything under it. A video (/watch?v=,
+//                  /shorts/<id>, /live/<id>) names no channel, so it is the one
+//                  case answered by a LOOKUP: accountLookupFor mints the
+//                  request, background.js makes it, and resolvePartVerdict
+//                  accepts the answer only for the video it was made for.
+//
+// Everything not proven stays gated. That includes the known hole, stated
+// rather than hidden: the handle in an X, TikTok or Instagram address is
+// trusted as the author, so a hand-edited address can open a post by someone
+// else. That is a person working around a rule they set — which the coach
+// exists for and this file cannot prevent — and it is the same trust the
+// custom `path:` rules above already extend to an address.
+//
+// Handles that are also a route on the site ('explore', 'reels', 'home', 'i')
+// never match, so allowing an "account" called reels can never open Reels.
+
+// A generic shape every service's handles fit inside. Each service narrows it
+// again at match time; a stored handle that fits here but not there simply
+// never matches.
+const ACCOUNT_HANDLE_RE = /^[a-z0-9_.-]{1,30}$/;
+
+// Same cap, same reasoning, as PART_LIST_MAX.
+const ACCOUNT_LIST_MAX = 20;
+
+// First path segments that are a page of the site rather than an account, for
+// the two services whose profiles live at the bare /<handle>. It does not need
+// to be exhaustive — none of these can be registered as a handle — only to
+// hold the names a person might type to get at a section.
+const INSTAGRAM_ROUTES = new Set([
+  'about', 'accounts', 'api', 'archive', 'challenge', 'create', 'developer',
+  'direct', 'directory', 'emails', 'explore', 'graphql', 'highlights', 'legal',
+  'lite', 'locations', 'nametag', 'notifications', 'p', 'privacy', 'qr',
+  'reel', 'reels', 'session', 'stories', 'terms', 'topics', 'tv', 'web',
+  'your_activity'
+]);
+const X_ROUTES = new Set([
+  'account', 'bookmarks', 'communities', 'compose', 'explore', 'grok',
+  'hashtag', 'home', 'i', 'intent', 'jobs', 'lists', 'login', 'logout',
+  'messages', 'notifications', 'premium', 'privacy', 'search', 'settings',
+  'share', 'signup', 'tos', 'topics'
+]);
+
+const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+// The services an allowlist means something on. `account(segments)` reads the
+// author off the lowercased path segments, or answers null; `lookup(parsed)`
+// is present only where the author has to be asked for.
+const ACCOUNT_SERVICES = [
+  {
+    key: 'instagram',
+    hosts: ['instagram.com'],
+    handleRe: /^[a-z0-9_](?:[a-z0-9_.]{0,28}[a-z0-9_])?$/,
+    routes: INSTAGRAM_ROUTES,
+    account(segments) {
+      if (segments[0] === 'stories') return segments[1] || null;
+      return segments[0] || null;
+    }
+  },
+  {
+    key: 'x',
+    hosts: ['x.com', 'twitter.com'],
+    handleRe: /^[a-z0-9_]{1,15}$/,
+    routes: X_ROUTES,
+    account(segments) {
+      return segments[0] || null;
+    }
+  },
+  {
+    key: 'tiktok',
+    hosts: ['tiktok.com'],
+    handleRe: /^[a-z0-9_][a-z0-9_.]{1,23}$/,
+    routes: null,
+    account(segments) {
+      const first = segments[0] || '';
+      return first.charAt(0) === '@' ? first.slice(1) : null;
+    }
+  },
+  {
+    key: 'youtube',
+    hosts: ['youtube.com'],
+    handleRe: /^[a-z0-9_][a-z0-9_.-]{2,29}$/,
+    routes: null,
+    account(segments) {
+      const first = segments[0] || '';
+      return first.charAt(0) === '@' ? first.slice(1) : null;
+    },
+    // Only a real 11-character id is looked up. The request goes to the site
+    // the user is already on, at the same public oEmbed endpoint
+    // page_context.js already asks for the video's title. The id is read from
+    // the address as written: video ids are case-sensitive.
+    lookup(parsed) {
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      const first = (segments[0] || '').toLowerCase();
+      let id = '';
+      if (first === 'watch' && segments.length === 1) {
+        id = parsed.searchParams.get('v') || '';
+      } else if ((first === 'shorts' || first === 'live') && segments.length === 2) {
+        id = segments[1];
+      }
+      if (!YOUTUBE_VIDEO_ID_RE.test(id)) return null;
+      const watchUrl = `https://www.youtube.com/watch?v=${id}`;
+      return {
+        key: `youtube:${id}`,
+        fetchUrl: `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watchUrl)}`
+      };
+    }
+  }
+];
+
+function hostIsOneOf(host, hosts) {
+  const h = String(host || '').toLowerCase().replace(/\.$/, '');
+  return hosts.some(d => h === d || h.endsWith(`.${d}`));
+}
+
+// The service a blocked target (a domain) or a page host belongs to, or null.
+function accountServiceForHost(host) {
+  return ACCOUNT_SERVICES.find(service => hostIsOneOf(host, service.hosts)) || null;
+}
+
+function accountHandleUsable(service, handle) {
+  return !!service && typeof handle === 'string' && service.handleRe.test(handle) &&
+    !(service.routes && service.routes.has(handle));
+}
+
+// Whether a blocked site can carry an allowlist at all. The options row asks
+// this before it offers the field.
+function accountsSupportedFor(target) {
+  try {
+    return !!accountServiceForHost(target);
+  } catch (e) {
+    return false;
+  }
+}
+
+// Clean an allowlist on its way to storage, or on its way into a verdict.
+// Keeps well-formed handles, lowercased and without the @, in order, deduped,
+// capped. Anything else is dropped — which on this list can only ever mean
+// fewer pages open.
+function sanitizeAllowedAccounts(raw) {
+  try {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const candidate of raw) {
+      if (out.length >= ACCOUNT_LIST_MAX) break;
+      if (typeof candidate !== 'string') continue;
+      const handle = candidate.trim().replace(/^@/, '').toLowerCase();
+      if (!ACCOUNT_HANDLE_RE.test(handle) || out.includes(handle)) continue;
+      out.push(handle);
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
+}
+
+// The allowlist on a stored entry. An own property only: storage is JSON, and
+// a list reached through a prototype did not come from it.
+function allowedAccountsOf(entry) {
+  if (!entry || typeof entry !== 'object') return [];
+  if (!Object.prototype.hasOwnProperty.call(entry, 'allowedAccounts')) return [];
+  return sanitizeAllowedAccounts(entry.allowedAccounts);
+}
+
+// What the user typed into the row's box, as a handle, or null.
+//
+// Accepts the handle alone ('natgeo', '@natgeo') and a pasted profile address
+// ('https://www.instagram.com/natgeo/', 'youtube.com/@natgeo'), because both
+// are what people have in hand. A handle the service could never have — or
+// one that is really a section of the site — is refused here, so the row never
+// offers to save something that would silently never match.
+function normalizeAccountInput(raw, target) {
+  try {
+    const service = accountServiceForHost(target);
+    if (!service) return null;
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text || text.length > 200) return null;
+    let handle = null;
+    if (text.includes('/') || hostIsOneOf(text, service.hosts)) {
+      const parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+      if (!hostIsOneOf(parsed.hostname, service.hosts)) return null;
+      const segments = parsed.pathname.toLowerCase().split('/').filter(Boolean);
+      if (segments[0] === 'stories') return null;
+      handle = service.account(segments);
+    } else {
+      handle = text.replace(/^@/, '').toLowerCase();
+    }
+    return accountHandleUsable(service, handle) ? handle : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// The allowed account this URL belongs to, or null. See the section header
+// for what each service can prove; `verified` is the lookup answer, if any.
+function allowedAccountForUrl(entry, url, verified) {
+  try {
+    const allowed = allowedAccountsOf(entry);
+    if (allowed.length === 0 || typeof url !== 'string') return null;
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    const service = accountServiceForHost(parsed.hostname);
+    if (!service) return null;
+    let handle = service.account(parsed.pathname.toLowerCase().split('/').filter(Boolean));
+    if (!handle && service.lookup && verified && typeof verified === 'object') {
+      const lookup = service.lookup(parsed);
+      if (lookup && verified.key === lookup.key) handle = verified.account;
+    }
+    if (!accountHandleUsable(service, handle)) return null;
+    return allowed.includes(handle) ? handle : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// The request that would name this URL's author, when the address does not
+// and the entry has someone to compare the answer with: { key, fetchUrl }, or
+// null. background.js makes the request; this file only mints it, because it
+// has to stay free of anything asynchronous.
+function accountLookupFor(entry, url) {
+  try {
+    if (allowedAccountsOf(entry).length === 0 || typeof url !== 'string') return null;
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    const service = accountServiceForHost(parsed.hostname);
+    if (!service || !service.lookup) return null;
+    if (service.account(parsed.pathname.toLowerCase().split('/').filter(Boolean))) return null;
+    return service.lookup(parsed);
+  } catch (e) {
+    return null;
+  }
+}
+
+// The author's handle out of a lookup's JSON answer, or null. Only the exact
+// shape a channel-handle URL takes is accepted — a legacy /channel/UC… or
+// /user/… author has no handle to compare, and its videos stay gated.
+function accountFromLookupResponse(data) {
+  try {
+    if (!data || typeof data.author_url !== 'string') return null;
+    const parsed = new URL(data.author_url);
+    if (parsed.protocol !== 'https:' || !hostIsOneOf(parsed.hostname, ['youtube.com'])) return null;
+    const match = /^\/@([^/]+)\/?$/.exec(parsed.pathname);
+    if (!match) return null;
+    const handle = match[1].toLowerCase();
+    const youtube = ACCOUNT_SERVICES.find(service => service.key === 'youtube');
+    return accountHandleUsable(youtube, handle) ? handle : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Does this entry carry anything that can leave an address on a blocked host
+// open? A part rule, or an allowlist. background.js drops a host's redirect
+// for exactly these and the content script watches the address on exactly
+// these — the reasoning on hasPartRule, extended to the second list.
+function hasPageRule(entry) {
+  try {
+    return hasPartRule(entry) || allowedAccountsOf(entry).length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+// The rule a page keeps to judge its own address changes with: the sanitised
+// part rule, plus the allowlist when there is one. The key is absent when
+// there is not, so the rule for a pre-feature entry is unchanged.
+function pageRuleFor(entry) {
+  const rule = sanitizePartRule(entry);
+  const allowed = allowedAccountsOf(entry);
+  if (allowed.length) rule.allowedAccounts = allowed;
+  return rule;
+}
+
+// Does this edit to an allowlist open anything that was not open before?
+// Adding a handle does; removing one never does. Unprovable means yes.
+function allowedAccountsEditIsLoosening(before, after) {
+  try {
+    const a = sanitizeAllowedAccounts(before);
+    return sanitizeAllowedAccounts(after).some(handle => !a.includes(handle));
+  } catch (e) {
+    return true;
+  }
+}
+
+// "@natgeo and @nasa are always allowed on instagram.com" — for the coach, and
+// for the settings sentence that asks whether to add one.
+function describeAllowedAccountsForHuman(list, siteLabel) {
+  try {
+    const label = String(siteLabel == null ? '' : siteLabel).trim() || 'this site';
+    const handles = sanitizeAllowedAccounts(list).map(h => `@${h}`);
+    if (handles.length === 0) return `no accounts are always allowed on ${label}`;
+    return `${joinWithAnd(handles)} ${handles.length === 1 ? 'is' : 'are'} always allowed on ${label}`;
+  } catch (e) {
+    return 'this site';
   }
 }
 

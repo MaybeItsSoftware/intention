@@ -660,6 +660,24 @@ ul#usage-log-list li.log-date-heading {
   font-size: 13px;
 }
 
+/* Always-allowed accounts reuse the parts band wholesale — helper, chips, the
+   small add button. Only the typed handle is new: one box and its button on a
+   line, the box taking the room. */
+.row-accounts-input {
+  max-width: 34em;
+  margin: 2px 0 0;
+}
+
+.row-accounts-input input {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-accounts-input .row-parts-add {
+  align-self: center;
+  margin: 0;
+}
+
 /* ---- The part picker (openPartPicker) ------------------------------------
 
    Built in JS and appended to <body>, so it borrows .add-modal / .coach-box /

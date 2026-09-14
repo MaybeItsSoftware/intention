@@ -261,6 +261,7 @@ const GATE_OPENER_FALLBACKS = {
   // "leave the messages open, keep Reels shut".
   narrow_block_scope: (d) => `You want to leave part of ${d} open — blocked everywhere except the bits you name. Which part, and what is it you need there?`,
   narrow_app_block_scope: (d) => `You want to leave part of ${d} open — blocked everywhere except the bits you name. Which part, and what is it you need there?`,
+  allow_accounts: (d) => `You want an account on ${d} to always stay open. Whose is it, and what do you go there for?`,
   disable_all: () => `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`,
   // The offline fallback matters more here than anywhere else in this map: it
   // is what somebody sees when the network drops on their way out, and the

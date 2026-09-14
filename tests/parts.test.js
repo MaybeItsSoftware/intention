@@ -945,6 +945,208 @@ describe('dnrUrlFilterFor', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 4b. Always-allowed accounts
+// ---------------------------------------------------------------------------
+//
+// An allowlist can only ever OPEN an address the part rule gated, and only
+// where the address (or, for a YouTube video, a lookup tied to that exact
+// video) proves whose page it is. Everything uncertain stays gated.
+
+describe('allowed accounts', () => {
+  const IG = { maxGrants: 3, allowedAccounts: ['natgeo'] };
+  const X = { maxGrants: 3, allowedAccounts: ['nasa'] };
+  const TT = { maxGrants: 3, allowedAccounts: ['natgeo'] };
+  const YT = { maxGrants: 3, allowedAccounts: ['veritasium'] };
+
+  describe('sanitizeAllowedAccounts', () => {
+    it('lowercases, strips @, dedupes and drops junk', () => {
+      expect(P.sanitizeAllowedAccounts(['@NatGeo', 'natgeo', ' nasa ', 7, null, 'a b', '../x', ''])).toEqual(['natgeo', 'nasa']);
+    });
+
+    it('caps the list', () => {
+      const list = Array.from({ length: 40 }, (_, i) => `user${i}`);
+      expect(P.sanitizeAllowedAccounts(list)).toHaveLength(20);
+    });
+
+    it.each([null, undefined, 'natgeo', {}, 42])('reads %s as no list', (raw) => {
+      expect(P.sanitizeAllowedAccounts(raw)).toEqual([]);
+    });
+  });
+
+  describe('opening by address', () => {
+    it.each([
+      ['https://www.instagram.com/natgeo/', IG],
+      ['https://www.instagram.com/natgeo/reels/', IG],
+      ['https://www.instagram.com/NatGeo/p/C1aBcDeF/', IG],
+      ['https://www.instagram.com/natgeo/reel/C1aBcDeF/', IG],
+      ['https://www.instagram.com/stories/natgeo/3312345678/', IG],
+      ['https://x.com/nasa', X],
+      ['https://x.com/NASA/status/1790000000000000000', X],
+      ['https://twitter.com/nasa/status/1790000000000000000/photo/1', X],
+      ['https://www.tiktok.com/@natgeo', TT],
+      ['https://www.tiktok.com/@natgeo/video/7300000000000000000', TT],
+      ['https://www.youtube.com/@veritasium', YT],
+      ['https://m.youtube.com/@Veritasium/videos', YT]
+    ])('opens %s', (url, entry) => {
+      const verdict = P.resolvePartVerdict(entry, url);
+      expect(verdict.gated).toBe(false);
+      expect(verdict.account).toBe(entry.allowedAccounts[0]);
+    });
+
+    it.each([
+      // Not the account.
+      ['https://www.instagram.com/someoneelse/', IG],
+      ['https://x.com/spacex/status/1', X],
+      ['https://www.tiktok.com/@other/video/1', TT],
+      ['https://www.youtube.com/@other', YT],
+      // The address names no author.
+      ['https://www.instagram.com/p/C1aBcDeF/', IG],
+      ['https://www.instagram.com/reel/C1aBcDeF/', IG],
+      ['https://www.instagram.com/', IG],
+      ['https://www.instagram.com/stories/highlights/1/', IG],
+      ['https://x.com/i/web/status/1', X],
+      ['https://x.com/home', X],
+      ['https://www.tiktok.com/foryou', TT],
+      ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', YT],
+      ['https://www.youtube.com/shorts/dQw4w9WgXcQ', YT],
+      ['https://www.youtube.com/channel/UC1234', YT],
+      // Not a web page.
+      ['javascript:alert(1)', IG],
+      ['not a url', IG]
+    ])('keeps %s gated', (url, entry) => {
+      expect(P.resolvePartVerdict(entry, url).gated).toBe(true);
+    });
+
+    // A route name typed as a handle must never open that route.
+    it('never treats a site route as a handle', () => {
+      const entry = { allowedAccounts: ['reels', 'explore', 'direct', 'p', 'stories'] };
+      for (const path of ['/reels/', '/explore/', '/direct/inbox/', '/p/abc/', '/stories/']) {
+        expect(P.resolvePartVerdict(entry, `https://www.instagram.com${path}`).gated).toBe(true);
+      }
+      expect(P.resolvePartVerdict({ allowedAccounts: ['home', 'i', 'messages'] }, 'https://x.com/home').gated).toBe(true);
+      expect(P.resolvePartVerdict({ allowedAccounts: ['home', 'i', 'messages'] }, 'https://x.com/i/bookmarks').gated).toBe(true);
+    });
+
+    it('only opens; an address the part rule already leaves open stays open', () => {
+      const entry = { scope: 'only', parts: ['instagram:reels'], allowedAccounts: ['natgeo'] };
+      expect(P.resolvePartVerdict(entry, 'https://www.instagram.com/direct/inbox/'))
+        .toEqual({ gated: false, partId: null, scope: 'only' });
+      expect(P.resolvePartVerdict(entry, 'https://www.instagram.com/reels/abc/').gated).toBe(true);
+      expect(P.resolvePartVerdict(entry, 'https://www.instagram.com/natgeo/').gated).toBe(false);
+    });
+
+    it('reads the list only off the entry itself, never its prototype', () => {
+      const hostile = Object.create({ allowedAccounts: ['natgeo'] });
+      expect(P.resolvePartVerdict(hostile, 'https://www.instagram.com/natgeo/').gated).toBe(true);
+    });
+  });
+
+  describe('a YouTube video, which needs a lookup', () => {
+    const WATCH = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10';
+
+    it('asks for one only when there is a list and the address names no channel', () => {
+      const lookup = P.accountLookupFor(YT, WATCH);
+      expect(lookup.key).toBe('youtube:dQw4w9WgXcQ');
+      expect(lookup.fetchUrl).toBe(
+        'https://www.youtube.com/oembed?format=json&url=' +
+        encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+      );
+      expect(P.accountLookupFor(YT, 'https://www.youtube.com/shorts/dQw4w9WgXcQ').key).toBe('youtube:dQw4w9WgXcQ');
+      expect(P.accountLookupFor({ maxGrants: 3 }, WATCH)).toBe(null);
+      expect(P.accountLookupFor(YT, 'https://www.youtube.com/@veritasium')).toBe(null);
+      expect(P.accountLookupFor(YT, 'https://www.youtube.com/')).toBe(null);
+      expect(P.accountLookupFor(YT, 'https://www.youtube.com/watch?v=bad')).toBe(null);
+      expect(P.accountLookupFor(IG, 'https://www.instagram.com/p/abc/')).toBe(null);
+    });
+
+    it('opens with a verified author for that exact video, and no other', () => {
+      const verified = { key: 'youtube:dQw4w9WgXcQ', account: 'veritasium' };
+      expect(P.resolvePartVerdict(YT, WATCH, verified).gated).toBe(false);
+      // The same answer offered for a different video is ignored.
+      expect(P.resolvePartVerdict(YT, 'https://www.youtube.com/watch?v=aaaaaaaaaaa', verified).gated).toBe(true);
+      // A verified author who is not on the list.
+      expect(P.resolvePartVerdict(YT, WATCH, { key: 'youtube:dQw4w9WgXcQ', account: 'other' }).gated).toBe(true);
+      // Garbage in the verified slot.
+      expect(P.resolvePartVerdict(YT, WATCH, 'veritasium').gated).toBe(true);
+    });
+
+    it('reads the handle out of an oEmbed answer, and nothing else', () => {
+      expect(P.accountFromLookupResponse({ author_url: 'https://www.youtube.com/@Veritasium' })).toBe('veritasium');
+      expect(P.accountFromLookupResponse({ author_url: 'https://www.youtube.com/channel/UC123' })).toBe(null);
+      expect(P.accountFromLookupResponse({ author_url: 'https://evil.example/@veritasium' })).toBe(null);
+      expect(P.accountFromLookupResponse({ author_url: 'http://www.youtube.com/@veritasium' })).toBe(null);
+      expect(P.accountFromLookupResponse({ author_url: 'https://www.youtube.com/@a/b' })).toBe(null);
+      expect(P.accountFromLookupResponse({})).toBe(null);
+      expect(P.accountFromLookupResponse(null)).toBe(null);
+    });
+  });
+
+  describe('normalizeAccountInput', () => {
+    it.each([
+      ['natgeo', 'instagram.com', 'natgeo'],
+      ['@NatGeo', 'instagram.com', 'natgeo'],
+      ['https://www.instagram.com/natgeo/?hl=en', 'instagram.com', 'natgeo'],
+      ['instagram.com/natgeo', 'instagram.com', 'natgeo'],
+      ['https://x.com/NASA', 'x.com', 'nasa'],
+      ['https://twitter.com/nasa/status/1', 'x.com', 'nasa'],
+      ['https://www.tiktok.com/@natgeo/video/1', 'tiktok.com', 'natgeo'],
+      ['https://www.youtube.com/@veritasium/videos', 'youtube.com', 'veritasium'],
+      ['@veritasium', 'youtube.com', 'veritasium']
+    ])('reads %s on %s as %s', (raw, target, want) => {
+      expect(P.normalizeAccountInput(raw, target)).toBe(want);
+    });
+
+    it.each([
+      ['reels', 'instagram.com'],
+      ['https://www.instagram.com/p/abc/', 'instagram.com'],
+      ['https://www.youtube.com/natgeo', 'instagram.com'],
+      ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'youtube.com'],
+      ['this_handle_is_far_too_long_for_x', 'x.com'],
+      ['home', 'x.com'],
+      ['', 'instagram.com'],
+      ['natgeo', 'reddit.com'],
+      ['natgeo', 'com.instagram.android']
+    ])('refuses %s on %s', (raw, target) => {
+      expect(P.normalizeAccountInput(raw, target)).toBe(null);
+    });
+  });
+
+  it('is offered for the four services it can read, and nothing else', () => {
+    for (const t of ['instagram.com', 'x.com', 'twitter.com', 'tiktok.com', 'youtube.com']) {
+      expect(P.accountsSupportedFor(t)).toBe(true);
+    }
+    for (const t of ['reddit.com', 'facebook.com', 'com.instagram.android', '', null]) {
+      expect(P.accountsSupportedFor(t)).toBe(false);
+    }
+  });
+
+  it('counts as a page rule, and rides along in the watched rule', () => {
+    expect(P.hasPageRule({ maxGrants: 3 })).toBe(false);
+    expect(P.hasPageRule({ allowedAccounts: [] })).toBe(false);
+    expect(P.hasPageRule({ allowedAccounts: ['natgeo'] })).toBe(true);
+    expect(P.hasPageRule({ scope: 'only', parts: ['instagram:reels'] })).toBe(true);
+    expect(P.hasPartRule({ allowedAccounts: ['natgeo'] })).toBe(false);
+    expect(P.pageRuleFor({ maxGrants: 3, allowedAccounts: ['@NatGeo'] }))
+      .toEqual({ scope: 'all', parts: [], allowedAccounts: ['natgeo'] });
+    expect('allowedAccounts' in P.pageRuleFor({ scope: 'only', parts: ['instagram:reels'] })).toBe(false);
+  });
+
+  it('calls any addition a loosening, and a removal not', () => {
+    expect(P.allowedAccountsEditIsLoosening([], ['natgeo'])).toBe(true);
+    expect(P.allowedAccountsEditIsLoosening(['natgeo'], ['natgeo', 'nasa'])).toBe(true);
+    expect(P.allowedAccountsEditIsLoosening(['natgeo', 'nasa'], ['nasa'])).toBe(false);
+    expect(P.allowedAccountsEditIsLoosening(['natgeo'], ['@NatGeo'])).toBe(false);
+    expect(P.allowedAccountsEditIsLoosening(undefined, undefined)).toBe(false);
+  });
+
+  it('describes the list the way the row and the coach say it', () => {
+    expect(P.describeAllowedAccountsForHuman([], 'instagram.com')).toBe('no accounts are always allowed on instagram.com');
+    expect(P.describeAllowedAccountsForHuman(['natgeo'], 'instagram.com')).toBe('@natgeo is always allowed on instagram.com');
+    expect(P.describeAllowedAccountsForHuman(['a_1', 'b_2', 'c_3'], 'x.com')).toBe('@a_1, @b_2 and @c_3 are always allowed on x.com');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. No copy has come back, and no dependency has crept in
 // ---------------------------------------------------------------------------
 //
@@ -985,7 +1187,16 @@ describe('the part and page-scope verdicts live in exactly one file', () => {
     'sessionCoversUrl',
     'dnrUrlFilterFor',
     'SCOPE_SUPPORTED_HOSTS',
-    'SCOPE_HOSTS_TO_VERIFY'
+    'SCOPE_HOSTS_TO_VERIFY',
+    'ACCOUNT_SERVICES',
+    'sanitizeAllowedAccounts',
+    'normalizeAccountInput',
+    'allowedAccountForUrl',
+    'accountLookupFor',
+    'accountFromLookupResponse',
+    'hasPageRule',
+    'pageRuleFor',
+    'allowedAccountsEditIsLoosening'
   ])('%s is declared only in parts.js', (name) => {
     const declaration = new RegExp(`^\\s*(?:const|let|var|function|async function)\\s+${name}\\b`, 'm');
     const declaring = sources.filter(s => declaration.test(s.code)).map(s => s.file);
