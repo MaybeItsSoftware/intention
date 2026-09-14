@@ -357,6 +357,36 @@ describe('aggregation across days and domains', () => {
     expect(stats.reasonsToday).toEqual(['a']);
   });
 
+  it('getStatsSummary gives the Today tab opens as well as minutes, per target', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'a');
+    await ctx.recordGrant('twitter.com', 10, 'b');
+    await ctx.recordGrant('twitter.com', 5, 'more', { negotiated: true });
+    await ctx.recordSessionMinutes('twitter.com', 24);
+    const summary = await ctx.getStatsSummary();
+    expect(summary.perTargetToday['twitter.com']).toEqual({ minutes: 24, grants: 3, negotiated: 1 });
+  });
+
+  it('getStatsSummary lays out the week oldest first, with empty days and days before setup', async () => {
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    const { ctx } = fresh({ setupCompletedAt: twoDaysAgo.getTime() });
+    const keys = ctx.daysAgoKeys(7);
+    await ctx.recordSessionMinutes('reddit.com', 12);
+    const summary = await ctx.getStatsSummary();
+    expect(summary.week.map(d => d.date)).toEqual(keys.slice().reverse());
+    expect(summary.week[6]).toEqual({ date: keys[0], minutes: 12, kept: true, counted: true });
+    expect(summary.week[5].minutes).toBe(0);
+    expect(summary.week.filter(d => d.counted)).toHaveLength(3);
+  });
+
+  it('getStatsSummary marks a day with a negotiated pass as not kept', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('reddit.com', 5, 'please', { negotiated: true });
+    const summary = await ctx.getStatsSummary();
+    expect(summary.week[6].kept).toBe(false);
+  });
+
   it('getStatsSummary aggregates today across sites', async () => {
     const { ctx } = fresh();
     await ctx.recordSessionMinutes('twitter.com', 10);

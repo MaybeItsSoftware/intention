@@ -201,13 +201,12 @@ a.link-button {
 a.link-button:hover { background: var(--hover); }
 
 ul#domain-list, ul#setup-websites-list,
-ul#app-list, ul#setup-apps-list, ul#usage-log-list {
+ul#app-list, ul#setup-apps-list {
   list-style: none;
   padding: 0;
   margin: 10px 0 0;
 }
 
-ul#usage-log-list li,
 ul.app-results li {
   display: flex;
   justify-content: space-between;
@@ -406,17 +405,6 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   text-align: center;
 }
 
-ul#usage-log-list li.log-date-heading {
-  background: none;
-  padding: 10px 4px 2px;
-  margin-bottom: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
 /* ---- The intention (buildIntentionField) ---------------------------------
 
    Two numbers, both on short fixed ranges, so neither is a text box: a stepper
@@ -510,16 +498,6 @@ ul#usage-log-list li.log-date-heading {
 .row-more[open] > summary::after { content: ' \2212'; }
 
 /* ---- Streak, pending changes, the loosening dialog ------------------------ */
-.streak-card {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 14px;
-}
-
-.streak-value { font-size: 22px; color: var(--ink); }
-.streak-grace { font-size: 13px; color: var(--text-muted); }
-
 .pending-list {
   list-style: none;
   margin: 0;
@@ -1909,6 +1887,373 @@ ul.setup-picked:empty { display: none; }
   margin: 0 auto;
 }
 
+/* ---- The settings shell ---------------------------------------------------
+   One set of elements, two arrangements. Narrow (a phone, a small window): the
+   header, then the tab strip, then the section — as it has always been. Wide
+   (the Mac app, a desktop browser tab): a sidebar holding the name, the credit
+   chip, a vertical nav and the Safari status, beside the section. */
+.settings-side-note { display: none; }
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin: 22px 0 14px;
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.section-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 820px) {
+  body.in-settings .container {
+    max-width: none;
+    padding: 0;
+  }
+  body.in-settings #settings-view { max-width: none; }
+
+  .settings-shell {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+
+  .settings-side {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 28px 14px 20px;
+    border-right: 1px solid var(--border);
+    background: var(--raised);
+  }
+  .settings-side .settings-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    margin: 0 10px 26px;
+  }
+  .settings-side .settings-header-text { flex: none; }
+  .settings-side .settings-header h1 { font-size: 22px; font-weight: 700; margin-bottom: 2px; }
+  .settings-side .settings-header .muted { font-size: 13px; }
+  .settings-side .credit-chip { align-items: flex-start; text-align: left; background: var(--paper); }
+
+  .section-tabs.settings-tabs {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 2px;
+    margin: 0;
+  }
+  .section-tabs.settings-tabs .tab-btn {
+    flex: none;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 15px;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+    text-indent: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ink);
+  }
+  .section-tabs.settings-tabs .tab-btn:hover { background: var(--hover); }
+  .section-tabs.settings-tabs .tab-btn.selected {
+    background: var(--paper);
+    border-color: var(--border);
+    font-weight: 700;
+  }
+
+  .settings-side-note {
+    display: block;
+    margin: auto 0 0;
+    padding: 14px 10px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+  .settings-side-note[hidden] { display: none; }
+  .settings-side-note.is-off { color: var(--danger-text); }
+
+  .settings-main {
+    min-width: 0;
+    padding: 30px 36px 80px;
+  }
+  .settings-main > .section-head,
+  .settings-main > .settings-grid { max-width: 1040px; }
+  .section-head { margin-top: 0; }
+  .section-head h2 { font-size: 28px; }
+
+  /* Twelve tracks, every card full width unless it is one of the pairs below.
+     A pair whose partner is hidden takes the whole row back. */
+  /* .settings-main in front of each: the single-column .settings-grid rule
+     sits further down the file and would otherwise win. */
+  .settings-main .settings-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .settings-main .settings-grid > * { grid-column: 1 / -1; }
+  .settings-main #streak-line,
+  .settings-main #week-card,
+  .settings-main #pending-card,
+  .settings-main #today-coach-card { align-self: stretch; }
+  .settings-main #streak-line { grid-column: span 5; }
+  .settings-main #week-card { grid-column: span 7; }
+  .settings-main #streak-line[hidden] + #week-card { grid-column: 1 / -1; }
+  .settings-main #pending-card, .settings-main #today-coach-card { grid-column: span 6; }
+  .settings-main #pending-card[hidden] + #today-coach-card { grid-column: 1 / -1; }
+  .settings-main #context-card { grid-column: span 7; }
+  .settings-main #observations-card { grid-column: span 5; }
+  .settings-main #ai-access-card { grid-column: span 7; }
+  .settings-main #privacy-card { grid-column: span 5; }
+  .settings-main #danger-card { grid-column: span 5; }
+  .settings-main #leaving-card { grid-column: span 7; }
+}
+
+/* ---- Today ---------------------------------------------------------------- */
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 14px;
+}
+.card .card-head h2 { margin: 0; }
+.card-head .micro-label { margin: 0; }
+
+/* Status as a tag: tinted fill, hairline and text of one hue. */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 9px;
+  border: 1px solid;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.status-tag:empty { display: none; }
+.status-tag.ok { color: var(--success-text); background: var(--success-fill); border-color: var(--success-line); }
+.status-tag.warn { color: var(--warning-text); background: var(--warning-fill); border-color: var(--warning-line); }
+.status-tag.bad { color: var(--danger-text); background: var(--danger-fill); border-color: var(--danger-line); }
+.status-tag.info { color: var(--primary-text); background: var(--primary-fill); border-color: var(--primary-line); }
+
+.streak-card { display: grid; gap: 14px; align-content: start; }
+.streak-card[hidden] { display: none; }
+.streak-card .card-head { margin-bottom: 0; }
+.streak-figure { display: flex; align-items: baseline; gap: 10px; margin: 0; }
+.streak-value {
+  font-size: 56px;
+  line-height: 0.9;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.streak-unit { font-size: 16px; color: var(--ink); }
+.streak-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.streak-days li {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.streak-days .day-mark {
+  width: 100%;
+  height: 24px;
+  border: 1px solid var(--success-line);
+  border-radius: var(--radius-control);
+  background: var(--success-fill);
+}
+.streak-days .missed .day-mark { border-color: var(--warning-line); background: var(--warning-fill); }
+.streak-days .uncounted .day-mark { border-color: var(--border); background: transparent; }
+.streak-days .today .day-mark { border-style: dashed; }
+.streak-days .today.kept .day-mark { border-color: var(--primary-line); background: var(--primary-fill); }
+.streak-grace { margin: 0; font-size: 13.5px; color: var(--text-muted); }
+
+.week-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  margin: 0 0 10px;
+}
+.week-figures div { display: grid; gap: 2px; }
+.week-figures dd {
+  margin: 0;
+  font-size: 20px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.week-chart { position: relative; }
+.week-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.week-chart .grid-line { stroke: var(--border-muted); stroke-width: 1; }
+.week-chart .base-line { stroke: var(--border); stroke-width: 1; }
+.week-chart .intent-line { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.week-chart .tick { fill: var(--text-muted); font-size: 10px; font-family: inherit; }
+.week-chart .tick-strong { fill: var(--ink); font-weight: 700; }
+.week-chart .bar { fill: var(--chart-bar); }
+.week-chart .bar.is-today,
+.week-chart .bar.is-hover { fill: var(--primary); }
+.week-chart .hit { fill: transparent; }
+.chart-tip {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  padding: 5px 9px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+}
+
+.today-targets { list-style: none; margin: 0; padding: 0; }
+.today-target {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-muted);
+}
+.today-target:first-child { border-top: 0; padding-top: 2px; }
+.today-target-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+}
+.today-target-name strong { overflow-wrap: anywhere; color: var(--ink); }
+.today-target-name .micro-label { margin: 0; }
+.today-target-fig {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.today-target-fig strong { font-size: 15px; color: var(--ink); }
+.today-meter {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--well);
+  overflow: hidden;
+}
+.today-meter span { display: block; height: 100%; border-radius: inherit; background: var(--c-emerald); }
+.today-meter span.warn { background: var(--c-amber); }
+.today-meter span.bad { background: var(--c-raspberry); }
+.today-target-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.opens-dots { display: inline-flex; gap: 3px; }
+.opens-dots i {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-pill);
+}
+.opens-dots i.used { background: var(--ink); border-color: var(--ink); }
+.today-quiet {
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-muted);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.today-targets:empty + .today-quiet { margin-top: 0; padding-top: 0; border-top: 0; }
+
+@media (min-width: 820px) {
+  .today-target {
+    grid-template-columns: minmax(160px, 1fr) minmax(0, 2fr) 140px;
+    align-items: center;
+    gap: 4px 20px;
+  }
+  .today-meter { grid-column: 2; grid-row: 1; }
+  .today-target-fig { grid-column: 3; grid-row: 1; }
+  .today-target-foot { grid-column: 2 / 4; grid-row: 2; }
+}
+
+.today-coach-context {
+  margin: 0 0 14px;
+  padding: 0 0 0 14px;
+  border-left: 1px solid var(--border-input);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.today-coach-context[hidden] { display: none; }
+.today-coach-btn { width: 100%; }
+
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-day {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  gap: 2px 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-muted);
+  font-size: 14px;
+}
+.history-day:first-child { border-top: 0; padding-top: 0; }
+.history-day[hidden] { display: none; }
+.history-date { font-size: 12px; line-height: 1.9; color: var(--text-muted); }
+.history-items { min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.history-total { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink); }
+.history-empty { font-size: 14px; }
+@media (max-width: 480px) {
+  .history-day { grid-template-columns: minmax(0, 1fr) auto; }
+  .history-date { grid-column: 1 / -1; line-height: 1.4; }
+}
+button.history-more {
+  margin-top: 8px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--primary-text);
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.history-more:hover { background: none; color: var(--ink); }
+
 /* Single column at every width. The two-column split used to cut across the
    section grouping — a section's cards could land in either column, so showing
    one section at a time left half the page empty.
@@ -1952,7 +2297,7 @@ ul.setup-picked:empty { display: none; }
 #settings-tabs:not([hidden]) { display: flex; }
 .settings-grid .card.tab-hidden { display: none; }
 
-/* ---- Section tabs (Blocking / Activity / Coach / Unlock (iOS) / Settings) ----
+/* ---- Section tabs (Today / Intentions / Coach / Settings) ----
    These used to be mobile-only, which left desktop rendering all twelve cards
    at once in a two-column grid whose column split disagreed with the section
    grouping — and left both the remembered tab and the ?section= deep link with

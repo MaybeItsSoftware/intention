@@ -155,14 +155,27 @@ function applySettingsTab() {
   document.getElementById('websites-card').classList.toggle('tab-hidden', activeSettingsTab !== 'websites');
 }
 
-// ---- Mobile section tabs (Blocking / Activity / Coach / Unlock / Settings) ----
+// ---- Section tabs (Today / Intentions / Coach / Settings) ----
+//
+// Today used to be split across Blocking (the streak, what starts tomorrow),
+// Activity (three lines of minutes and a log) and, on iPhone, a separate Unlock
+// tab. It is one page now, and the page someone lands on. The old names still
+// resolve — a remembered tab from before, a notification, the chat's
+// "?section=" button, Android's deep-link extra — so nothing that links here
+// has to change with it.
+const SETTINGS_SECTIONS = ['today', 'intentions', 'coach', 'settings'];
+const SECTION_ALIASES = { blocking: 'intentions', activity: 'today', unlock: 'today' };
+const SECTION_TITLES = { today: 'Today', intentions: 'Intentions', coach: 'Coach', settings: 'Settings' };
 
-const SETTINGS_SECTIONS = ['blocking', 'activity', 'coach', 'unlock', 'settings'];
+function resolveSection(name) {
+  const section = SECTION_ALIASES[name] || name;
+  return SETTINGS_SECTIONS.includes(section) ? section : null;
+}
+
 let activeSettingsSection = (() => {
   try {
-    const saved = localStorage.getItem('activeSettingsSection');
-    return SETTINGS_SECTIONS.includes(saved) ? saved : 'blocking';
-  } catch (e) { return 'blocking'; }
+    return resolveSection(localStorage.getItem('activeSettingsSection')) || 'today';
+  } catch (e) { return 'today'; }
 })();
 
 function initSectionTabs() {
@@ -184,7 +197,7 @@ function applyIOSUnlockLanding() {
   iosScreenTimeStatus().then(st => {
     if (!st || !st.authorized || !(st.selectionCount > 0)) return;
     if (new URLSearchParams(window.location.search).get('section')) return;
-    setSettingsSection('unlock');
+    setSettingsSection('today');
   });
 }
 
@@ -192,10 +205,14 @@ function applyIOSUnlockLanding() {
 // button) overrides whatever tab localStorage last remembered, so the user
 // actually lands where the link promised instead of wherever they left off.
 function applyDeepLinkSection() {
-  const section = new URLSearchParams(window.location.search).get('section');
-  if (!section || !SETTINGS_SECTIONS.includes(section)) return;
+  const requested = new URLSearchParams(window.location.search).get('section');
+  const section = resolveSection(requested);
+  if (!section) return;
   setSettingsSection(section);
-  const target = document.querySelector(`#settings-view [data-section="${section}"]`);
+  // An old "?section=unlock" still means the card, not just the page it is on.
+  const target = requested === 'unlock'
+    ? document.getElementById('unlock-card')
+    : document.querySelector(`#settings-view [data-section="${section}"]`);
   target?.scrollIntoView({ block: 'start' });
   if (section === 'settings') document.getElementById('api-key-input-2')?.focus();
 }
@@ -215,7 +232,10 @@ async function refreshCreditChip() {
   const chip = document.getElementById('credit-chip');
   if (!chip) return;
   const access = await getAccessState();
-  if (!access || access.route === 'byok') {
+  // Chrome and Firefox run on the user's own key and nothing else, so there is
+  // no balance to show even before a key is saved — "Credit 0" in the sidebar
+  // would offer them something those builds cannot sell.
+  if (!access || access.route === 'byok' || BILLING_MODE === 'byok') {
     chip.hidden = true;
     return;
   }
@@ -230,7 +250,8 @@ async function refreshCreditChip() {
   chip.hidden = false;
 }
 
-function setSettingsSection(section) {
+function setSettingsSection(name) {
+  const section = resolveSection(name) || 'today';
   activeSettingsSection = section;
   try { localStorage.setItem('activeSettingsSection', section); } catch (e) {}
   applySettingsSection();
@@ -248,6 +269,11 @@ function applySettingsSection() {
   document.querySelectorAll('#settings-view [data-section]').forEach(el => {
     el.classList.toggle('section-hidden', el.dataset.section !== activeSettingsSection);
   });
+  document.getElementById('section-title').textContent = SECTION_TITLES[activeSettingsSection];
+  const dateEl = document.getElementById('section-date');
+  dateEl.textContent = activeSettingsSection === 'today'
+    ? new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+    : '';
 }
 
 // ---- Add-item popup modals ----
@@ -421,6 +447,12 @@ function renderContextCard(userContext) {
   } else {
     contextEditInput.value = '';
   }
+  const todayContext = document.getElementById('today-coach-context');
+  if (todayContext) {
+    todayContext.hidden = !hasContext;
+    todayContext.textContent = hasContext ? userContext.trim() : '';
+    document.getElementById('today-coach-empty').hidden = hasContext;
+  }
 }
 
 // The coach's cross-day notepad (see note_observation in background.js).
@@ -562,6 +594,9 @@ function wireCustomKeySection(state) {
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
+  // Lets the wide layout take the whole window for its sidebar; the wizard
+  // keeps the centred column it was designed in.
+  document.body.classList.add('in-settings');
 
   renderContextCard(state.userContext);
   await renderCoachObservations();
@@ -624,7 +659,7 @@ async function showSettingsView(state) {
   // are still empty looks like the rules vanished just after setup.
   renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
   renderPendingChanges(state);
-  refreshStreak();
+  refreshToday(state);
   wireAddModals();
 
   if (HAS_APP_BLOCKING) {
@@ -648,8 +683,15 @@ async function showSettingsView(state) {
   initSettingsTabs();
   initSectionTabs();
 
-  const summary = await sendBg({ action: 'getStatsSummary' });
-  renderStats(summary);
+  bindOnce('today-coach-btn', 'click', async () => {
+    if (await requireAccess()) openCoachModal();
+  });
+  bindOnce('usage-log-more', 'click', () => {
+    usageLogExpanded = !usageLogExpanded;
+    applyUsageLogExpanded();
+  });
+  wireTodayRefresh();
+  refreshSideNote();
   await refreshUsageLog(state);
 
   bindOnce('open-coach-btn', 'click', async () => {
@@ -929,7 +971,7 @@ async function openLeaveConversation() {
         await finishRemoval();
         return;
       }
-      setSettingsSection('blocking');
+      setSettingsSection('intentions');
       document.getElementById('leaving-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   });
@@ -954,7 +996,7 @@ async function finishRemoval() {
 // never removes anything on its own.
 function applyLeaveDeepLink() {
   if (new URLSearchParams(window.location.search).get('leave') !== '1') return;
-  setSettingsSection('blocking');
+  setSettingsSection('intentions');
   document.getElementById('leaving-card')?.scrollIntoView({ block: 'start' });
   openLeaveConversation();
 }
@@ -1071,7 +1113,6 @@ function wireIOSAppsCard() {
     window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
   });
 
-  document.getElementById('section-tab-unlock').hidden = false;
   document.getElementById('unlock-card').hidden = false;
   bindOnce('ios-request-time-btn', 'click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
@@ -1295,19 +1336,346 @@ function formatPendingWhen(effectiveAt) {
     at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// The streak line in the header of the blocking tab.
-async function refreshStreak() {
-  const el = document.getElementById('streak-line');
-  if (!el) return;
+// ---- Today ----------------------------------------------------------------
+//
+// One summary read feeds the streak, the week and the per-target rows, so the
+// three can never disagree about a number. Everything user-supplied (domains,
+// app labels) goes in as textContent.
+
+async function refreshToday(state) {
   let summary = null;
   try { summary = await sendBg({ action: 'getStatsSummary' }); } catch (e) { summary = null; }
+  const config = state || await getConfig();
+  renderStreak(summary);
+  renderWeek(summary, config);
+  renderTodayTargets(summary, config);
+}
+
+// Apps can't rely on visibilitychange for an app switch, so the hosts fire
+// intention-app-active; a desktop browser tab gets the ordinary event. Either
+// way, coming back is when Safari may have pushed new minutes.
+let todayRefreshAt = 0;
+function wireTodayRefresh() {
+  const again = async () => {
+    if (document.getElementById('settings-view').hidden) return;
+    if (Date.now() - todayRefreshAt < 5000) return;
+    todayRefreshAt = Date.now();
+    const state = await getConfig();
+    refreshToday(state);
+    renderPendingChanges(state);
+    refreshUsageLog(state);
+    refreshSideNote();
+  };
+  window.addEventListener('intention-app-active', again);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') again();
+  });
+}
+
+function shortDay(key, style = 'short') {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: style });
+}
+
+function renderStreak(summary) {
+  const el = document.getElementById('streak-line');
+  if (!el) return;
   const streak = summary && summary.streak;
   if (!streak) { el.hidden = true; return; }
   const days = Number(streak.days) || 0;
-  document.getElementById('streak-value').textContent = `${days} ${days === 1 ? 'day' : 'days'}`;
-  document.getElementById('streak-grace').textContent = streak.graceLeft > 0
-    ? 'One slip this week is forgiven'
-    : 'Grace used this week';
+  document.getElementById('streak-value').textContent = String(days);
+  document.getElementById('streak-unit').textContent = days === 1 ? 'day kept' : 'days kept';
+
+  const tag = document.getElementById('streak-today');
+  tag.className = `status-tag ${streak.todayKept ? 'ok' : 'warn'}`;
+  tag.textContent = streak.todayKept ? 'Today kept so far' : 'Today needed more';
+
+  const list = document.getElementById('streak-days');
+  list.textContent = '';
+  const week = (summary.week || []);
+  week.forEach((day, i) => {
+    const li = document.createElement('li');
+    const isToday = i === week.length - 1;
+    const state = !day.counted ? 'uncounted' : (day.kept ? 'kept' : 'missed');
+    li.className = `${state}${isToday ? ' today' : ''}`;
+    const mark = document.createElement('span');
+    mark.className = 'day-mark';
+    const label = document.createElement('span');
+    label.textContent = shortDay(day.date, 'narrow');
+    li.setAttribute('aria-label', `${shortDay(day.date, 'long')}: ${
+      state === 'uncounted' ? 'before you started' : state === 'kept' ? (isToday ? 'kept so far' : 'kept') : 'needed more than intended'}`);
+    li.append(mark, label);
+    list.appendChild(li);
+  });
+
+  const missed = week.filter(d => d.counted && !d.kept);
+  const graceEl = document.getElementById('streak-grace');
+  if (streak.graceLeft > 0) {
+    graceEl.textContent = 'One slip in any seven days is forgiven. You haven’t needed it this week.';
+  } else {
+    const last = missed[missed.length - 1];
+    const when = last ? shortDay(last.date, 'long') : 'this week';
+    graceEl.textContent = `Grace used on ${when}. Another slip in the same seven days ends the run.`;
+  }
+  el.hidden = false;
+}
+
+// Every blocked target the page can put a number against: websites
+// everywhere, and packages on Android. iOS app time is one opaque total from
+// Screen Time, so it appears in Recent days rather than here.
+function todayTargets(config) {
+  const labels = config.appLabels || {};
+  const targets = (config.blockedDomains || []).map(t => ({ id: t, label: t, kind: 'Website' }));
+  if (HAS_APP_BLOCKING) {
+    for (const pkg of (config.blockedApps || [])) targets.push({ id: pkg, label: labels[pkg] || pkg, kind: 'App' });
+  }
+  return targets.map(t => ({ ...t, intention: resolveIntention(limitEntryFor(t.id, config)) }));
+}
+
+function intendedMinutesPerDay(targets) {
+  return targets.reduce((sum, t) => sum + t.intention.opens * t.intention.minutesEach, 0);
+}
+
+function renderWeek(summary, config) {
+  const figures = document.getElementById('week-figures');
+  const chart = document.getElementById('week-chart');
+  if (!figures || !chart) return;
+  const week = (summary && summary.week) || [];
+  const counted = week.filter(d => d.counted);
+  const total = counted.reduce((sum, d) => sum + d.minutes, 0);
+  const average = counted.length ? Math.round(total / counted.length) : 0;
+  const intended = intendedMinutesPerDay(todayTargets(config));
+
+  figures.textContent = '';
+  for (const [label, value] of [
+    ['Today', `${(summary && summary.minutesToday) || 0} min`],
+    ['Daily average', `${average} min`],
+    ['Intended per day', intended ? `${intended} min` : 'none']
+  ]) {
+    const item = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.className = 'micro-label';
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    item.append(dt, dd);
+    figures.appendChild(item);
+  }
+  drawWeekChart(chart, week, intended);
+}
+
+// Bars, not a line: seven separate days, each its own amount. The dashed rule
+// is the day's intended total — every open of every target used in full — so
+// a bar above it is a day that went past what was meant.
+function drawWeekChart(chart, week, intended) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const node = (name, attrs, text) => {
+    const n = document.createElementNS(NS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  chart.textContent = '';
+  if (!week.length) return;
+  const W = Math.max(260, Math.round(chart.clientWidth || 520));
+  const H = 150;
+  const pad = { l: 34, r: 6, t: 14, b: 22 };
+  const peak = Math.max(10, intended, ...week.map(d => d.minutes));
+  const step = [10, 15, 30, 60, 120, 180, 240].find(s => peak / s <= 3) || Math.ceil(peak / 3 / 60) * 60;
+  const max = step * Math.ceil(peak / step);
+  const y = v => pad.t + (H - pad.t - pad.b) * (1 - v / max);
+  const band = (W - pad.l - pad.r) / week.length;
+  const barW = Math.min(28, band * 0.55);
+
+  const svg = node('svg', {
+    viewBox: `0 0 ${W} ${H}`,
+    role: 'img',
+    'aria-label': 'Minutes per day, last seven days: ' +
+      week.map(d => `${shortDay(d.date, 'long')} ${d.minutes}`).join(', ') +
+      (intended ? `. Intended: ${intended} a day.` : '')
+  });
+  for (let v = 0; v <= max; v += step) {
+    svg.appendChild(node('line', { class: v === 0 ? 'base-line' : 'grid-line', x1: pad.l, x2: W - pad.r, y1: y(v), y2: y(v) }));
+    svg.appendChild(node('text', { class: 'tick', x: pad.l - 8, y: y(v) + 3, 'text-anchor': 'end' }, v));
+  }
+  if (intended > 0) {
+    svg.appendChild(node('line', { class: 'intent-line', x1: pad.l, x2: W - pad.r, y1: y(intended), y2: y(intended) }));
+    svg.appendChild(node('text', { class: 'tick', x: W - pad.r, y: y(intended) - 5, 'text-anchor': 'end' }, `intended ${intended}`));
+  }
+
+  const tip = document.createElement('div');
+  tip.className = 'chart-tip';
+  tip.hidden = true;
+  week.forEach((day, i) => {
+    const isToday = i === week.length - 1;
+    const cx = pad.l + band * i + band / 2;
+    const top = y(day.minutes);
+    const base = y(0);
+    const r = Math.min(4, barW / 2, base - top);
+    const x0 = cx - barW / 2;
+    const x1 = cx + barW / 2;
+    const hit = node('rect', { class: 'hit', x: pad.l + band * i, y: pad.t, width: band, height: H - pad.t - pad.b });
+    svg.appendChild(hit);
+    let bar = null;
+    if (day.minutes > 0) {
+      bar = node('path', {
+        class: `bar${isToday ? ' is-today' : ''}`,
+        d: `M${x0},${base} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x1 - r} Q${x1},${top} ${x1},${top + r} V${base} Z`
+      });
+      svg.appendChild(bar);
+    }
+    if (isToday && day.minutes > 0) {
+      svg.appendChild(node('text', { class: 'tick tick-strong', x: cx, y: top - 5, 'text-anchor': 'middle' }, day.minutes));
+    }
+    svg.appendChild(node('text', { class: 'tick', x: cx, y: H - 6, 'text-anchor': 'middle' }, shortDay(day.date, 'narrow')));
+    hit.addEventListener('mouseenter', () => {
+      bar?.classList.add('is-hover');
+      tip.textContent = `${isToday ? 'Today' : shortDay(day.date, 'long')} · ${day.minutes} min`;
+      tip.style.left = `${(cx / W) * 100}%`;
+      tip.style.top = `${(top / H) * chart.clientHeight - 6}px`;
+      tip.hidden = false;
+    });
+    hit.addEventListener('mouseleave', () => {
+      bar?.classList.remove('is-hover');
+      tip.hidden = true;
+    });
+  });
+  chart.append(svg, tip);
+
+  // Redrawn to the card's real width, once, when that width changes — the
+  // viewBox is in pixels so the ticks stay 10px at every size.
+  if (!chart._observed && typeof ResizeObserver === 'function') {
+    chart._observed = true;
+    chart._width = chart.clientWidth;
+    new ResizeObserver(() => {
+      if (chart.clientWidth === chart._width) return;
+      chart._width = chart.clientWidth;
+      if (chart._args) drawWeekChart(chart, ...chart._args);
+    }).observe(chart);
+  }
+  chart._args = [week, intended];
+}
+
+function renderTodayTargets(summary, config) {
+  const list = document.getElementById('today-targets');
+  const quiet = document.getElementById('today-quiet');
+  if (!list || !quiet) return;
+  const perTarget = (summary && summary.perTargetToday) || {};
+  const targets = todayTargets(config);
+  list.textContent = '';
+
+  if (!targets.length) {
+    quiet.hidden = false;
+    quiet.textContent = 'Nothing on your list yet. Add a website under Intentions.';
+    return;
+  }
+
+  const withStats = targets.map(t => {
+    const stat = perTarget[t.id] || {};
+    const minutes = Number(stat.minutes) || 0;
+    const negotiated = Number(stat.negotiated) || 0;
+    const opensUsed = Math.min(t.intention.opens, Math.max(0, (Number(stat.grants) || 0) - negotiated));
+    return { ...t, minutes, negotiated, opensUsed };
+  });
+  const active = withStats.filter(t => t.minutes > 0 || t.opensUsed > 0 || t.negotiated > 0)
+    .sort((a, b) => b.minutes - a.minutes);
+  const idle = withStats.filter(t => !active.includes(t));
+
+  for (const t of active) {
+    const { opens, minutesEach } = t.intention;
+    const allowed = opens * minutesEach;
+    const ratio = allowed > 0 ? t.minutes / allowed : (t.minutes > 0 ? 1 : 0);
+    let tone = 'ok', tagText = 'On track';
+    if (t.negotiated > 0) { tone = 'bad'; tagText = `${t.negotiated} past intention`; }
+    else if (opens === 0) { tone = 'info'; tagText = 'Blocked'; }
+    else if (ratio >= 1 || t.opensUsed >= opens) { tone = 'warn'; tagText = 'Used up'; }
+    else if (ratio >= 0.8) { tone = 'warn'; tagText = 'Nearly used'; }
+
+    const li = document.createElement('li');
+    li.className = 'today-target';
+
+    const name = document.createElement('div');
+    name.className = 'today-target-name';
+    const strong = document.createElement('strong');
+    strong.textContent = t.label;
+    const kind = document.createElement('span');
+    kind.className = 'micro-label';
+    kind.textContent = t.kind;
+    name.append(strong, kind);
+
+    const meter = document.createElement('div');
+    meter.className = 'today-meter';
+    meter.setAttribute('role', 'img');
+    meter.setAttribute('aria-label', allowed ? `${t.minutes} of ${allowed} minutes` : `${t.minutes} minutes`);
+    const fill = document.createElement('span');
+    fill.className = tone === 'info' ? 'ok' : tone;
+    fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+    meter.appendChild(fill);
+
+    const fig = document.createElement('div');
+    fig.className = 'today-target-fig';
+    const figValue = document.createElement('strong');
+    figValue.textContent = String(t.minutes);
+    fig.append(figValue, document.createTextNode(allowed ? ` / ${allowed} min` : ' min'));
+
+    const foot = document.createElement('div');
+    foot.className = 'today-target-foot';
+    if (opens > 0) {
+      const dots = document.createElement('span');
+      dots.className = 'opens-dots';
+      dots.setAttribute('aria-hidden', 'true');
+      for (let i = 0; i < opens; i++) {
+        const dot = document.createElement('i');
+        if (i < t.opensUsed) dot.className = 'used';
+        dots.appendChild(dot);
+      }
+      const opensText = document.createElement('span');
+      opensText.textContent = `${t.opensUsed} of ${opens} ${opens === 1 ? 'open' : 'opens'} × ${minutesEach} min`;
+      foot.append(dots, opensText);
+    } else {
+      const blocked = document.createElement('span');
+      blocked.textContent = 'Blocked outright';
+      foot.appendChild(blocked);
+    }
+    const tag = document.createElement('span');
+    tag.className = `status-tag ${tone}`;
+    tag.textContent = tagText;
+    foot.appendChild(tag);
+
+    li.append(name, meter, fig, foot);
+    list.appendChild(li);
+  }
+
+  quiet.hidden = !idle.length;
+  if (idle.length) {
+    const names = idle.map(t => t.label);
+    const shown = names.slice(0, 6).join(', ') + (names.length > 6 ? ` and ${names.length - 6} more` : '');
+    quiet.textContent = active.length
+      ? `No time yet today: ${shown}.`
+      : `No time on anything on your list yet today: ${shown}. Nice.`;
+  }
+}
+
+// The apps' sidebar footer: whether Safari is actually running the extension.
+// On the Mac that is the real switch; on iPhone, a heartbeat within the day.
+async function refreshSideNote() {
+  const el = document.getElementById('settings-side-note');
+  if (!el || !HAS_SAFARI_EXTENSION) return;
+  const st = await new Promise(resolve => window.intentionExtension.status(resolve));
+  if (!st) { el.hidden = true; return; }
+  const seen = Number(st.lastSeenAt) || 0;
+  let when = '';
+  if (seen) {
+    const mins = Math.max(0, Math.round((Date.now() - seen) / 60000));
+    when = mins < 1 ? 'just now'
+      : mins < 60 ? `${mins} min ago`
+      : mins < 60 * 24 ? `${Math.round(mins / 60)} h ago`
+      : new Date(seen).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  }
+  el.textContent = st.active
+    ? `Safari extension on.${when ? ` Last heard from Safari ${when}.` : ''}`
+    : 'Safari extension off, so websites aren’t being blocked.';
+  el.classList.toggle('is-off', !st.active);
   el.hidden = false;
 }
 
@@ -1395,26 +1763,6 @@ function renderApps(apps, limits = {}, labels = {}, serviceReasons = {}) {
   }
 }
 
-function renderStats(summary) {
-  const el = document.getElementById('stats-display');
-  if (!summary || !summary.minutesToday) {
-    el.innerHTML = '<p class="muted">No time on blocked sites yet today. Nice.</p>';
-    return;
-  }
-  const perSite = Object.entries(summary.perSiteToday || {})
-    .sort((a, b) => b[1] - a[1])
-    .map(([d, m]) => `${d}: ${Math.round(m)}m`)
-    .join(' · ');
-  // perSite carries domain and package names straight out of stored config, so
-  // it goes in as text — the rest of the markup is static.
-  el.innerHTML = `
-    <p><strong>${summary.minutesToday} min</strong> on blocked sites today.</p>
-    <p class="muted" id="stats-per-site"></p>
-    <p class="muted">Past 7 days: <strong>${summary.minutesWeek} min</strong>.</p>
-  `;
-  el.querySelector('#stats-per-site').textContent = perSite;
-}
-
 function formatLogDate(key) {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -1428,44 +1776,66 @@ function formatLogDate(key) {
 
 // entries: [{ date: 'YYYY-MM-DD', domain, minutes, label? }], already sorted
 // by date desc then minutes desc (see getUsageLog in tracking.js and any
-// native app-usage merges added alongside it).
+// native app-usage merges added alongside it). One row per day: where the time
+// went, and the day's total. The three most recent show; the rest wait behind
+// "Show all" so Today stays a glance.
+const USAGE_LOG_COLLAPSED_DAYS = 3;
+let usageLogExpanded = false;
+
 function renderUsageLog(entries) {
   const list = document.getElementById('usage-log-list');
-  list.innerHTML = '';
+  const more = document.getElementById('usage-log-more');
+  list.textContent = '';
   if (!entries || !entries.length) {
     const li = document.createElement('li');
-    li.className = 'muted';
+    li.className = 'muted history-empty';
     li.textContent = 'No usage recorded yet.';
     list.appendChild(li);
+    if (more) more.hidden = true;
     return;
   }
 
-  let lastDate = null;
+  const days = [];
   for (const entry of entries) {
-    if (entry.date !== lastDate) {
-      lastDate = entry.date;
-      const heading = document.createElement('li');
-      heading.className = 'log-date-heading';
-      heading.textContent = formatLogDate(entry.date);
-      list.appendChild(heading);
+    let day = days[days.length - 1];
+    if (!day || day.date !== entry.date) {
+      day = { date: entry.date, items: [], total: 0 };
+      days.push(day);
     }
+    day.items.push(entry);
+    day.total += entry.minutes;
+  }
 
+  days.forEach((day, i) => {
     const li = document.createElement('li');
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-
-    const span = document.createElement('span');
-    span.textContent = entry.label || entry.domain;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-
-    const minSpan = document.createElement('span');
-    minSpan.className = 'domain-limit-badge';
-    minSpan.textContent = `${entry.minutes} min`;
-    infoContainer.appendChild(minSpan);
-
-    li.appendChild(infoContainer);
+    li.className = 'history-day';
+    if (i >= USAGE_LOG_COLLAPSED_DAYS) li.dataset.extra = '1';
+    const date = document.createElement('span');
+    date.className = 'history-date';
+    date.textContent = formatLogDate(day.date);
+    const items = document.createElement('span');
+    items.className = 'history-items';
+    items.textContent = day.items.map(e => `${e.label || e.domain} ${e.minutes}m`).join(' · ');
+    const total = document.createElement('span');
+    total.className = 'history-total';
+    total.textContent = `${day.total} min`;
+    li.append(date, items, total);
     list.appendChild(li);
+  });
+
+  if (more) {
+    more.hidden = days.length <= USAGE_LOG_COLLAPSED_DAYS;
+    more.dataset.count = String(days.length);
+  }
+  applyUsageLogExpanded();
+}
+
+function applyUsageLogExpanded() {
+  const more = document.getElementById('usage-log-more');
+  document.querySelectorAll('#usage-log-list [data-extra]').forEach(li => { li.hidden = !usageLogExpanded; });
+  if (more) {
+    more.textContent = usageLogExpanded ? 'Show fewer' : `Show all ${more.dataset.count || ''} days`.replace('  ', ' ');
+    more.setAttribute('aria-expanded', String(usageLogExpanded));
   }
 }
 

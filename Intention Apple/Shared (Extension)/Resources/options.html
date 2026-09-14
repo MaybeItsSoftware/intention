@@ -136,211 +136,261 @@
     </main>
 
     <main id="settings-view" hidden>
-      <div class="settings-header">
-        <div class="settings-header-text">
-          <h1>Intention</h1>
-          <p class="muted">Your coach, your sites, your rules.</p>
-        </div>
-        <!-- The balance, on every tab. It used to be reachable only from
-             inside the paywall, which is the one surface someone who has
-             already paid never opens again — "there seems to be no means to
-             see credit balance" was the entirely fair result. A button, not a
-             label: it goes to the card that can do something about it. Hidden
-             on builds using a custom API key, where there is no balance and a
-             "0" would be a lie. -->
-        <button type="button" id="credit-chip" class="credit-chip" hidden>
-          <span class="micro-label credit-chip-label">Credit</span>
-          <span class="credit-chip-value" id="credit-chip-value"></span>
-        </button>
-      </div>
-
-      <div id="section-tabs" class="settings-tabs section-tabs">
-        <button type="button" class="tab-btn" data-section-tab="blocking">Blocking</button>
-        <button type="button" class="tab-btn" data-section-tab="activity">Activity</button>
-        <button type="button" class="tab-btn" data-section-tab="coach">Coach</button>
-        <button type="button" class="tab-btn" data-section-tab="unlock" id="section-tab-unlock" hidden>Unlock</button>
-        <button type="button" class="tab-btn" data-section-tab="settings">Settings</button>
-      </div>
-
-      <div class="settings-grid">
-        <section class="card" data-section="coach">
-          <h2>Your coach's context</h2>
-          <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
-          <blockquote id="context-display"></blockquote>
-          <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
-          <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
-          <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
-        </section>
-
-        <section class="card" data-section="activity">
-          <h2>Today</h2>
-          <div id="stats-display"></div>
-        </section>
-
-        <section class="card" id="usage-log-card" data-section="activity">
-          <h2>Usage log</h2>
-          <p class="subtitle">Time spent on blocked sites and apps, by day.</p>
-          <div id="usage-log-access" hidden></div>
-          <ul id="usage-log-list"></ul>
-        </section>
-
-        <section class="card streak-card" id="streak-line" data-section="blocking" hidden>
-          <span class="micro-label">Streak</span>
-          <strong class="streak-value" id="streak-value"></strong>
-          <span class="streak-grace" id="streak-grace"></span>
-        </section>
-
-        <section class="card" id="pending-card" data-section="blocking" hidden>
-          <h2>Starting tomorrow</h2>
-          <p class="subtitle">Changes that give you more time wait a day. Cancel any of them for free.</p>
-          <ul id="pending-list" class="pending-list"></ul>
-        </section>
-
-        <div id="settings-tabs" class="settings-tabs" data-section="blocking" hidden>
-          <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
-          <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
-        </div>
-
-        <section class="card" id="websites-card" data-section="blocking">
-          <h2>Blocked sites</h2>
-          <p class="subtitle">Each site has an intention: how many times a day you open it, and for how long. Fewer is instant; more starts tomorrow.</p>
-          <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
-          <ul id="domain-list"></ul>
-        </section>
-
-        <section class="card" id="apps-card" data-section="blocking" hidden>
-          <h2>Blocked apps</h2>
-          <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device — "+ Add app" also suggests the usual suspects.</p>
-          <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
-          <ul id="app-list"></ul>
-          <div id="ios-apps-controls" hidden>
-            <p class="subtitle" id="ios-apps-status"></p>
-            <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
-            <!-- Site rows carry a "Parts of the site" control and app rows do
-                 not, and on iOS that gap is permanent rather than pending. A
-                 Screen Time shield takes an opaque ApplicationToken and hides
-                 the whole app; there is no screen, tab or deep-link
-                 granularity in the API and no way for any third party to read
-                 another app's view hierarchy. Saying so here, on the card
-                 itself, is the point — a user who reads about parts on the
-                 Websites tab will otherwise assume it applies to both.
-                 The alternative it points at is real: webDomainTokens are a
-                 separate set from applicationTokens, so shielding the app
-                 while leaving the site reachable in Safari is expressible, and
-                 our own part rules then do the fine-grained work there. -->
-            <p class="row-info-note" id="ios-apps-parts-note">Parts of an app can’t be blocked on iPhone or iPad. Screen Time blocks a whole app or nothing, and Apple gives Intention no way to see which screen you’re on. If you want Reels blocked but messages open, block the Instagram app here and add instagram.com on the Websites tab — Safari runs Intention’s own rules, which can tell the parts apart.</p>
+      <div class="settings-shell">
+        <!-- A sidebar once the window is wide enough (the Mac app, a desktop
+             browser tab), and the header plus tab strip it has always been on
+             a phone. Same elements either way; options.css moves them. -->
+        <aside class="settings-side">
+          <div class="settings-header">
+            <div class="settings-header-text">
+              <h1>Intention</h1>
+              <p class="muted">Your coach, your sites, your rules.</p>
+            </div>
+            <!-- The balance, on every tab. It used to be reachable only from
+                 inside the paywall, which is the one surface someone who has
+                 already paid never opens again — "there seems to be no means to
+                 see credit balance" was the entirely fair result. A button, not a
+                 label: it goes to the card that can do something about it. Hidden
+                 on builds using a custom API key, where there is no balance and a
+                 "0" would be a lie. -->
+            <button type="button" id="credit-chip" class="credit-chip" hidden>
+              <span class="micro-label credit-chip-label">Credit</span>
+              <span class="credit-chip-value" id="credit-chip-value"></span>
+            </button>
           </div>
-        </section>
 
-        <section class="card danger-card" id="danger-card" data-section="blocking">
-          <h2>Turn everything off</h2>
-          <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
-          <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
-          <div id="disable-all-status" class="status"></div>
-        </section>
+          <nav id="section-tabs" class="settings-tabs section-tabs" aria-label="Sections">
+            <button type="button" class="tab-btn" data-section-tab="today">Today</button>
+            <button type="button" class="tab-btn" data-section-tab="intentions">Intentions</button>
+            <button type="button" class="tab-btn" data-section-tab="coach">Coach</button>
+            <button type="button" class="tab-btn" data-section-tab="settings">Settings</button>
+          </nav>
 
-        <!-- Leaving Intention. Sits below "Turn everything off" because that is
-             the order the two decisions come in: almost everyone who thinks
-             they want this wants that instead, and putting it second means
-             they read the cheaper option first.
+          <!-- Apps only: whether Safari is running the extension, and when it
+               last reported in. Filled by refreshSideNote(). -->
+          <p class="settings-side-note" id="settings-side-note" hidden></p>
+        </aside>
 
-             Everything inside is built by options.js with createElement /
-             textContent — the delay choices, the pending-request line, the
-             Apple instructions. The markup here is the frame only. -->
-        <section class="card leaving-card" id="leaving-card" data-section="blocking">
-          <h2>Leaving Intention</h2>
-          <p class="subtitle">Removing Intention is always possible. No app can really stop you, and this one isn’t going to pretend otherwise. What it can do is make sure the decision gets made by whoever is reading this now, rather than by whoever is holding the phone at 11pm.</p>
+        <div class="settings-main">
+          <div class="section-head">
+            <h2 id="section-title">Today</h2>
+            <span class="section-date" id="section-date"></span>
+          </div>
 
-          <p class="micro-label">Cool-off before removal</p>
-          <div id="leave-delay-choices" class="leave-choices" role="group" aria-label="Cool-off before removal"></div>
-          <p class="row-info-note" id="leave-delay-note">Making the delay longer saves straight away. Shortening it means convincing your coach, same as any other rule you set for yourself.</p>
+          <div class="settings-grid">
+            <!-- TODAY: how it is going, before anything that changes the rules.
+                 Every figure here is rendered by refreshToday() in options.js from
+                 getStatsSummary, which inside the apps already includes the
+                 website time Safari pushed from every device. -->
+            <section class="card" id="unlock-card" data-section="today" hidden>
+              <h2>Ask for time</h2>
+              <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
+              <p class="subtitle" id="unlock-status"></p>
+              <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
+            </section>
 
-          <div id="leave-pending" class="leave-pending" hidden></div>
+            <section class="card streak-card" id="streak-line" data-section="today" hidden>
+              <div class="card-head">
+                <span class="micro-label">Streak</span>
+                <span class="status-tag" id="streak-today"></span>
+              </div>
+              <p class="streak-figure"><strong class="streak-value" id="streak-value"></strong> <span class="streak-unit" id="streak-unit"></span></p>
+              <ol class="streak-days" id="streak-days" aria-label="The last seven days"></ol>
+              <p class="streak-grace" id="streak-grace"></p>
+            </section>
 
-          <p class="micro-label">Take your list with you</p>
-          <p class="row-info-note">A small file holding your blocked sites and apps, your limits, your answers and your coach’s context. You can restore it later on this device or another one. It does not contain your API key, coaching credit or usage history.</p>
-          <button type="button" id="export-list-btn" class="secondary" style="width: 100%;">Save a copy of your list</button>
-          <button type="button" id="import-list-btn" class="secondary" style="width: 100%; margin-top: 8px;">Restore a copy of your list</button>
-          <input type="file" id="import-list-input" accept="application/json,.json" hidden>
+            <section class="card week-card" id="week-card" data-section="today">
+              <div class="card-head">
+                <h2>This week</h2>
+                <span class="micro-label">Minutes on your blocked list</span>
+              </div>
+              <dl class="week-figures" id="week-figures"></dl>
+              <div class="week-chart" id="week-chart"></div>
+            </section>
 
-          <div id="leave-remove-row"></div>
-          <div id="leaving-status" class="status"></div>
-        </section>
+            <section class="card today-card" id="today-card" data-section="today">
+              <div class="card-head">
+                <h2>Time today</h2>
+                <span class="micro-label">Each against its intention</span>
+              </div>
+              <ul class="today-targets" id="today-targets"></ul>
+              <p class="today-quiet" id="today-quiet" hidden></p>
+            </section>
 
-        <section class="card" id="unlock-card" data-section="unlock" hidden>
-          <h2>Ask for time</h2>
-          <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
-          <p class="subtitle" id="unlock-status"></p>
-          <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
-        </section>
+            <section class="card" id="pending-card" data-section="today" hidden>
+              <h2>Starting tomorrow</h2>
+              <p class="subtitle">Changes that give you more time wait a day. Cancel any of them for free.</p>
+              <ul id="pending-list" class="pending-list"></ul>
+            </section>
 
-        <section class="card" data-section="settings" id="ai-access-card">
-          <h2>AI access</h2>
-          <div id="access-paywall"></div>
-          <div id="access-status" class="status"></div>
-        </section>
+            <section class="card today-coach-card" id="today-coach-card" data-section="today">
+              <div class="card-head">
+                <h2>Your coach</h2>
+              </div>
+              <blockquote class="today-coach-context" id="today-coach-context" hidden></blockquote>
+              <p class="subtitle" id="today-coach-empty" hidden>Your coach doesn’t know what you’re working on yet. Tell it, and it can hold you to it.</p>
+              <button type="button" id="today-coach-btn" class="primary today-coach-btn">Talk with your coach</button>
+            </section>
 
-        <section class="card" data-section="settings">
-          <h2>Privacy</h2>
-          <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
-          <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
-        </section>
+            <section class="card history-card" id="usage-log-card" data-section="today">
+              <div class="card-head">
+                <h2>Recent days</h2>
+                <span class="micro-label" id="usage-log-caption">Time on your blocked list</span>
+              </div>
+              <div id="usage-log-access" hidden></div>
+              <ul id="usage-log-list" class="history-list"></ul>
+              <button type="button" id="usage-log-more" class="history-more" hidden>Show all 30 days</button>
+            </section>
 
-        <details class="card advanced-card" data-section="settings" id="advanced-card">
-          <summary>Advanced <span class="muted">(developer options)</span></summary>
-          <div class="advanced-card-body">
-            <details id="custom-key-details">
-              <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
+            <section class="card" id="context-card" data-section="coach">
+              <h2>Your coach's context</h2>
+              <p id="context-subtitle" class="subtitle">The coach updates this only through conversation with you, so you can't silently rewrite the rules in a weak moment.</p>
+              <blockquote id="context-display"></blockquote>
+              <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
+              <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
+              <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
+            </section>
+
+            <section class="card" id="observations-card" data-section="coach">
+              <h2>What your coach has noticed</h2>
+              <p class="subtitle">Private notes your coach keeps between conversations. Nothing here is hidden from you.</p>
+              <ul id="coach-observations-list"></ul>
+              <button id="clear-observations-btn" class="secondary" style="width: 100%;">Clear notes</button>
+              <div id="observations-status" class="status"></div>
+            </section>
+
+            <div id="settings-tabs" class="settings-tabs" data-section="intentions" hidden>
+              <button type="button" id="tab-apps-btn" class="tab-btn" data-tab="apps">Apps</button>
+              <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
+            </div>
+
+            <section class="card" id="websites-card" data-section="intentions">
+              <h2>Blocked sites</h2>
+              <p class="subtitle">Each site has an intention: how many times a day you open it, and for how long. Fewer is instant; more starts tomorrow.</p>
+              <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
+              <ul id="domain-list"></ul>
+            </section>
+
+            <section class="card" id="apps-card" data-section="intentions" hidden>
+              <h2>Blocked apps</h2>
+              <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device — "+ Add app" also suggests the usual suspects.</p>
+              <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
+              <ul id="app-list"></ul>
+              <div id="ios-apps-controls" hidden>
+                <p class="subtitle" id="ios-apps-status"></p>
+                <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
+                <!-- Site rows carry a "Parts of the site" control and app rows do
+                     not, and on iOS that gap is permanent rather than pending. A
+                     Screen Time shield takes an opaque ApplicationToken and hides
+                     the whole app; there is no screen, tab or deep-link
+                     granularity in the API and no way for any third party to read
+                     another app's view hierarchy. Saying so here, on the card
+                     itself, is the point — a user who reads about parts on the
+                     Websites tab will otherwise assume it applies to both.
+                     The alternative it points at is real: webDomainTokens are a
+                     separate set from applicationTokens, so shielding the app
+                     while leaving the site reachable in Safari is expressible, and
+                     our own part rules then do the fine-grained work there. -->
+                <p class="row-info-note" id="ios-apps-parts-note">Parts of an app can’t be blocked on iPhone or iPad. Screen Time blocks a whole app or nothing, and Apple gives Intention no way to see which screen you’re on. If you want Reels blocked but messages open, block the Instagram app here and add instagram.com on the Websites tab — Safari runs Intention’s own rules, which can tell the parts apart.</p>
+              </div>
+            </section>
+
+            <section class="card danger-card" id="danger-card" data-section="intentions">
+              <h2>Turn everything off</h2>
+              <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
+              <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
+              <div id="disable-all-status" class="status"></div>
+            </section>
+
+            <!-- Leaving Intention. Sits below "Turn everything off" because that is
+                 the order the two decisions come in: almost everyone who thinks
+                 they want this wants that instead, and putting it second means
+                 they read the cheaper option first.
+
+                 Everything inside is built by options.js with createElement /
+                 textContent — the delay choices, the pending-request line, the
+                 Apple instructions. The markup here is the frame only. -->
+            <section class="card leaving-card" id="leaving-card" data-section="intentions">
+              <h2>Leaving Intention</h2>
+              <p class="subtitle">Removing Intention is always possible. No app can really stop you, and this one isn’t going to pretend otherwise. What it can do is make sure the decision gets made by whoever is reading this now, rather than by whoever is holding the phone at 11pm.</p>
+
+              <p class="micro-label">Cool-off before removal</p>
+              <div id="leave-delay-choices" class="leave-choices" role="group" aria-label="Cool-off before removal"></div>
+              <p class="row-info-note" id="leave-delay-note">Making the delay longer saves straight away. Shortening it means convincing your coach, same as any other rule you set for yourself.</p>
+
+              <div id="leave-pending" class="leave-pending" hidden></div>
+
+              <p class="micro-label">Take your list with you</p>
+              <p class="row-info-note">A small file holding your blocked sites and apps, your limits, your answers and your coach’s context. You can restore it later on this device or another one. It does not contain your API key, coaching credit or usage history.</p>
+              <button type="button" id="export-list-btn" class="secondary" style="width: 100%;">Save a copy of your list</button>
+              <button type="button" id="import-list-btn" class="secondary" style="width: 100%; margin-top: 8px;">Restore a copy of your list</button>
+              <input type="file" id="import-list-input" accept="application/json,.json" hidden>
+
+              <div id="leave-remove-row"></div>
+              <div id="leaving-status" class="status"></div>
+            </section>
+
+            <section class="card" data-section="settings" id="ai-access-card">
+              <h2>AI access</h2>
+              <div id="access-paywall"></div>
+              <div id="access-status" class="status"></div>
+            </section>
+
+            <section class="card" id="privacy-card" data-section="settings">
+              <h2>Privacy</h2>
+              <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
+              <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
+            </section>
+
+            <details class="card advanced-card" data-section="settings" id="advanced-card">
+              <summary>Advanced <span class="muted">(developer options)</span></summary>
               <div class="advanced-card-body">
-                <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
-                <label for="provider-select-2">Provider</label>
+                <details id="custom-key-details">
+                  <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
+                  <div class="advanced-card-body">
+                    <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
+                    <label for="provider-select-2">Provider</label>
+                    <div class="input-group">
+                      <select id="provider-select-2"></select>
+                    </div>
+                    <label for="model-input-2">Model</label>
+                    <div class="input-group">
+                      <input type="text" id="model-input-2">
+                    </div>
+                    <label for="api-key-input-2">API key</label>
+                    <div class="input-group">
+                      <input type="password" id="api-key-input-2">
+                    </div>
+                    <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
+                    <button id="clear-provider-btn" class="secondary" style="margin-top: 8px; width: 100%;">Clear custom key</button>
+                    <div id="provider-status" class="status"></div>
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="card advanced-card" data-section="coach">
+              <summary>Coach instructions <span class="muted">(advanced)</span></summary>
+              <div class="advanced-card-body">
+                <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_each}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
                 <div class="input-group">
-                  <select id="provider-select-2"></select>
+                  <textarea id="coach-instructions-input" rows="8"></textarea>
                 </div>
-                <label for="model-input-2">Model</label>
+                <label for="settings-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
                 <div class="input-group">
-                  <input type="text" id="model-input-2">
+                  <textarea id="settings-projects-input" rows="3"></textarea>
                 </div>
-                <label for="api-key-input-2">API key</label>
+                <label for="settings-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
                 <div class="input-group">
-                  <input type="password" id="api-key-input-2">
+                  <textarea id="settings-reasons-input" rows="3"></textarea>
                 </div>
-                <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
-                <button id="clear-provider-btn" class="secondary" style="margin-top: 8px; width: 100%;">Clear custom key</button>
-                <div id="provider-status" class="status"></div>
+                <button id="save-prompt-btn" class="secondary" style="width: 100%;">Save coach instructions</button>
+                <button id="reset-prompt-btn" class="secondary" style="width: 100%; margin-top: 8px;">Reset to default</button>
+                <div id="prompt-status" class="status"></div>
               </div>
             </details>
           </div>
-        </details>
-
-        <details class="card advanced-card" data-section="coach">
-          <summary>Coach instructions <span class="muted">(advanced)</span></summary>
-          <div class="advanced-card-body">
-            <p class="subtitle">The system prompt for your coach. Available placeholders: <code>{{questions}}</code> <code>{{usage}}</code> <code>{{domain}}</code> <code>{{grants_today}}</code> <code>{{grants_cap}}</code> <code>{{minutes_today}}</code> <code>{{minutes_each}}</code> <code>{{time}}</code> <code>{{day}}</code> <code>{{reasons_today}}</code> <code>{{site_purpose}}</code> <code>{{site_legitimate}}</code> <code>{{change_type}}</code> <code>{{current_value}}</code> <code>{{new_value}}</code>. If omitted, <code>{{questions}}</code> and <code>{{usage}}</code> are appended automatically.</p>
-            <div class="input-group">
-              <textarea id="coach-instructions-input" rows="8"></textarea>
-            </div>
-            <label for="settings-projects-input">What meaningful goals or activities do you want to focus on instead?</label>
-            <div class="input-group">
-              <textarea id="settings-projects-input" rows="3"></textarea>
-            </div>
-            <label for="settings-reasons-input">How do these distracting sites make you feel, and why do you want to step away?</label>
-            <div class="input-group">
-              <textarea id="settings-reasons-input" rows="3"></textarea>
-            </div>
-            <button id="save-prompt-btn" class="secondary" style="width: 100%;">Save coach instructions</button>
-            <button id="reset-prompt-btn" class="secondary" style="width: 100%; margin-top: 8px;">Reset to default</button>
-            <div id="prompt-status" class="status"></div>
-          </div>
-        </details>
-
-        <section class="card" data-section="coach">
-          <h2>What your coach has noticed</h2>
-          <p class="subtitle">Private notes your coach keeps between conversations. Nothing here is hidden from you.</p>
-          <ul id="coach-observations-list"></ul>
-          <button id="clear-observations-btn" class="secondary" style="width: 100%;">Clear notes</button>
-          <div id="observations-status" class="status"></div>
-        </section>
+        </div>
       </div>
     </main>
 

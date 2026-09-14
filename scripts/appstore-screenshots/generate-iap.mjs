@@ -99,8 +99,8 @@ ${loadOptionsCss()}
       </div>
 
       <div id="section-tabs" class="settings-tabs section-tabs">
-        <button type="button" class="tab-btn" data-section-tab="blocking">Blocking</button>
-        <button type="button" class="tab-btn" data-section-tab="activity">Activity</button>
+        <button type="button" class="tab-btn" data-section-tab="today">Today</button>
+        <button type="button" class="tab-btn" data-section-tab="intentions">Intentions</button>
         <button type="button" class="tab-btn" data-section-tab="coach">Coach</button>
         <button type="button" class="tab-btn selected" data-section-tab="settings">Settings</button>
       </div>

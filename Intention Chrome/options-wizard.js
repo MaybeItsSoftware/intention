@@ -57,6 +57,7 @@ function getInstalledApps() {
 function showSetupView() {
   document.getElementById('setup-view').hidden = false;
   document.getElementById('settings-view').hidden = true;
+  document.body.classList.remove('in-settings');
 
   setupStepOrder = computeStepOrder();
 

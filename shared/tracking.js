@@ -606,21 +606,44 @@ async function getStatsSummary() {
 
   let minutesToday = 0, minutesWeek = 0;
   const perSiteToday = {};
+  // The Today tab measures each target against its own intention, which needs
+  // opens as well as minutes. `grants` counts every pass and `negotiated` the
+  // ones the coach gave past the intention, so intended opens used is the
+  // difference — the same arithmetic the gate uses.
+  const perTargetToday = {};
 
   for (const [k, entries] of Object.entries(dailyStats)) {
     for (const [domain, site] of Object.entries(entries)) {
       if (k === todayKey) {
         minutesToday += site.minutes || 0;
         perSiteToday[domain] = (perSiteToday[domain] || 0) + (site.minutes || 0);
+        perTargetToday[domain] = {
+          minutes: Math.round(site.minutes || 0),
+          grants: Number(site.grants) || 0,
+          negotiated: Number(site.negotiated) || 0
+        };
       }
       if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
     }
   }
 
+  // The week as a fixed series, oldest first and ending today, empty days
+  // present as zeros — a strip needs every day in its place. `counted` is
+  // false for days before the user started, which are neither kept nor missed.
+  const startKey = Number(setupCompletedAt) > 0 ? dateKey(new Date(Number(setupCompletedAt))) : todayKey;
+  const week = weekKeys.slice().reverse().map(date => {
+    const entries = dailyStats[date] || {};
+    let minutes = 0;
+    for (const site of Object.values(entries)) minutes += (site && site.minutes) || 0;
+    return { date, minutes: Math.round(minutes), kept: dayKept(entries), counted: date >= startKey };
+  });
+
   return {
     minutesToday: Math.round(minutesToday),
     minutesWeek: Math.round(minutesWeek),
     perSiteToday,
+    perTargetToday,
+    week,
     streak: computeStreak(dailyStats, todayKey, setupCompletedAt)
   };
 }

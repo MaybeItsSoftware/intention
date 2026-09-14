@@ -107,7 +107,7 @@ describe('the settings grid stays a flat list of sections', () => {
   // section-owned. One that isn't would render on every tab — and, worse,
   // render an empty box plus its gutter on the tabs it has nothing for.
   it('every direct child of the grid belongs to exactly one section', () => {
-    const children = [...grid.matchAll(/^ {8}<(?:section|details|div|ul)\b([^>]*)>/gm)].map(m => m[1]);
+    const children = [...grid.matchAll(/^ {12}<(?:section|details|div|ul)\b([^>]*)>/gm)].map(m => m[1]);
     expect(children.length).toBeGreaterThan(8);
     expect(children.filter(attrs => !/\bdata-section="/.test(attrs))).toEqual([]);
   });
