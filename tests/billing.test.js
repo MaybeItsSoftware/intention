@@ -927,18 +927,17 @@ describe('Guideline 3.1.1: what an Apple build may render', () => {
 });
 
 describe('somewhere to type a code', () => {
-  // A Safari user with credit bought in the app, and anyone holding a recovery
-  // code from a device they no longer own, both reached this screen and found
-  // nothing to type into: the managed branch returned before any input.
-  it('renders the code input on a managed build', async () => {
+  // Safari dropped its "Restore coaching credit" box along with the app
+  // builds: credit there comes from the Intention app on the same device.
+  it('does not render it on a managed build', async () => {
     const { ctx, container } = loadPaywall({ userAgent: SAFARI_UA });
     await ctx.renderPaywall(container, { entitlement: null, onRedeem: async () => {} });
-    expect(byId(container, 'int-pw-code-input')).toBeTruthy();
-    expect(allText(container)).toContain('Recovery or access code');
+    expect(byId(container, 'int-pw-code-input')).toBe(null);
+    expect(allText(container)).not.toContain('Restore coaching credit');
   });
 
-  // The app builds dropped the "Restore coaching credit" box: the store's own
-  // restore and "Restore credit from a previous install" are what remain there.
+  // The app builds dropped the box too: the store's own restore and "Restore
+  // credit from a previous install" are what remain there.
   it('does not render it on a store build', async () => {
     const b = bridge();
     b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
@@ -1029,18 +1028,22 @@ describe('the recovery code block', () => {
     expect(revealBtn(container).hidden).toBe(true);
   });
 
-  it('is a collapsed disclosure on a store build, and asks for nothing until opened', async () => {
-    const b = bridge();
-    b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
-    const { ctx, container } = loadPaywall({ window: b, userAgent: SAFARI_UA });
-    let asked = 0;
-    await ctx.renderPaywall(container, recoveryOpts({
-      entitlement: ACTIVE,
-      onShowRecoveryCode: async () => { asked += 1; return { code: 'INT-ZZZZ-YYYY-XXXX-WWWW' }; }
-    }));
-    const block = byClass(container, 'int-pw-recovery')[0];
-    expect(block.tagName).toBe('details');
-    expect(asked).toBe(0);
+  // Nowhere on an app build or in Safari takes a recovery code any more, so
+  // none of them shows one: a code with nowhere to paste it is a promise the
+  // page cannot keep.
+  it('is not offered on a store or managed build', async () => {
+    for (const [userAgent, withBridge] of [[ANDROID_UA, true], [SAFARI_UA, false]]) {
+      const b = bridge();
+      b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
+      const { ctx, container } = loadPaywall({ window: withBridge ? b : undefined, userAgent });
+      let asked = 0;
+      await ctx.renderPaywall(container, recoveryOpts({
+        entitlement: { active: true, token: 'tok', balanceCredits: 400, source: 'apple', receipt: 'jws' },
+        onShowRecoveryCode: async () => { asked += 1; return { code: 'INT-ZZZZ-YYYY-XXXX-WWWW' }; }
+      }));
+      expect(byClass(container, 'int-pw-recovery')).toHaveLength(0);
+      expect(asked).toBe(0);
+    }
   });
 
   // Straight after a purchase the code is the thing to do, not a disclosure to
@@ -1084,7 +1087,7 @@ describe('the recovery code block', () => {
   // block expanded (browsers get it expanded, since it is their only
   // durability), fetch on sight, take the 403 and print "try again in a
   // moment" for ever. It never worked and never would.
-  it('is not offered to a browser linked from a phone, which is told where the code is', async () => {
+  it('is not offered to a browser linked from a phone', async () => {
     const { ctx, container } = loadPaywall({ userAgent: CHROME_UA });
     let asked = 0;
     await ctx.renderPaywall(container, recoveryOpts({
@@ -1093,7 +1096,6 @@ describe('the recovery code block', () => {
     }));
     expect(byClass(container, 'int-pw-recovery')).toHaveLength(0);
     expect(asked).toBe(0);
-    expect(allText(container)).toContain('recovery code lives on that device');
   });
 
   // The same session as stored before the server stamped one: a redeemed code
@@ -1105,21 +1107,6 @@ describe('the recovery code block', () => {
       entitlement: { active: true, token: 'tok', balanceCredits: 400, source: 'code', receipt: null }
     }));
     expect(byClass(container, 'int-pw-recovery')).toHaveLength(0);
-    expect(allText(container)).toContain('recovery code lives on that device');
-  });
-
-  // ...while a device that bought the credit before the claim existed still
-  // gets the block, because its stored receipt is what requestRecoveryCode
-  // upgrades the session with.
-  it('is still offered to a paying device whose session predates src', async () => {
-    const b = bridge();
-    b.intentionBilling.accountToken = (cb) => cb({ token: 'acct' });
-    const { ctx, container } = loadPaywall({ window: b, userAgent: SAFARI_UA });
-    await ctx.renderPaywall(container, recoveryOpts({
-      entitlement: { active: true, token: 'tok', balanceCredits: 400, source: 'apple', receipt: 'jws' }
-    }));
-    expect(byClass(container, 'int-pw-recovery')).toHaveLength(1);
-    expect(allText(container)).not.toContain('recovery code lives on that device');
   });
 
   // A refusal that will never change its mind is not "try again in a moment".
@@ -1202,24 +1189,10 @@ describe('restoring credit from a previous install', () => {
   });
 });
 
-// One box, two kinds of code, and the placeholder is the only thing on it that
-// shows a shape.
+// The code box, now browser-only, shows a browser link code's two-group shape.
 describe('the code box', () => {
   const codeInput = (container) => flatten(container).find(n => n.id === 'int-pw-code-input');
 
-  // In Safari the label says "Recovery or access code" and the hint
-  // underneath says to paste the one from the old device — so the shape shown
-  // has to be a recovery code's. It is four groups (RECOVERY_BODY_LEN is 16 in
-  // server/src/store.js), not the two a browser link code has.
-  it('shows the recovery code shape where a recovery code is what is asked for', async () => {
-    const { ctx, container } = loadPaywall({ userAgent: SAFARI_UA });
-    await ctx.renderPaywall(container, { entitlement: null, onRedeem: async () => {} });
-    expect(allText(container)).toContain('Recovery or access code');
-    expect(codeInput(container).placeholder).toBe('INT-XXXX-XXXX-XXXX-XXXX');
-  });
-
-  // In a browser the box is called "Access code" and the likely paste is a
-  // fresh two-group link from a phone, so that is the shape shown there.
   it('shows the access code shape in a browser', async () => {
     const { ctx, container } = loadPaywall({ userAgent: CHROME_UA });
     await ctx.renderPaywall(container, { entitlement: null, onRedeem: async () => {}, onSaveKey: async () => {} });

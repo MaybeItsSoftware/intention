@@ -432,22 +432,6 @@ function canMintRecoveryCode(entitlement) {
   return false;
 }
 
-// Of the sessions that may not mint, the one that can be told where its code
-// actually is: a browser (or a second device) that redeemed the 15-minute link
-// code the phone minted. The credit was bought there, so the paper code is
-// there too.
-//
-// A stored entitlement from before the server stamped sessions is read the same
-// way, and can be: a redeemed code leaves `source: 'code'` and no receipt, and
-// no recovery code existed to redeem before this release, so every legacy
-// 'code' session is a link session. A newer paper redemption carries
-// src: 'paper' and is answered by canMintRecoveryCode above, not here.
-function isLinkedSession(entitlement) {
-  if (!entitlement) return false;
-  if (entitlement.src) return entitlement.src === 'link';
-  return entitlement.source === 'code' && !entitlement.receipt;
-}
-
 // Browser builds have no store to buy through. An access code, generated in
 // the mobile app for an existing balance, links this browser to the same
 // account — no payment happens here. The same box now also takes a written-
@@ -706,13 +690,12 @@ async function renderPaywall(container, opts = {}) {
       container.appendChild(codeOut);
     }
 
-    // The answer to "uninstalling seems to remove my purchases", offered to
-    // someone who has not lost anything yet — which is the only moment it can
-    // possibly work, because the session that mints the code dies with the
-    // device. So it renders here, on a live entitlement, in every billing
-    // mode. Out of the compact paywall: a blocked page is not where anyone
-    // writes something down.
-    if (onShowRecoveryCode && !compact && canMintRecoveryCode(entitlement)) {
+    // The written-down recovery code, offered only in Chrome and Firefox now,
+    // because only those builds still have a box to paste one into. The app
+    // builds and Safari dropped both halves together: a code with nowhere to
+    // redeem it is a promise the page cannot keep. Out of the compact paywall:
+    // a blocked page is not where anyone writes something down.
+    if (onShowRecoveryCode && !compact && BILLING_MODE === 'byok' && canMintRecoveryCode(entitlement)) {
       container.appendChild(buildRecoveryBlock({
         el,
         setError,
@@ -720,23 +703,12 @@ async function renderPaywall(container, opts = {}) {
         justPurchased: !!justPurchased,
         // A browser has no store bridge and no surviving identifier of any
         // kind — chrome.storage is wiped on uninstall, sync included — so the
-        // written-down code is not one durability mechanism among several,
-        // it is the only one there is. It does not get to hide behind a
-        // disclosure triangle there.
-        expanded: BILLING_MODE === 'byok' || !!justPurchased,
+        // written-down code is the only durability mechanism there is. It does
+        // not get to hide behind a disclosure triangle.
+        expanded: true,
         // …but open is not the same as fetched. See buildRecoveryBlock.
         autoLoad: !!justPurchased
       }));
-    } else if (onShowRecoveryCode && !compact && isLinkedSession(entitlement)) {
-      // The one refused session that has somewhere to be sent. Its credit was
-      // bought on a phone, so the code was too — saying that is useful, where
-      // offering a button that 403s on sight was not, and that is what this
-      // replaced. The other refused kind (a session recovered from a surviving
-      // account id) has nowhere to be sent and gets no line rather than a
-      // wrong one.
-      container.appendChild(el('p', 'int-pw-note',
-        'This credit was bought in the Intention app, and its recovery code lives on that device. '
-        + 'Open Settings → AI access there to write it down.'));
     }
   } else if (BILLING_MODE === 'byok') {
     // Two equal routes below, so the lede can't promise one of them.
@@ -761,15 +733,6 @@ async function renderPaywall(container, opts = {}) {
     if (!active) {
       container.appendChild(el('p', 'int-pw-note',
         'Open the Intention app on this device to buy coaching credit. It applies here automatically.'));
-      // The Safari extension's own pages have no bridge, so nothing here can
-      // ask the store anything — and a Mac user who reinstalled and never
-      // opened the host app has no other surface at all. Typing a recovery
-      // code needs no bridge, which is precisely why this branch stops
-      // returning before the input. It is not a purchase: it restores credit
-      // already bought through the platform's own IAP, so 3.1.1 is untouched.
-      if (onRedeem && !compact) {
-        container.appendChild(buildCodeRoute({ el, busy, setError, onRedeem, storeMode: true }));
-      }
     }
     container.appendChild(noticeEl);
     container.appendChild(errorEl);
@@ -1045,31 +1008,22 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
 //
 // One box, two kinds of code, because to the person typing they are the same
 // gesture and the server tells them apart: the 15-minute one-time code that
-// links a browser to a phone's balance, and the long-lived recovery code
-// written down before a device was lost. `storeMode` only changes what the box
-// is CALLED — on a browser the likely code is a fresh link from a phone, in
-// Safari it is almost always paper from an install that is gone. The app builds
-// themselves (store mode) no longer render it.
-function buildCodeRoute({ el, busy, setError, onRedeem, storeMode = false }) {
+// links a browser to a phone's balance, and the long-lived recovery code this
+// browser showed before it was reinstalled. Browser builds only — the app
+// builds and Safari no longer take a code at all.
+function buildCodeRoute({ el, busy, setError, onRedeem }) {
   const card = el('div', 'int-pw-route');
-  card.appendChild(el('strong', null, storeMode ? 'Restore coaching credit' : 'Use coaching credit'));
-  card.appendChild(el('p', 'int-pw-sub', storeMode
-    ? 'Already bought credit on another device? Paste its recovery code here and the balance comes back.'
-    : 'Credit is bought in the Intention app for iPhone or Android. Generate a code there under Settings → AI access, then paste it here.'));
+  card.appendChild(el('strong', null, 'Use coaching credit'));
+  card.appendChild(el('p', 'int-pw-sub',
+    'Credit is bought in the Intention app for iPhone or Android. Generate a code there under Settings → AI access, then paste it here.'));
 
-  const codeLabel = el('label', null, storeMode ? 'Recovery or access code' : 'Access code');
+  const codeLabel = el('label', null, 'Access code');
   codeLabel.setAttribute('for', 'int-pw-code-input');
   const codeInput = el('input');
   codeInput.type = 'text';
   codeInput.id = 'int-pw-code-input';
-  // Two code kinds, two shapes, and the placeholder shows whichever this box
-  // is mostly for. A recovery code is four groups (RECOVERY_BODY_LEN is 16 in
-  // server/src/store.js); a browser access code is two. On a store build the
-  // label already says "Recovery or access code" and the hint underneath says
-  // to paste the one from the old device, so showing the two-group shape there
-  // was the wrong shape for the code being asked for.
-  codeInput.placeholder = storeMode ? 'INT-XXXX-XXXX-XXXX-XXXX' : 'INT-XXXX-XXXX';
-  const codeBtn = el('button', 'primary', storeMode ? 'Restore credit' : 'Unlock');
+  codeInput.placeholder = 'INT-XXXX-XXXX';
+  const codeBtn = el('button', 'primary', 'Unlock');
   codeBtn.type = 'button';
 
   card.append(codeLabel, codeInput, codeBtn);
