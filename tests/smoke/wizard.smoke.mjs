@@ -93,9 +93,18 @@ async function checkFitsOnPhones(context, optionsUrl) {
     await page.setViewportSize({ width, height });
     await page.addInitScript(fakeAndroidApps);
     await page.goto(optionsUrl);
-    await page.evaluate(() => chrome.storage.local.clear());
-    await page.reload();
-    await page.waitForSelector('#setup-view:not([hidden])');
+    // The previous size left a draft on the done page. Clearing while this
+    // load is still restoring it lets the restore write it straight back, so
+    // wait for the restore to settle, then clear until a load opens on welcome.
+    // (The first load may be settings rather than setup, so no selector here.)
+    await page.waitForLoadState('load');
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await page.waitForTimeout(600); // past the draft debounce
+      await page.evaluate(() => chrome.storage.local.clear());
+      await page.reload();
+      await page.waitForSelector('#setup-view:not([hidden])');
+      if ((await visibleStep(page)).ids.join() === 'setup-step-welcome') break;
+    }
 
     const fits = async (what) => {
       await page.waitForTimeout(350); // entrance animation and async renders
