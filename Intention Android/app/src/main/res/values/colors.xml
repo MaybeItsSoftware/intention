@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The paper token from shared/tokens.css, light. values-night holds the dark one. -->
+    <color name="paper">#faf8f4</color>
+</resources>

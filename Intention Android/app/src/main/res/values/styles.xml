@@ -1,10 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base application theme. -->
-    <style name="Theme.Intention" parent="Theme.AppCompat.NoActionBar">
-        <!-- Customize your theme here. -->
+    <!-- Base application theme.
+
+         DayNight rather than plain AppCompat, and that is not cosmetic here:
+         since targetSdk 33 a WebView answers prefers-color-scheme from the
+         hosting theme's isLightTheme, not from the system setting. Plain
+         Theme.AppCompat is a dark theme, so the settings page and the setup
+         rendered dark on every phone, including light ones, whatever
+         shared/tokens.css said. DayNight follows the system, so the page does
+         too. -->
+    <style name="Theme.Intention" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="colorPrimary">#0f1115</item>
         <item name="colorAccent">#e7e7ea</item>
+        <!-- The page's own paper, so the launch frame and anything behind the
+             system bars is already the colour the page will be. -->
+        <item name="android:windowBackground">@color/paper</item>
     </style>
 
     <!-- Fullscreen Coaching Theme. System bars are hidden in code via

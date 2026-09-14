@@ -42,6 +42,112 @@ const next = async (page) => {
   await page.waitForTimeout(60);
 };
 
+// ── Every page fits a phone, without the page scrolling.
+//
+// The setup is a fixed-height column (see #setup-view in options.css): the
+// document never scrolls, the nav is always on screen, and only a page's
+// .setup-scroll region may scroll when its content outgrows the space. Walked
+// at three phone sizes — a tall one, a common one, and a short one where the
+// type has to tighten — with the Android app bridge faked so the apps page is
+// part of the walk, and with the worst cases filled in: a long pick list, the
+// catalogue expanded, every note and second question on a purpose page open.
+const PHONES = [[360, 740], [412, 915], [360, 640]];
+
+const fakeAndroidApps = () => {
+  const installed = [
+    ['com.instagram.android', 'Instagram'], ['com.zhiliaoapp.musically', 'TikTok'],
+    ['com.google.android.youtube', 'YouTube'], ['com.twitter.android', 'X'],
+    ['com.reddit.frontpage', 'Reddit'], ['com.facebook.katana', 'Facebook'],
+    ['com.snapchat.android', 'Snapchat'], ['com.pinterest', 'Pinterest'],
+    ['com.linkedin.android', 'LinkedIn'], ['com.netflix.mediaclient', 'Netflix']
+  ].map(([packageName, label]) => ({ packageName, label }));
+  window.intentionApps = {
+    getInstalledApps: (cb) => setTimeout(() => cb(installed), 0),
+    launchApp() {},
+    hasUsageAccess: () => false,
+    requestUsageAccess() {},
+    getAppUsageStats: (days, cb) => cb({})
+  };
+};
+
+const measureFit = (page) => page.evaluate(() => {
+  const shown = [...document.querySelectorAll('.setup-step')].find(s => !s.hidden);
+  const buttons = [...document.querySelectorAll('.setup-nav button')].filter(b => !b.hidden);
+  return {
+    id: shown?.id,
+    scrollHeight: document.scrollingElement.scrollHeight,
+    innerHeight,
+    // The page box is allowed to scroll only as a last resort (a landscape
+    // phone with the keyboard up); on these sizes it must not have to.
+    pageOverflow: shown ? shown.scrollHeight - shown.clientHeight : 0,
+    navOnScreen: buttons.length > 0 && buttons.every(b => {
+      const r = b.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight + 0.5;
+    })
+  };
+});
+
+async function checkFitsOnPhones(context, optionsUrl) {
+  for (const [width, height] of PHONES) {
+    const page = await context.newPage();
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(fakeAndroidApps);
+    await page.goto(optionsUrl);
+    await page.evaluate(() => chrome.storage.local.clear());
+    await page.reload();
+    await page.waitForSelector('#setup-view:not([hidden])');
+
+    const fits = async (what) => {
+      await page.waitForTimeout(350); // entrance animation and async renders
+      const m = await measureFit(page);
+      record(`${width}×${height}: ${what} fits without the page scrolling`,
+        m.scrollHeight <= m.innerHeight && m.pageOverflow <= 1 && m.navOnScreen,
+        JSON.stringify(m));
+    };
+    const tapNext = async () => { await page.click('#setup-next-btn'); await page.waitForTimeout(80); };
+
+    await fits('welcome');
+    await tapNext();
+    await fits('apps, empty');
+    for (const label of ['Instagram', 'TikTok', 'YouTube', 'Reddit']) {
+      await page.locator('#setup-apps-recommend-grid .recommend-card', { hasText: label }).first().click();
+      await page.waitForTimeout(120);
+    }
+    const appsMore = page.locator('#setup-apps-recommend-more');
+    if (await appsMore.isVisible()) await appsMore.click();
+    await fits('apps, four picked');
+    await tapNext();
+    await page.evaluate(async () => {
+      for (const d of ['instagram.com', 'reddit.com', 'youtube.com', 'x.com', 'some-very-long-blog-name.example']) {
+        await addDomainToBlocklist(d);
+      }
+    });
+    const sitesMore = page.locator('#setup-sites-recommend-more');
+    if (await sitesMore.isVisible()) await sitesMore.click();
+    await fits('sites, five picked and the catalogue expanded');
+    await tapNext();
+    await fits('an intention');
+    await page.click('#setup-intention-same-btn');
+    await page.waitForTimeout(100);
+    await fits('the reasons question');
+    await page.click('#setup-reasons-yes-btn');
+    await fits('a purpose page');
+    for (const sel of ['.setup-service-note-toggle', '.setup-reason-more-toggle']) {
+      const toggles = page.locator(`#setup-step-purpose ${sel}`);
+      const count = await toggles.count();
+      for (let i = 0; i < count; i++) {
+        if (await toggles.nth(i).isVisible()) await toggles.nth(i).click();
+      }
+    }
+    await fits('a purpose page with every note open');
+    await page.click('#setup-purpose-skip-btn');
+    await fits('access');
+    await tapNext();
+    await fits('done, with every intention listed');
+    await page.close();
+  }
+}
+
 async function main() {
   const profile = await mkdtemp(join(tmpdir(), 'intention-wizard-'));
   const context = await chromium.launchPersistentContext(profile, {
@@ -361,6 +467,8 @@ async function main() {
       JSON.stringify(afterSecond.stored));
     record('and the box keeps what was typed',
       afterSecond.shown === 'Anything I feel like, actually.', afterSecond.shown);
+
+    await checkFitsOnPhones(context, optionsUrl);
 
     if (HEADED) await page.waitForTimeout(5000);
   } finally {

@@ -1103,20 +1103,58 @@ blockquote {
 
    No cards. Each page is the paper itself: a large slab-serif question, a
    line of muted prose, the controls, and a hairline nav pinned to the bottom.
-   Hierarchy is the size of the question against the micro-label above it. */
+   Hierarchy is the size of the question against the micro-label above it.
+
+   The setup is a fixed-height column, never a scrolling page: progress at the
+   top, the page in the middle, the nav on the bottom edge. The document itself
+   cannot scroll while it is showing. A page whose content can genuinely
+   outgrow a phone (the catalogue of sites, the purpose chips, the finished
+   list) marks that one region .setup-scroll, and only that region scrolls —
+   so the question stays read and Continue stays reachable. It used to be a
+   min-height page with a sticky nav, which on a phone meant a scrolling page
+   and, on a short one, a dead band under the button where the min-height ran
+   out before the screen did.
+
+   Height comes from the viewport itself (100dvh), not from content, and the
+   safe-area insets are added here rather than trusted to the host: iOS lays
+   the page under the notch and home indicator (viewport-fit=cover), Android's
+   native root pads for its bars and reports 0. */
+html:has(#setup-view:not([hidden])),
+html:has(#setup-view:not([hidden])) body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+html:has(#setup-view:not([hidden])) body { min-height: 0; }
+
+html:has(#setup-view:not([hidden])) .container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  padding-top: calc(24px + env(safe-area-inset-top));
+  padding-bottom: 0;
+  padding-left: calc(32px + env(safe-area-inset-left));
+  padding-right: calc(32px + env(safe-area-inset-right));
+}
+
 #setup-view {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   max-width: 560px;
   margin: 0 auto;
-  min-height: calc(100vh - 120px);
   display: flex;
   flex-direction: column;
 }
 
 .setup-progress {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin: 8px 0 36px;
+  margin: 0 0 32px;
 }
 
 .setup-progress-track {
@@ -1142,14 +1180,44 @@ blockquote {
   min-height: 1.4em;
 }
 
+/* min-height: 0 lets the page shrink to the space between progress and nav.
+   Its own overflow is a last resort only — a landscape phone with the keyboard
+   up — so that even then it is this box that scrolls and not the document. */
 .setup-page {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
 .setup-page[hidden] { display: none; }
+
+/* Everything else on a page keeps its size; this gives way. flex-basis auto
+   means it takes only what its content needs when that fits, so a short list
+   does not push the controls under it to the bottom of the screen. The floor
+   is one row of chips — enough to show there is something to scroll, and no
+   taller than a single row, which would otherwise leave a gap under it. */
+.setup-page > * { flex-shrink: 0; }
+
+.setup-page > .setup-scroll {
+  flex: 0 1 auto;
+  min-height: 56px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-input) transparent;
+}
+
+.setup-scroll::-webkit-scrollbar { width: 6px; }
+.setup-scroll::-webkit-scrollbar-thumb { background: var(--border-input); border-radius: var(--radius-pill); }
+.setup-scroll::-webkit-scrollbar-track { background: transparent; }
+
+/* The add button sits under the scrolling region rather than inside it, so
+   it is always on screen; this is the gap the region's last row used to own. */
+.setup-page > .setup-scroll + .add-row-btn { margin: 12px 0 0; }
 
 .setup-question {
   margin: 0 0 12px;
@@ -1701,17 +1769,21 @@ ul.setup-picked:empty { display: none; }
   color: var(--ink);
 }
 
+/* The bottom of the column, not a sticky bar over a scrolling page: nothing
+   ever scrolls under it, so it needs no background of its own. */
 .setup-nav {
-  position: sticky;
-  bottom: 0;
+  flex: none;
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 32px;
-  padding: 14px 0 calc(14px + env(safe-area-inset-bottom));
-  background: var(--paper);
+  margin-top: 16px;
+  padding: 14px 0 calc(24px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
+
+/* Only takes a line while it has something to say. */
+#setup-status { flex: none; margin: 8px 0 0; }
+#setup-status:empty { display: none; }
 
 .setup-nav button {
   min-width: 120px;
@@ -2000,8 +2072,6 @@ ul.setup-picked:empty { display: none; }
   }
 
 
-  .setup-progress { margin-bottom: 24px; }
-
   .card {
     padding: 16px;
     border-radius: var(--radius-card);
@@ -2024,9 +2094,17 @@ ul.setup-picked:empty { display: none; }
   .input-group { flex-wrap: wrap; }
   .input-group .input-domain { flex: 1 1 100%; }
 
+  html:has(#setup-view:not([hidden])) .container {
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-left: calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right));
+  }
+
+  .setup-progress { margin-bottom: 20px; }
+
   .setup-nav {
-    margin: 24px -16px 0;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    margin: 12px 0 0;
+    padding: 10px 0 calc(12px + env(safe-area-inset-bottom));
   }
 
   .setup-nav button {
@@ -2066,6 +2144,44 @@ ul.setup-picked:empty { display: none; }
   .row-fields {
     gap: 12px 14px;
   }
+}
+
+/* Short screens: the setup cannot scroll, so on a 640px phone (or any phone
+   with the keyboard up) it tightens instead — the same pieces in the same
+   order, with less air between them. Nothing is hidden. */
+@media (max-height: 700px) {
+  .setup-progress { gap: 8px; margin-bottom: 16px; }
+  .setup-question { font-size: 22px; margin-bottom: 8px; }
+  .setup-welcome .setup-question { font-size: 28px; margin-bottom: 12px; }
+  .setup-lede { font-size: 15px; line-height: 1.45; margin-bottom: 16px; }
+  .setup-agenda li { padding: 10px 0; font-size: 15px; }
+  .setup-aside { margin-top: 12px; }
+
+  .setup-mark { width: 36px; height: 36px; margin-bottom: 10px; }
+  .setup-mark svg { width: 18px; height: 18px; }
+  .setup-tick { width: 44px; height: 44px; margin-bottom: 12px; font-size: 22px; }
+
+  .setup-counter { margin: 8px 0 12px; padding: 10px 0; }
+  .setup-counter-btn { width: 48px; height: 48px; font-size: 24px; }
+  .setup-counter-value { font-size: 48px; }
+  .setup-dots { margin-bottom: 16px; }
+  .setup-minute-chip { min-height: 52px; padding: 6px 4px; }
+  .setup-minute-chip strong { font-size: 19px; }
+  .setup-sum { margin-top: 12px; font-size: 14px; }
+  .setup-link { margin-top: 8px; }
+
+  .setup-nav { padding-top: 10px; }
+}
+
+/* A phone on its side, or a phone whose keyboard has taken half the screen:
+   the question and the buttons still have to share what is left. */
+@media (max-height: 480px) {
+  .setup-progress { margin-bottom: 10px; }
+  .setup-question { font-size: 19px; }
+  .setup-welcome .setup-question { font-size: 22px; }
+  .setup-lede { font-size: 14px; margin-bottom: 10px; }
+  .setup-nav { margin-top: 8px; padding-top: 8px; }
+  .setup-nav button { min-height: 44px; padding-top: 10px; padding-bottom: 10px; }
 }
 
 /* ---------------------------------------------------------------------------

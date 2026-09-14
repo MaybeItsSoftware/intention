@@ -20,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : AppCompatActivity() {
@@ -42,6 +43,10 @@ class MainActivity : AppCompatActivity() {
         private const val COLOR_AMBER_FILL = "#1affbf00"
         private const val COLOR_AMBER_BORDER = "#66ffbf00"
         private const val REQUEST_POST_NOTIFICATIONS = 0x1973
+
+        // The accessibility gate's own background. The page's paper is
+        // R.color.paper (values / values-night), see paintSystemBars.
+        private const val COLOR_GATE = "#0f1115"
 
         // "Open the leaving conversation rather than the settings page you
         // were going to open anyway." Set by IntentionAccessibilityService
@@ -67,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayPrompt: View
     private var overlayPromptDismissed = false
     private var notificationPermissionAsked = false
+    private lateinit var rootLayout: android.widget.LinearLayout
 
     // The "we can't tell which part of this app you're in" card. Unlike the
     // overlay prompt this is not an offer — it is a report that a rule the user
@@ -81,15 +87,23 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // enableEdgeToEdge lays a translucent scrim over a three-button
+        // navigation bar so its icons stay legible on arbitrary content. Ours
+        // is never arbitrary — paintSystemBars puts a flat colour there and
+        // picks the icon shade for it — so the scrim would only be a grey band
+        // across the bottom of the page.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
 
         // Dynamic layouts are cleaner for extension wrappers
-        val rootLayout = android.widget.LinearLayout(this).apply {
+        rootLayout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             layoutParams = android.view.ViewGroup.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
-            setBackgroundColor(android.graphics.Color.parseColor("#0f1115"))
+            setBackgroundColor(paperColor())
         }
 
         // Full-screen gate shown until the accessibility service is enabled.
@@ -149,6 +163,7 @@ class MainActivity : AppCompatActivity() {
                 if (isAccessibilityServiceEnabled()) {
                     accessibilityGate.visibility = View.GONE
                     webView.visibility = View.VISIBLE
+                    paintSystemBars(gate = false)
                 } else {
                     android.widget.Toast.makeText(
                         this@MainActivity,
@@ -179,6 +194,9 @@ class MainActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.allowFileAccess = true
             settings.cacheMode = WebSettings.LOAD_NO_CACHE
+            // The page paints the same colour once it loads; this is only so
+            // the first frame is not a white flash on a dark phone.
+            setBackgroundColor(paperColor())
             visibility = View.GONE
             // options.html is injected with loadDataWithBaseURL, so this WebView
             // has no history to go back to. A tapped link would replace the
@@ -201,9 +219,25 @@ class MainActivity : AppCompatActivity() {
 
         // With edge-to-edge enforced on SDK 35+, content draws behind the system
         // bars by default — pad the root so the gate/webview stay clear of them.
+        // The padding shows the root's background, which paintSystemBars keeps
+        // the same colour as whatever is on screen, so the app still reads as
+        // filling the display edge to edge.
+        //
+        // The keyboard is part of this too. Edge-to-edge turns off
+        // adjustResize, so without the IME inset the WebView kept its full
+        // height and the keyboard simply covered the bottom of the page —
+        // including the setup's pinned Continue button and whatever field was
+        // being typed into. Padding by the larger of the two shrinks the
+        // WebView to the space above the keyboard instead, and the page (a
+        // fixed-height column, see #setup-view in options.css) fits itself
+        // into that. The display cutout is folded in for phones held sideways,
+        // where a notch is not a system bar.
         ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { view, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             insets
         }
 
@@ -595,7 +629,9 @@ class MainActivity : AppCompatActivity() {
             // Detection cannot have been running without the service, and the
             // gate is a hard stop: nothing else belongs on top of it.
             partsWarning.visibility = View.GONE
+            paintSystemBars(gate = true)
         } else {
+            paintSystemBars(gate = false)
             accessibilityGate.visibility = View.GONE
             webView.visibility = View.VISIBLE
             refreshPartsWarning()
@@ -653,6 +689,33 @@ class MainActivity : AppCompatActivity() {
             arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
             REQUEST_POST_NOTIFICATIONS
         )
+    }
+
+    private fun isDarkTheme(): Boolean =
+        (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+
+    // The options page's --paper (shared/tokens.css) for the current theme.
+    // The root layout is padded clear of the status and navigation bars, and
+    // that padding shows the root's background — so unless it is the page's
+    // colour, the page sits between two bands that are not part of it. It used
+    // to be the gate's #0f1115: a dark strip under the status bar and another
+    // behind the navigation bar, with dark icons on them on a light phone.
+    private fun paperColor(): Int = ContextCompat.getColor(this, R.color.paper)
+
+    // The strips behind the status and navigation bars belong to whatever is
+    // on screen: the page's paper for the WebView, the gate's own near-black
+    // while the accessibility gate is up (its text is light-on-dark whatever
+    // the system theme). The bar icons follow, so they stay legible on it.
+    private fun paintSystemBars(gate: Boolean) {
+        val dark = gate || isDarkTheme()
+        rootLayout.setBackgroundColor(
+            if (gate) android.graphics.Color.parseColor(COLOR_GATE) else paperColor()
+        )
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
     }
 
     private fun dp(value: Float): Int =

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The paper token from shared/tokens.css, dark. -->
+    <color name="paper">#1c1a23</color>
+</resources>
