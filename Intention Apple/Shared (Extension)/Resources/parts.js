@@ -659,6 +659,8 @@ function resolvePartVerdict(entry, url, verified) {
   const verdict = partRuleVerdict(entry, url);
   if (!verdict.gated) return verdict;
   try {
+    const reddit = allowedRedditForUrl(entry, url);
+    if (reddit) return { gated: false, partId: null, scope: verdict.scope, reddit };
     const account = allowedAccountForUrl(entry, url, verified);
     return account ? { gated: false, partId: null, scope: verdict.scope, account } : verdict;
   } catch (e) {
@@ -1037,13 +1039,141 @@ function accountFromLookupResponse(data) {
   }
 }
 
+// Reddit's subreddit and post allowlists are independent. A post is stored as
+// `subreddit:postId`, so the address has to prove both halves before it opens.
+// In particular, a bare /comments/<id> link cannot claim a subreddit.
+const REDDIT_SUB_RE = /^[a-z0-9_]{2,21}$/;
+const REDDIT_POST_RE = /^[a-z0-9]{1,20}$/;
+const REDDIT_LIST_MAX = 50;
+const REDDIT_RESERVED_SUBS = new Set(['all', 'popular']);
+
+function redditSupportedFor(target) {
+  try { return hostIsOneOf(target, ['reddit.com']); } catch (e) { return false; }
+}
+
+function sanitizeAllowedSubreddits(raw) {
+  try {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const item of raw) {
+      if (out.length >= REDDIT_LIST_MAX) break;
+      if (typeof item !== 'string') continue;
+      const sub = item.trim().toLowerCase();
+      if (!REDDIT_SUB_RE.test(sub) || REDDIT_RESERVED_SUBS.has(sub) || out.includes(sub)) continue;
+      out.push(sub);
+    }
+    return out;
+  } catch (e) { return []; }
+}
+
+function sanitizeAllowedRedditPosts(raw) {
+  try {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const item of raw) {
+      if (out.length >= REDDIT_LIST_MAX) break;
+      if (typeof item !== 'string') continue;
+      const value = item.trim().toLowerCase();
+      const split = value.split(':');
+      if (split.length !== 2 || !REDDIT_SUB_RE.test(split[0]) || REDDIT_RESERVED_SUBS.has(split[0]) ||
+          !REDDIT_POST_RE.test(split[1]) || out.includes(value)) continue;
+      out.push(value);
+    }
+    return out;
+  } catch (e) { return []; }
+}
+
+function allowedSubredditsOf(entry) {
+  if (!entry || typeof entry !== 'object' ||
+      !Object.prototype.hasOwnProperty.call(entry, 'allowedSubreddits')) return [];
+  return sanitizeAllowedSubreddits(entry.allowedSubreddits);
+}
+
+function allowedRedditPostsOf(entry) {
+  if (!entry || typeof entry !== 'object' ||
+      !Object.prototype.hasOwnProperty.call(entry, 'allowedRedditPosts')) return [];
+  return sanitizeAllowedRedditPosts(entry.allowedRedditPosts);
+}
+
+function normalizeSubredditInput(raw) {
+  try {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text || text.length > 250) return null;
+    let sub = text.replace(/^r\//i, '');
+    if (text.includes('.com') || /^https?:\/\//i.test(text)) {
+      const parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+      if (!redditSupportedFor(parsed.hostname)) return null;
+      const match = /^\/r\/([^/]+)\/?$/i.exec(parsed.pathname);
+      if (!match) return null;
+      sub = match[1];
+    }
+    sub = sub.toLowerCase();
+    return REDDIT_SUB_RE.test(sub) && !REDDIT_RESERVED_SUBS.has(sub) ? sub : null;
+  } catch (e) { return null; }
+}
+
+function normalizeRedditPostInput(raw) {
+  try {
+    const text = String(raw == null ? '' : raw).trim();
+    if (!text || text.length > 500) return null;
+    const parsed = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+    if (!redditSupportedFor(parsed.hostname)) return null;
+    const match = /^\/r\/([^/]+)\/comments\/([^/]+)(?:\/|$)/i.exec(parsed.pathname);
+    if (!match) return null;
+    const sub = match[1].toLowerCase();
+    const id = match[2].toLowerCase();
+    return REDDIT_SUB_RE.test(sub) && !REDDIT_RESERVED_SUBS.has(sub) && REDDIT_POST_RE.test(id)
+      ? `${sub}:${id}` : null;
+  } catch (e) { return null; }
+}
+
+function allowedRedditForUrl(entry, url) {
+  try {
+    if (typeof url !== 'string') return null;
+    const subs = allowedSubredditsOf(entry);
+    const posts = allowedRedditPostsOf(entry);
+    if (!subs.length && !posts.length) return null;
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol) || !redditSupportedFor(parsed.hostname)) return null;
+    const match = /^\/r\/([^/]+)(?:\/|$)/i.exec(parsed.pathname);
+    if (!match) return null;
+    const sub = match[1].toLowerCase();
+    if (!REDDIT_SUB_RE.test(sub) || REDDIT_RESERVED_SUBS.has(sub)) return null;
+    if (subs.includes(sub)) return `r/${sub}`;
+    const post = /^\/r\/[^/]+\/comments\/([^/]+)(?:\/|$)/i.exec(parsed.pathname);
+    const id = post && post[1].toLowerCase();
+    return id && REDDIT_POST_RE.test(id) && posts.includes(`${sub}:${id}`) ? `r/${sub}/comments/${id}` : null;
+  } catch (e) { return null; }
+}
+
+function redditAllowEditIsLoosening(before, after) {
+  try {
+    const aSubs = sanitizeAllowedSubreddits(before && before.subreddits);
+    const aPosts = sanitizeAllowedRedditPosts(before && before.posts);
+    return sanitizeAllowedSubreddits(after && after.subreddits).some(x => !aSubs.includes(x)) ||
+      sanitizeAllowedRedditPosts(after && after.posts).some(x => !aPosts.includes(x));
+  } catch (e) { return true; }
+}
+
+function describeRedditAllowForHuman(value) {
+  const subs = sanitizeAllowedSubreddits(value && value.subreddits).map(x => `r/${x}`);
+  const posts = sanitizeAllowedRedditPosts(value && value.posts).map(x => {
+    const [sub, id] = x.split(':');
+    return `the ${id} post in r/${sub}`;
+  });
+  const names = subs.concat(posts);
+  return names.length ? `${joinWithAnd(names)} ${names.length === 1 ? 'stays' : 'stay'} open on Reddit` :
+    'no subreddits or posts stay open on Reddit';
+}
+
 // Does this entry carry anything that can leave an address on a blocked host
 // open? A part rule, or an allowlist. background.js drops a host's redirect
 // for exactly these and the content script watches the address on exactly
 // these — the reasoning on hasPartRule, extended to the second list.
 function hasPageRule(entry) {
   try {
-    return hasPartRule(entry) || allowedAccountsOf(entry).length > 0;
+    return hasPartRule(entry) || allowedAccountsOf(entry).length > 0 ||
+      allowedSubredditsOf(entry).length > 0 || allowedRedditPostsOf(entry).length > 0;
   } catch (e) {
     return false;
   }
@@ -1056,6 +1186,10 @@ function pageRuleFor(entry) {
   const rule = sanitizePartRule(entry);
   const allowed = allowedAccountsOf(entry);
   if (allowed.length) rule.allowedAccounts = allowed;
+  const subreddits = allowedSubredditsOf(entry);
+  const posts = allowedRedditPostsOf(entry);
+  if (subreddits.length) rule.allowedSubreddits = subreddits;
+  if (posts.length) rule.allowedRedditPosts = posts;
   return rule;
 }
 

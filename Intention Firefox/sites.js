@@ -215,9 +215,9 @@ const SERVICE_NEED = {
 // strongest thing the wizard can be told, and it means nothing if it can sit
 // alongside four reasons the site is fine.
 const NEED_NONE_ID = 'none';
-const SERVICE_NEED_NONE = { id: NEED_NONE_ID, label: 'Nothing \u2014 I just want it gone', coach: '', you: '' };
+const SERVICE_NEED_NONE = { id: NEED_NONE_ID, label: 'Nothing, I just want it gone', coach: '', you: '' };
 // Composed instead of joined, because there are no fragments to join.
-const NEED_NONE_PROSE = "Nothing \u2014 I don't actually need it.";
+const NEED_NONE_PROSE = "Nothing. I don't actually need it.";
 
 // Cost chips — "and why is it on the list?". One default set and two
 // overrides, because "it eats hours" is the wrong complaint about Netflix and
@@ -309,7 +309,7 @@ const SERVICE_ANSWERS = {
     needs: [
       SERVICE_NEED.dm,
       { id: 'event', label: "An event or group I'm in", coach: 'an event or a group I actually take part in', you: 'an event or group' },
-      { id: 'market', label: 'Marketplace \u2014 something specific', coach: 'looking on Marketplace for something specific I am buying or selling', you: 'one Marketplace listing' },
+      { id: 'market', label: 'Marketplace: something specific', coach: 'looking on Marketplace for something specific I am buying or selling', you: 'one Marketplace listing' },
       SERVICE_NEED.lookup
     ]
   },

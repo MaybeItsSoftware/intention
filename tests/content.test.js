@@ -390,6 +390,54 @@ describe('when the background never answers', () => {
       expect(gated(dom)).toBe(true);
       expect(dom.created.some(el => /needs either coaching credit/.test(el.textContent || ''))).toBe(false);
     });
+
+    it('requires a reason before spending an intended open, then carries it into the grant', async () => {
+      vi.useFakeTimers();
+      const sent = [];
+      const dom = loadContent({
+        storage: { setupComplete: true, blockedDomains: ['instagram.com'], domainLimits: { 'instagram.com': { maxGrants: 1, passMinutes: 5 } } },
+        sendMessage: (message, cb) => {
+          if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { opens: 1, minutesEach: 5, opensUsed: 0 } });
+          if (message.action === 'intentionGrant') { sent.push(message); cb({ grantedSession: { intervalMinutes: 5 } }); }
+        }
+      });
+      await vi.advanceTimersByTimeAsync(10000);
+      const take = dom.created.find(el => el.className === 'int-solid-btn');
+      const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
+      expect(take.disabled).toBe(true);
+      press(take);
+      expect(sent).toEqual([]);
+      reason.value = '  Read the event details  ';
+      reason._on.input[0]();
+      expect(take.disabled).toBe(false);
+      press(take);
+      expect(sent[0]).toMatchObject({ action: 'intentionGrant', reason: 'Read the event details', minutes: 5 });
+    });
+
+    it('lets a daily time intention choose this visit length within the remaining time', async () => {
+      vi.useFakeTimers();
+      const sent = [];
+      const dom = loadContent({
+        storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+        sendMessage: (message, cb) => {
+          if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { mode: 'dailyTime', dailyMinutes: 20, minutesUsed: 13, minutesLeft: 7, opens: 0, opensUsed: 0 } });
+          if (message.action === 'intentionGrant') { sent.push(message); cb({ grantedSession: { intervalMinutes: message.minutes } }); }
+        }
+      });
+      await vi.advanceTimersByTimeAsync(10000);
+      const take = dom.created.find(el => el.className === 'int-solid-btn');
+      const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
+      const minutes = dom.created.find(el => (el.className || '').includes('int-visit-minutes'));
+      reason.value = 'Reply to a message';
+      reason._on.input[0]();
+      minutes.value = '8';
+      minutes._on.input[0]();
+      expect(take.disabled).toBe(true);
+      minutes.value = '3';
+      minutes._on.input[0]();
+      press(take);
+      expect(sent[0]).toMatchObject({ reason: 'Reply to a message', minutes: 3 });
+    });
   });
 
   it('retries before giving up on the background', async () => {
@@ -771,6 +819,7 @@ describe('a pass granted for one page', () => {
     const text = badge.children.map(c => c.textContent).join(' | ');
     expect(text).toContain('This page only');
     expect(text).toContain('Watching "Never Gonna Give You Up"');
+    expect(text).toContain('Reason: someone sent me this');
   });
 
   it('leaves the badge alone for a site pass', async () => {
@@ -780,7 +829,7 @@ describe('a pass granted for one page', () => {
     const badge = dom.document.body.children.find(c => c.id === 'intention-badge');
     const text = badge.children.map(c => c.textContent).join(' | ');
     expect(text).not.toContain('This page only');
-    expect(text).toContain('"research"');
+    expect(text).toContain('Reason: research');
   });
 });
 

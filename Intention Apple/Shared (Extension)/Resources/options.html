@@ -14,7 +14,17 @@
 </head>
 <body>
   <div class="container">
-
+    <!-- On screen from the very first paint, until a view replaces it. Both
+         <main>s start hidden and wait on the background, and in the native apps
+         that background is a second web view that can take seconds to come up
+         (or, on a suspended device, not at all). App Review saw exactly that
+         gap as "a blank page without functionality". renderCurrentView() hides
+         this; bootFailed() turns it into a way out. -->
+    <div id="boot-view" class="boot-view" role="status">
+      <p class="boot-name">Intention</p>
+      <p class="boot-status" id="boot-status">Getting ready…</p>
+      <button type="button" id="boot-retry-btn" class="primary" hidden>Try again</button>
+    </div>
 
     <main id="setup-view" hidden>
       <div class="setup-progress">
@@ -30,17 +40,27 @@
 
       <section class="setup-step setup-page setup-welcome" id="setup-step-welcome" hidden>
         <h3 class="setup-question" id="setup-welcome-title">Open things on purpose.</h3>
-        <p class="setup-lede" id="setup-welcome-intro">A little friction in front of the apps and sites that pull you in — and none in front of the times you meant to open them.</p>
+        <p class="setup-lede" id="setup-welcome-intro">A little friction in front of the apps and sites that pull you in, and none in front of the times you meant to open them.</p>
         <ol class="setup-agenda" id="setup-welcome-checklist"></ol>
         <p class="setup-aside">About a minute. Nothing is blocked until you finish.</p>
       </section>
 
+      <!-- Mac app only, for someone who already set Intention up in Safari:
+           the wizard proper is behind them, so this page is about the app
+           itself rather than about their list. Filled by renderMacWelcomeStep. -->
+      <section class="setup-step setup-page setup-welcome" id="setup-step-mac-welcome" hidden>
+        <h3 class="setup-question">Intention, on your Mac.</h3>
+        <p class="setup-lede" id="setup-mac-welcome-lede">You’ve already set Intention up in Safari. This window is where you see how it’s going.</p>
+        <ol class="setup-agenda" id="setup-mac-welcome-list"></ol>
+        <p class="setup-aside">Two quick checks and you’re in.</p>
+      </section>
+
       <section class="setup-step setup-page" id="setup-step-safari" hidden>
         <h3 class="setup-question">Turn on the Safari extension</h3>
-        <p class="setup-lede" id="setup-safari-lede">Website blocking runs inside Safari, and only you can switch it on — iOS doesn't let an app do it for you.</p>
+        <p class="setup-lede" id="setup-safari-lede">Website blocking runs inside Safari, and only you can switch it on. iOS doesn't let an app do it for you.</p>
         <ol class="setup-steps-list" id="setup-safari-steps"></ol>
         <button type="button" id="setup-safari-settings-btn" class="primary add-row-btn">Open Settings</button>
-        <button type="button" id="setup-safari-open-btn" class="secondary add-row-btn">I turned it on — open Safari</button>
+        <button type="button" id="setup-safari-open-btn" class="secondary add-row-btn">I turned it on, open Safari</button>
         <p class="setup-check" id="setup-safari-status">Checking…</p>
         <p class="setup-aside" id="setup-safari-skip-hint">You can carry on and turn it on later, but websites won't be blocked until you do.</p>
       </section>
@@ -75,6 +95,7 @@
       <section class="setup-step setup-page" id="setup-step-intention" hidden>
         <span class="setup-mark" id="setup-intention-mark" aria-hidden="true"></span>
         <h3 class="setup-question" id="setup-intention-question"></h3>
+        <div class="setup-minutes" id="setup-intention-mode" role="radiogroup" aria-label="Daily allowance type"></div>
         <div class="setup-counter">
           <button type="button" id="setup-intention-minus" class="setup-counter-btn">−</button>
           <div class="setup-counter-read">
@@ -87,6 +108,10 @@
         <div id="setup-intention-minutes-wrap">
           <p class="micro-label setup-sub">For how long each time?</p>
           <div class="setup-minutes" id="setup-intention-minutes" role="radiogroup" aria-label="Minutes each time"></div>
+        </div>
+        <div id="setup-intention-daily-wrap" hidden>
+          <p class="setup-field-label">Maximum time for the day</p>
+          <div class="setup-minutes" id="setup-intention-daily" role="radiogroup" aria-label="Maximum minutes for the day"></div>
         </div>
         <p class="setup-sum" id="setup-intention-sum" aria-live="polite"></p>
         <button type="button" id="setup-intention-same-btn" class="setup-link" hidden></button>
@@ -114,8 +139,24 @@
         <ol class="setup-agenda">
           <li>That's today's allowance. The site stays blocked.</li>
           <li>If something genuinely needs more, you can make your case to the coach.</li>
-          <li id="setup-access-how">The coach uses coaching credit. Nothing to buy now — only if you ever need it.</li>
+          <li id="setup-access-how">The coach uses coaching credit. Nothing to buy now, only if you ever need it.</li>
         </ol>
+      </section>
+
+      <!-- Mac app only. Blocking never depends on the app running — Safari
+           does that — so this is about keeping Today one click away. -->
+      <section class="setup-step setup-page" id="setup-step-mac-login" hidden>
+        <h3 class="setup-question">Keep it where you’ll see it.</h3>
+        <p class="setup-lede">Open Intention when you log in, so your day is one click away. Blocking doesn’t depend on it: Safari does that on its own, whether this app is open or not.</p>
+        <button type="button" class="setup-switch" id="setup-login-btn" role="switch" aria-checked="false">
+          <span class="setup-switch-text">
+            <span class="setup-switch-title">Open Intention at login</span>
+            <span class="setup-switch-sub" id="setup-login-sub"></span>
+          </span>
+          <span class="setup-switch-track" aria-hidden="true"><span class="setup-switch-knob"></span></span>
+        </button>
+        <button type="button" class="secondary add-row-btn" id="setup-login-approve-btn" hidden>Open Login Items settings</button>
+        <p class="setup-aside">Closing the window keeps Intention in the Dock. Click its icon to come back.</p>
       </section>
 
       <section class="setup-step setup-page" id="setup-step-done" hidden>
@@ -184,7 +225,7 @@
                  website time Safari pushed from every device. -->
             <section class="card" id="unlock-card" data-section="today" hidden>
               <h2>Ask for time</h2>
-              <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere — Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
+              <p class="subtitle">iOS can't pop your coach up over a blocked app the way Intention does elsewhere. Apple's Screen Time shield just closes it. Come back here and ask your coach for a pass instead.</p>
               <p class="subtitle" id="unlock-status"></p>
               <button id="ios-request-time-btn" class="secondary" style="width: 100%;" hidden>Ask your coach for time on a blocked app</button>
             </section>
@@ -234,10 +275,13 @@
 
             <section class="card history-card" id="usage-log-card" data-section="today">
               <div class="card-head">
-                <h2>Recent days</h2>
-                <span class="micro-label" id="usage-log-caption">Time on your blocked list</span>
+                <h2>Time spent</h2>
+                <span class="micro-label" id="usage-log-caption">Blocked websites and apps · last 30 days</span>
               </div>
               <div id="usage-log-access" hidden></div>
+              <p id="usage-total" class="usage-total" hidden></p>
+              <ul id="usage-target-totals" class="usage-target-totals"></ul>
+              <h3 class="usage-recent-heading">Recent days</h3>
               <ul id="usage-log-list" class="history-list"></ul>
               <button type="button" id="usage-log-more" class="history-more" hidden>Show all 30 days</button>
             </section>
@@ -273,7 +317,7 @@
 
             <section class="card" id="apps-card" data-section="intentions" hidden>
               <h2>Blocked apps</h2>
-              <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device — "+ Add app" also suggests the usual suspects.</p>
+              <p class="subtitle" id="apps-card-subtitle">Block distracting apps on this device. "+ Add app" also suggests the usual suspects.</p>
               <button type="button" id="open-add-app-btn" class="primary add-row-btn">+ Add app</button>
               <ul id="app-list"></ul>
               <div id="ios-apps-controls" hidden>
@@ -291,13 +335,13 @@
                      separate set from applicationTokens, so shielding the app
                      while leaving the site reachable in Safari is expressible, and
                      our own part rules then do the fine-grained work there. -->
-                <p class="row-info-note" id="ios-apps-parts-note">Parts of an app can’t be blocked on iPhone or iPad. Screen Time blocks a whole app or nothing, and Apple gives Intention no way to see which screen you’re on. If you want Reels blocked but messages open, block the Instagram app here and add instagram.com on the Websites tab — Safari runs Intention’s own rules, which can tell the parts apart.</p>
+                <p class="row-info-note" id="ios-apps-parts-note">Parts of an app can’t be blocked on iPhone or iPad. Screen Time blocks a whole app or nothing, and Apple gives Intention no way to see which screen you’re on. If you want Reels blocked but messages open, block the Instagram app here and add instagram.com on the Websites tab. Safari runs Intention’s own rules, which can tell the parts apart.</p>
               </div>
             </section>
 
             <section class="card danger-card" id="danger-card" data-section="intentions">
               <h2>Turn everything off</h2>
-              <p class="subtitle">Stops Intention blocking anything at all — every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
+              <p class="subtitle">Stops Intention blocking anything at all: every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
               <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
               <div id="disable-all-status" class="status"></div>
             </section>
@@ -334,6 +378,20 @@
               <h2>AI access</h2>
               <div id="access-paywall"></div>
               <div id="access-status" class="status"></div>
+            </section>
+
+            <!-- Mac app only (IS_MAC_APP). -->
+            <section class="card" id="mac-app-card" data-section="settings" hidden>
+              <h2>This Mac</h2>
+              <p class="subtitle">Blocking runs in Safari whether this app is open or not. This only decides whether Today is waiting for you when you log in.</p>
+              <button type="button" class="setup-switch" id="mac-login-btn" role="switch" aria-checked="false">
+                <span class="setup-switch-text">
+                  <span class="setup-switch-title">Open Intention at login</span>
+                  <span class="setup-switch-sub" id="mac-login-sub"></span>
+                </span>
+                <span class="setup-switch-track" aria-hidden="true"><span class="setup-switch-knob"></span></span>
+              </button>
+              <button type="button" class="secondary" id="mac-login-approve-btn" style="width: 100%; margin-top: 10px;" hidden>Open Login Items settings</button>
             </section>
 
             <section class="card" id="privacy-card" data-section="settings">

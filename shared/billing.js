@@ -756,7 +756,7 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
   const card = el('div', 'int-pw-route');
   card.appendChild(el('strong', null, 'Use your own API key'));
   card.appendChild(el('p', 'int-pw-sub',
-    'Point the coach at an account you already have. Nothing to buy here — you pay your provider directly, and usually very little.'));
+    'Point the coach at an account you already have. Nothing to buy here: you pay your provider directly, and usually very little.'));
 
   // Without a save callback there is nowhere to put the key, so fall back to
   // the old behaviour of handing the user to the settings field.

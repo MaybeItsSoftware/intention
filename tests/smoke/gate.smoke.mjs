@@ -229,12 +229,18 @@ async function main() {
     await waitFor(() => page0.url().startsWith(gateUrlPrefix), 4000);
     record('a blocked site with an open left shows the intention gate',
       page0.url().startsWith(gateUrlPrefix), `url: ${page0.url()}`);
-    const countText = await page0.locator('#int-intention-count').textContent({ timeout: 3000 }).catch(() => '');
+    const openButton = page0.getByRole('button', { name: 'Open for 5 minutes' });
+    await openButton.waitFor({ timeout: 5000 });
+    const countText = await page0.locator('#int-intention-count').textContent({ timeout: 5000 }).catch(() => '');
     record('the gate says which open this is and how long it lasts',
       /Open 1 of 1 today/.test(countText || '') && /5 min/.test(countText || ''), JSON.stringify(countText));
-    await page0.getByRole('button', { name: 'Open for 5 minutes' }).click();
+    record('the intended open requires a reason', await openButton.isDisabled());
+    await page0.getByPlaceholder('Give a specific reason').fill('Read the event details');
+    await openButton.click();
     await waitFor(() => !page0.url().startsWith(gateUrlPrefix), 5000);
     record('taking the open lets the page through', !page0.url().startsWith(gateUrlPrefix), `url: ${page0.url()}`);
+    const badgeReason = await page0.locator('#intention-badge-reason').textContent({ timeout: 3000 }).catch(() => '');
+    record('the floating window keeps the stated reason visible', badgeReason === 'Reason: Read the event details', JSON.stringify(badgeReason));
     record('a free open never reaches the coach', received.length === 0, `${received.length} request(s)`);
     const opened0 = await settings.evaluate(async () => {
       const { dailyStats = {} } = await chrome.storage.local.get('dailyStats');
@@ -244,6 +250,7 @@ async function main() {
     });
     record('the open is counted, and not as negotiated',
       opened0?.grants === 1 && !opened0?.negotiated, JSON.stringify(opened0));
+    record('the open records the user-given reason', opened0?.sessions?.[0]?.reason === 'Read the event details', JSON.stringify(opened0?.sessions));
     await page0.close();
     // End the pass so the next visit gates again.
     await settings.evaluate(async () => {

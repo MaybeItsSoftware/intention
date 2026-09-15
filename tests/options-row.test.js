@@ -172,10 +172,18 @@ describe('the intention', () => {
 
   it('shows opens a day and minutes each, named by micro-labels', () => {
     const { fields } = build();
-    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Opens', 'Each time']);
+    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Allowance', 'Opens', 'Each time']);
     expect(find(fields, 'stepper-value').textContent).toBe('3 opens a day');
     const selected = chips(fields).filter(c => c.getAttribute('aria-checked') === 'true');
     expect(selected.map(c => c.textContent)).toEqual(['10 min']);
+  });
+
+  it('shows the daily maximum instead of visit-count controls in time mode', () => {
+    const { fields } = build({ intentionMode: 'dailyTime', dailyTimeMinutes: 60 });
+    expect(findAll(fields, 'micro-label').map(l => l.textContent))
+      .toEqual(['Allowance', 'Maximum for the day']);
+    expect(stepper(fields)).toHaveLength(0);
+    expect(chips(fields).some(c => c.textContent === '60 min' && c.getAttribute('aria-checked') === 'true')).toBe(true);
   });
 
   it('calls zero opens what it is', () => {
@@ -252,7 +260,7 @@ describe('the two site-specific answers', () => {
     expect(findAll(wrap, 'row-reason-input')).toHaveLength(2);
     // The visible caption repeats down the page; the accessible one doesn't.
     expect(findAll(wrap, 'row-reason-input')[1].getAttribute('aria-label'))
-      .toBe('Why you need it — instagram.com');
+      .toBe('Why you need it: instagram.com');
   });
 
   it('says where an answer is shared, because editing here edits there', () => {
@@ -972,5 +980,62 @@ describe('always-allowed accounts', () => {
     expect(gates).toEqual([]);
     expect(saved).toEqual([]);
     expect(find(field, 'int-pw-error').hidden).toBe(false);
+  });
+});
+
+describe('Reddit allowances on the website row', () => {
+  const build = entry => ctx.buildRowRedditAllowField('reddit.com', 'Reddit', entry, noop);
+  const add = async (field, kind, text) => {
+    const group = find(field, `row-reddit-${kind}-input`);
+    group.children[0].value = text;
+    await fire(group.children[1], 'click');
+  };
+
+  it('shows both lists and offers the control on Reddit web, never its app', () => {
+    const field = build({ allowedSubreddits: ['rust'], allowedRedditPosts: ['cats:abc123'] });
+    expect(findAll(field, 'row-part-chip').map(c => c.children[0].textContent)).toEqual(['r/rust', 'r/cats · abc123']);
+    const body = (target, kind) => {
+      const li = makeElement('li');
+      ctx.buildRowBody({ li, fields: makeElement('div'), target, label: target,
+        limitInfo: { maxGrants: 3 }, kind, serviceReasons: {}, rerender: noop });
+      return li;
+    };
+    expect(find(body('reddit.com', ctx.ROW_KINDS.domain), 'row-reddit-field')).toBeTruthy();
+    expect(find(body('com.reddit.frontpage', ctx.ROW_KINDS.app), 'row-reddit-field')).toBeUndefined();
+  });
+
+  it('removes an allowance directly and deletes the empty key', async () => {
+    config.domainLimits['reddit.com'] = { maxGrants: 3, allowedSubreddits: ['rust'], allowedRedditPosts: ['cats:abc123'] };
+    const field = build(config.domainLimits['reddit.com']);
+    await fire(findAll(field, 'row-part-chip-remove')[0], 'click');
+    expect(gates).toEqual([]);
+    expect('allowedSubreddits' in saved[0].domainLimits['reddit.com']).toBe(false);
+    expect(saved[0].domainLimits['reddit.com'].allowedRedditPosts).toEqual(['cats:abc123']);
+  });
+
+  it('asks for a subreddit and for a post instead of saving an addition directly', async () => {
+    const field = build({ maxGrants: 3 });
+    await add(field, 'subreddits', 'r/Rust');
+    await add(field, 'posts', 'https://www.reddit.com/r/cats/comments/ABC123/cute_cat/');
+    expect(saved).toEqual([]);
+    expect(gates.map(g => g.changeType)).toEqual(['allow_reddit', 'allow_reddit']);
+    expect(gates[0].newValue).toEqual({ subreddits: ['rust'], posts: [] });
+    expect(gates[1].newValue).toEqual({ subreddits: [], posts: ['cats:abc123'] });
+  });
+
+  it('preserves earlier pending additions when another is requested', async () => {
+    config.pendingChanges = [{ changeType: 'allow_reddit', domain: 'reddit.com', newValue: { subreddits: ['rust'], posts: [] } }];
+    const field = build({ maxGrants: 3 });
+    await add(field, 'posts', 'https://reddit.com/r/cats/comments/abc123/');
+    expect(gates[0].newValue).toEqual({ subreddits: ['rust'], posts: ['cats:abc123'] });
+  });
+
+  it('rejects a broad feed or a post without a subreddit', async () => {
+    const field = build({ maxGrants: 3 });
+    await add(field, 'subreddits', 'r/all');
+    await add(field, 'posts', 'https://reddit.com/comments/abc123/');
+    expect(gates).toEqual([]);
+    expect(saved).toEqual([]);
+    expect(findAll(field, 'int-pw-error').every(e => e.hidden === false)).toBe(true);
   });
 });

@@ -124,6 +124,49 @@ function buildIntentionField(entry, ariaName, onChange) {
   const field = document.createElement('div');
   field.className = 'intention-field';
 
+  const modeWrap = document.createElement('div');
+  modeWrap.className = 'intention-minutes';
+  for (const [mode, title] of [['opens', 'Visits per day'], ['dailyTime', 'Time per day']]) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip';
+    chip.textContent = title;
+    chip.classList.toggle('selected', (current.mode || 'opens') === mode);
+    chip.setAttribute('aria-pressed', String((current.mode || 'opens') === mode));
+    chip.addEventListener('click', () => {
+      if ((current.mode || 'opens') === mode) return;
+      return onChange(mode === 'dailyTime'
+        ? { intentionMode: 'dailyTime', dailyTimeMinutes: current.opens * current.minutesEach || 30 }
+        : { intentionMode: 'opens', maxGrants: Math.min(MAX_OPENS, Math.max(1, Math.ceil(current.dailyMinutes / 10))), passMinutes: 10 });
+    });
+    modeWrap.appendChild(chip);
+  }
+
+  if (current.mode === 'dailyTime') {
+    const dailyWrap = document.createElement('div');
+    dailyWrap.className = 'intention-minutes';
+    dailyWrap.setAttribute('role', 'radiogroup');
+    dailyWrap.setAttribute('aria-label', `Daily time limit for ${ariaName}`);
+    for (const minutes of DAILY_TIME_CHOICES) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = `${minutes} min`;
+      chip.setAttribute('role', 'radio');
+      chip.classList.toggle('selected', minutes === current.dailyMinutes);
+      chip.setAttribute('aria-checked', String(minutes === current.dailyMinutes));
+      chip.addEventListener('click', () => {
+        if (minutes !== current.dailyMinutes) return onChange({ intentionMode: 'dailyTime', dailyTimeMinutes: minutes });
+      });
+      dailyWrap.appendChild(chip);
+    }
+    field.append(
+      buildRowField(microLabel('Allowance'), modeWrap),
+      buildRowField(microLabel('Maximum for the day'), dailyWrap)
+    );
+    return field;
+  }
+
   const opensWrap = document.createElement('div');
   opensWrap.className = 'intention-opens';
   const minus = document.createElement('button');
@@ -175,6 +218,7 @@ function buildIntentionField(entry, ariaName, onChange) {
   paint();
 
   field.append(
+    buildRowField(microLabel('Allowance'), modeWrap),
     buildRowField(microLabel('Opens'), opensWrap),
     buildRowField(microLabel('Each time'), chips)
   );
@@ -255,7 +299,7 @@ function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked) {
   if (shared.length) {
     const sharedNote = document.createElement('p');
     sharedNote.className = 'row-reason-shared';
-    sharedNote.textContent = `Shared with ${shared.join(', ')} — the same service, so this edits both.`;
+    sharedNote.textContent = `Shared with ${shared.join(', ')}: the same service, so this edits both.`;
     wrap.appendChild(sharedNote);
   }
 
@@ -291,7 +335,7 @@ function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked) {
     fieldLabel.htmlFor = area.id;
     // The visible caption is two or three words and repeats down the page; the
     // accessible one names the row it belongs to.
-    area.setAttribute('aria-label', `${caption} — ${label}`);
+    area.setAttribute('aria-label', `${caption}: ${label}`);
 
     area.addEventListener('change', async () => {
       // Re-read rather than trusting the closure: another row of the same
@@ -429,12 +473,12 @@ const PARTS_SCOPE_COPY_APP = {
 // Saying otherwise would be the expensive kind of wrong: someone picks "only"
 // believing it is the cautious option, and meets a wholly blocked app instead.
 const PARTS_APP_DEGRADE = {
-  only: (label) => `If ${label} changes and Intention can't tell which section is open, the whole app stays blocked — the same as the other rule. Your coach still opens, so you can get through or change the rule from there.`,
+  only: (label) => `If ${label} changes and Intention can't tell which section is open, the whole app stays blocked, the same as the other rule. Your coach still opens, so you can get through or change the rule from there.`,
   except: (label) => `If ${label} changes and Intention can't tell which section is open, the whole app stays blocked. Your coach still opens, so you can get through or change the rule from there.`
 };
 
 const PARTS_EXPLAINER =
-  'Intention works out which part you are on from the web address. A pass still opens the whole site for its length — ' +
+  'Intention works out which part you are on from the web address. A pass still opens the whole site for its length. ' +
   'the parts only decide when your coach steps in at all.';
 
 // The app version of the same note, and it is longer for one reason: inside an
@@ -446,7 +490,7 @@ const PARTS_EXPLAINER_APP =
   'That is best-effort: it depends on the version of the app you have, and on your phone being in English for some screens. ' +
   'A section this version of Intention does not recognise blocks the whole app rather than opening it. ' +
   'Intention counts the times it could not tell and offers to turn the rule back into "All of it" if that keeps happening. ' +
-  'A pass still opens the whole app for its length — the sections only decide when your coach steps in at all.';
+  'A pass still opens the whole app for its length. The sections only decide when your coach steps in at all.';
 
 // The packages Intention can see inside, and the sections it can recognise in
 // each. This is the JS half of APP_PARTS in
@@ -489,7 +533,7 @@ function partsAvailabilityFor(target, label, kind) {
   if (!host.intentionApps && host.intentionScreenTime) {
     return {
       available: false,
-      note: `On iPhone and iPad, apps are blocked with Screen Time, which hides the whole app behind a shield and tells Intention nothing about what is on screen. Blocking part of ${label} is not possible here — only all of it. Section rules work on websites, and in some apps on Android.`
+      note: `On iPhone and iPad, apps are blocked with Screen Time, which hides the whole app behind a shield and tells Intention nothing about what is on screen. Blocking part of ${label} is not possible here, only all of it. Section rules work on websites, and in some apps on Android.`
     };
   }
   // The bridge has to be there as well as the package: the table is read by
@@ -502,7 +546,7 @@ function partsAvailabilityFor(target, label, kind) {
   }
   return {
     available: false,
-    note: `Sections are not available for ${label} yet. Intention can only tell which section is open inside apps it has been taught to read — Instagram and YouTube so far — and a rule it cannot read would block the whole app anyway. All of ${label} is blocked, as before.`
+    note: `Sections are not available for ${label} yet. Intention can only tell which section is open inside apps it has been taught to read: Instagram and YouTube so far. A rule it cannot read would block the whole app anyway. All of ${label} is blocked, as before.`
   };
 }
 
@@ -626,7 +670,7 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
     const note = document.createElement('p');
     note.className = 'row-info-note part-picker-note';
     note.textContent = `These are the sections Intention can recognise inside ${label}. ` +
-      'It reads them from the app\'s own screen, so an app update can change what it sees — and anything it cannot see stays blocked.';
+      'It reads them from the app\'s own screen, so an app update can change what it sees, and anything it cannot see stays blocked.';
     box.appendChild(note);
   }
 
@@ -735,7 +779,7 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
     const submitCustom = () => {
       const id = normalizePartInput(customInput.value, serviceKey);
       if (!id) {
-        customError.textContent = "That doesn't look like an address. Start it with / — for example /reels/*.";
+        customError.textContent = "That doesn't look like an address. Start it with /, for example /reels/*.";
         customError.hidden = false;
         return undefined;
       }
@@ -985,7 +1029,7 @@ const ACCOUNTS_EXPLAINER = {
   instagram: 'Opens their profile and any post or reel reached from it (the address names them). A post opened from your feed or a shared link does not name its author, so it stays behind your intention.',
   x: 'Opens their profile and their posts. Anything else on X stays behind your intention.',
   tiktok: 'Opens their profile and their videos. Anything else on TikTok stays behind your intention.',
-  youtube: 'Opens their channel and their videos. Intention asks YouTube whose video it is before letting it through, so a video can take a moment to be recognised — and one it cannot check stays behind your intention.'
+  youtube: 'Opens their channel and their videos. Intention asks YouTube whose video it is before letting it through, so a video can take a moment to be recognised, and one it cannot check stays behind your intention.'
 };
 
 function accountsExplainerFor(target) {
@@ -1094,6 +1138,107 @@ function buildRowAccountsField(target, label, limitInfo, rerender) {
   return field;
 }
 
+// A subreddit opens its feed and posts; a single post can also be allowed
+// without opening the rest of its subreddit. Reddit's app has no URL to
+// inspect, so these controls belong only on the website row.
+function buildRowRedditAllowField(target, label, limitInfo, rerender) {
+  const storedSubs = sanitizeAllowedSubreddits(limitInfo && limitInfo.allowedSubreddits);
+  const storedPosts = sanitizeAllowedRedditPosts(limitInfo && limitInfo.allowedRedditPosts);
+  const field = document.createElement('div');
+  field.className = 'row-field row-parts-field row-reddit-field';
+  field.appendChild(microLabel('Always allowed on Reddit'));
+  const helper = document.createElement('p');
+  helper.className = 'row-parts-helper';
+  helper.textContent = 'Allowed subreddits and posts open without an intention. A post added on its own does not open its whole subreddit.';
+  field.appendChild(helper);
+
+  const addList = (kind, values) => {
+    const chips = document.createElement('div');
+    chips.className = `row-parts-chips row-reddit-${kind}-chips`;
+    for (const value of values) {
+      const chip = document.createElement('span');
+      chip.className = 'row-part-chip';
+      const text = document.createElement('span');
+      const [sub, id] = kind === 'posts' ? value.split(':') : [value, ''];
+      text.textContent = kind === 'posts' ? `r/${sub} · ${id}` : `r/${sub}`;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'row-part-chip-remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Stop always allowing ${text.textContent} on Reddit`);
+      remove.addEventListener('click', async () => {
+        const state = await getConfig();
+        const limits = state.domainLimits || {};
+        const entry = { ...(limits[target] || limitInfo || {}) };
+        const key = kind === 'posts' ? 'allowedRedditPosts' : 'allowedSubreddits';
+        const sanitize = kind === 'posts' ? sanitizeAllowedRedditPosts : sanitizeAllowedSubreddits;
+        const next = sanitize(entry[key]).filter(x => x !== value);
+        if (next.length) entry[key] = next;
+        else delete entry[key];
+        limits[target] = entry;
+        await sendBg({ action: 'saveSettings', config: { domainLimits: limits } });
+        await rerender();
+      });
+      chip.append(text, remove);
+      chips.appendChild(chip);
+    }
+    field.appendChild(chips);
+
+    const group = document.createElement('div');
+    group.className = `input-group row-reddit-${kind}-input`;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = kind === 'posts' ? 'Paste a Reddit post link' : 'r/subreddit or its link';
+    input.setAttribute('aria-label', kind === 'posts' ? 'A Reddit post to always allow' : 'A subreddit to always allow');
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'secondary row-parts-add';
+    add.textContent = kind === 'posts' ? 'Add post' : 'Add subreddit';
+    group.append(input, add);
+    const error = document.createElement('p');
+    error.className = 'int-pw-error';
+    error.hidden = true;
+    field.append(group, error);
+
+    const submit = async () => {
+      const value = kind === 'posts' ? normalizeRedditPostInput(input.value) : normalizeSubredditInput(input.value);
+      if (!value) {
+        error.textContent = kind === 'posts'
+          ? 'Paste a link to a post in a specific subreddit, such as reddit.com/r/rust/comments/abc123.'
+          : 'Type r/subreddit or paste its Reddit link.';
+        error.hidden = false;
+        return;
+      }
+      error.hidden = true;
+      if (values.includes(value)) { input.value = ''; return; }
+      const state = await getConfig();
+      const pending = ((state && state.pendingChanges) || [])
+        .filter(p => p && p.changeType === 'allow_reddit' && p.domain === target)
+        .map(p => p.newValue || {});
+      const adds = {
+        subreddits: sanitizeAllowedSubreddits(pending.flatMap(p => p.subreddits || []).concat(kind === 'subreddits' ? [value] : [])),
+        posts: sanitizeAllowedRedditPosts(pending.flatMap(p => p.posts || []).concat(kind === 'posts' ? [value] : []))
+      };
+      input.value = '';
+      const name = kind === 'posts' ? `post ${value.split(':')[1]} in r/${value.split(':')[0]}` : `r/${value}`;
+      requestLoosening({
+        isApp: false, changeType: 'allow_reddit', domain: target,
+        currentValue: { subreddits: storedSubs, posts: storedPosts },
+        newValue: adds,
+        title: `Always allow ${name}?`,
+        subtitle: `This keeps ${name} open on Reddit without an intention in front of it.`,
+        onApproved: rerender
+      });
+    };
+    add.addEventListener('click', submit);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  };
+
+  addList('subreddits', storedSubs);
+  addList('posts', storedPosts);
+  return field;
+}
+
 // Everything under the head hairline, for both lists: the intention, always
 // visible, and the rest folded under one disclosure — which parts are blocked
 // and what the target is for are things you set once, not things to scan past
@@ -1107,7 +1252,7 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
     const before = currentLimits[target] || limitInfo;
     if (!isLoosening(before, next)) {
       // Fewer or shorter opens: a tightening, saved at once, for free.
-      currentLimits[target] = { ...(currentLimits[target] || {}), maxGrants: next.maxGrants, passMinutes: next.passMinutes };
+      currentLimits[target] = { ...(currentLimits[target] || {}), ...next };
       await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
       await rerender();
       return;
@@ -1118,8 +1263,8 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
       appLabel: kind.isApp ? label : undefined,
       changeType: kind.increaseLimit,
       domain: target,
-      currentValue: { maxGrants: stored.opens, passMinutes: stored.minutesEach },
-      newValue: { maxGrants: after.opens, passMinutes: after.minutesEach },
+      currentValue: before,
+      newValue: next,
       title: `More time on ${label}?`,
       subtitle: `From ${describeIntention(stored)} to ${describeIntention(after)}.`,
       onApproved: rerender
@@ -1131,7 +1276,9 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
   const summary = document.createElement('summary');
   summary.className = 'micro-label';
   const hasAccounts = !kind.isApp && accountsSupportedFor(target);
-  summary.textContent = hasAccounts ? 'Parts, accounts and purpose' : 'Parts and purpose';
+  const hasReddit = !kind.isApp && redditSupportedFor(target);
+  summary.textContent = hasAccounts ? 'Parts, accounts and purpose'
+    : hasReddit ? 'Parts, Reddit allowlist and purpose' : 'Parts and purpose';
   more.appendChild(summary);
   // Which parts of the target are blocked. A part rule decides whether the
   // block applies at all, so it binds whatever the intention says.
@@ -1143,12 +1290,16 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
   if (hasAccounts) {
     more.appendChild(buildRowAccountsField(target, label, limitInfo, rerender));
   }
+  if (hasReddit) {
+    more.appendChild(buildRowRedditAllowField(target, label, limitInfo, rerender));
+  }
   more.appendChild(buildRowReasonFields(target, label, kind, serviceReasons, allBlockedTargets()));
   li.appendChild(more);
 }
 
 // "3 opens a day, 10 min each" for an already-resolved intention.
-function describeIntention({ opens, minutesEach }) {
+function describeIntention({ mode, dailyMinutes, opens, minutesEach }) {
+  if (mode === 'dailyTime') return `${dailyMinutes} min a day, chosen per visit`;
   if (opens === 0) return 'blocked outright';
   return `${opens} ${opens === 1 ? 'open' : 'opens'} a day, ${minutesEach} min each`;
 }
@@ -1158,7 +1309,7 @@ function renderDomains(domains, limits = {}, serviceReasons = {}) {
   const list = document.getElementById('domain-list');
   list.innerHTML = '';
   if (!domains.length) {
-    renderEmptyList(list, 'No websites blocked yet. Tap "+ Add website" — it suggests a few.');
+    renderEmptyList(list, 'No websites blocked yet. Tap "+ Add website" and it suggests a few.');
     return;
   }
   const rerender = async () => {

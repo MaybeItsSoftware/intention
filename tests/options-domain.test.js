@@ -248,12 +248,12 @@ describe('collectServiceReasons', () => {
   // The strongest thing this step can be told, and the one answer that is NOT
   // the absence of chips — so it has to reach storage as a sentence rather
   // than being dropped as empty.
-  it("turns 'nothing — I just want it gone' into a sentence of its own", () => {
+  it("turns 'nothing, I just want it gone' into a sentence of its own", () => {
     const out = JSON.parse(collect({
       domains: ['instagram.com'],
       answers: { 'instagram.com': { needs: ['none'], costs: [] } }
     }));
-    expect(out['instagram.com'].legitimateUse).toBe("Nothing — I don't actually need it.");
+    expect(out['instagram.com'].legitimateUse).toBe("Nothing. I don't actually need it.");
   });
 });
 

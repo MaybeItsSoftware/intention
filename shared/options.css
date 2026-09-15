@@ -1,7 +1,10 @@
-@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
-@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
-@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
-@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: swap; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
+/* block, not swap: the fonts are local files that load in milliseconds, so
+   swap only ever bought a frame of Georgia before Arvo replaced it, which read
+   as the whole page changing font as it loaded. */
+@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: block; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: block; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
+@font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: block; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
 
 * { box-sizing: border-box; }
 
@@ -1135,6 +1138,20 @@ html:has(#setup-view:not([hidden])) .container {
   padding-right: calc(32px + env(safe-area-inset-right));
 }
 
+.boot-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 60vh;
+  text-align: center;
+}
+.boot-view[hidden] { display: none; }
+.boot-name { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; color: var(--ink); }
+.boot-status { margin: 0 0 12px; max-width: 34ch; font-size: 14px; color: var(--text-muted); }
+
 #setup-view {
   flex: 1;
   min-height: 0;
@@ -1377,6 +1394,22 @@ html:has(#setup-view:not([hidden])) .container {
   gap: 8px;
 }
 
+#setup-step-intention .setup-mark { margin-bottom: 12px; }
+#setup-intention-mode { grid-template-columns: repeat(2, 1fr); margin: 0 0 4px; }
+.setup-mode-chip {
+  min-height: 44px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.setup-mode-chip.selected { border-color: var(--ink); background: var(--hover); font-weight: 700; }
+#setup-intention-daily-wrap { margin: 0 0 16px; }
+#setup-intention-daily-wrap .setup-field-label { margin: 0 0 10px; }
+#setup-intention-daily { margin-bottom: 14px; }
+
 .setup-minute-chip {
   display: flex;
   flex-direction: column;
@@ -1534,6 +1567,62 @@ ul.setup-picked:empty { display: none; }
 
 /* Live readout of something the user changed outside this page (a Safari
    toggle, a Screen Time permission) — muted until it turns green. */
+/* An on/off switch (the Mac's "Open Intention at login"). The whole row is the
+   button, so the hit area is the sentence rather than a 36px track. Borders
+   and fills only: the knob moves, nothing lifts. */
+.setup-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--raised);
+  color: var(--ink);
+  text-align: left;
+  font-weight: 400;
+}
+.setup-switch:hover { background: var(--hover); }
+.setup-switch:disabled { cursor: default; opacity: 0.6; }
+.setup-switch-text { display: grid; gap: 2px; min-width: 0; }
+.setup-switch-title { font-size: 15px; font-weight: 700; }
+.setup-switch-sub { font-size: 13px; color: var(--text-muted); }
+.setup-switch-sub:empty { display: none; }
+.setup-switch-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--well);
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+.setup-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+.setup-switch[aria-checked="true"] .setup-switch-track {
+  background: var(--primary-solid);
+  border-color: var(--primary-solid);
+}
+.setup-switch[aria-checked="true"] .setup-switch-knob {
+  transform: translateX(16px);
+  background: var(--primary-on);
+}
+@media (prefers-reduced-motion: reduce) {
+  .setup-switch-track, .setup-switch-knob { transition-duration: 1ms; }
+}
+
 .setup-check {
   margin: 14px 0 0;
   padding: 10px 12px;
@@ -2224,6 +2313,35 @@ ul.setup-picked:empty { display: none; }
 .today-coach-btn { width: 100%; }
 
 .history-list { list-style: none; margin: 0; padding: 0; }
+.usage-total { margin: 2px 0 12px; font-size: 17px; font-weight: 700; color: var(--ink); }
+.usage-target-totals { list-style: none; margin: 0; padding: 0; }
+.usage-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border-muted);
+  font-size: 14px;
+}
+.usage-target-name { display: inline-flex; align-items: center; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
+.usage-target-time { flex-shrink: 0; font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+.usage-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+}
+.usage-mark svg, .usage-mark img { width: 19px; height: 19px; object-fit: contain; }
+.usage-recent-heading { margin: 18px 0 8px; font-size: 13px; font-weight: 700; color: var(--text-muted); }
 .history-day {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr) auto;

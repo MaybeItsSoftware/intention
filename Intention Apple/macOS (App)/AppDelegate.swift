@@ -122,7 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Intention's Safari extension is turned off"
-        alert.informativeText = "Blocked sites aren't being blocked. You can turn it back on in Safari's Extensions settings — or leave it off, and this won't ask again."
+        alert.informativeText = "Blocked sites aren't being blocked. You can turn it back on in Safari's Extensions settings, or leave it off and this won't ask again."
         alert.addButton(withTitle: "Open Safari Settings")
         alert.addButton(withTitle: "Leave It Off")
 

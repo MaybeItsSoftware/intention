@@ -415,16 +415,20 @@ function stampSessionOutcome(daySites, domain, outcome, usedMinutes) {
   }
 }
 
-async function recordSessionMinutes(domain, elapsedMinutes, outcome) {
+async function recordSessionMinutes(domain, elapsedMinutes, outcome, startedAt) {
   // Closing the tab the instant the pass opens banks no minutes, but it is the
   // single strongest thing the coach can know about someone — so an outcome is
   // still worth writing down when there is no time to record.
   const minutes = elapsedMinutes > 0 ? elapsedMinutes : 0;
   if (!domain || (!minutes && !outcome)) return;
   await withDailyStats((stats, today) => {
-    if (!stats[today][domain]) stats[today][domain] = { minutes: 0, grants: 0, sessions: [] };
-    stats[today][domain].minutes += minutes;
-    stampSessionOutcome(stats[today], domain, outcome, minutes);
+    // A paused visit can finish after midnight. Its grant and spent time
+    // belong to the day it began, even when an inexact alarm banks it late.
+    const day = startedAt ? dateKey(new Date(startedAt)) : today;
+    if (!stats[day]) stats[day] = {};
+    if (!stats[day][domain]) stats[day][domain] = { minutes: 0, grants: 0, sessions: [] };
+    stats[day][domain].minutes += minutes;
+    stampSessionOutcome(stats[day], domain, outcome, minutes);
   });
 
   if (!minutes) return;

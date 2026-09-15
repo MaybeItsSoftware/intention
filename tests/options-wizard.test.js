@@ -419,3 +419,75 @@ describe('a note the user is still typing', () => {
     expect(answers().needsNote).toBe('');
   });
 });
+
+// The Mac app's onboarding. Someone who set Intention up in Safari first
+// arrives with setupComplete already true, so the wizard alone would never
+// show them anything; they get a three-page welcome instead. Someone setting
+// up in the app gets the wizard, with the login page before the end.
+describe('Mac app onboarding', () => {
+  const load = ({ mac }) => {
+    const document = {
+      addEventListener() {},
+      getElementById: () => makeShimElement('div'),
+      createElement: makeShimElement,
+      createElementNS: (_ns, tag) => makeShimElement(tag),
+      body: makeShimElement('body'),
+      documentElement: { classList: { contains: (c) => mac && c === 'platform-mac' } },
+      get activeElement() { return null; }
+    };
+    const chrome = {
+      runtime: { getURL: (p) => p, lastError: null, sendMessage: (_m, cb) => cb && cb({ ok: true }) },
+      storage: { local: { get: (_k, cb) => cb && cb({}), set: (_o, cb) => cb && cb(), remove: (_k, cb) => cb && cb() } }
+    };
+    const intentionExtension = { status: (cb) => cb({ active: true, platform: 'mac' }), setSetupComplete() {} };
+    return loadSource(filesForContext('options', { except: ['billing.js', 'report.js'] }), {
+      chrome,
+      extraGlobals: {
+        document,
+        window: { matchMedia: () => ({ matches: false }), intentionExtension },
+        navigator: { userAgent: 'Safari/605' },
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        CSS: { escape: (s) => s }
+      }
+    });
+  };
+
+  it('the tour is the Mac welcome, the Safari check and the login switch — nothing that edits the list', () => {
+    const ctx = load({ mac: true });
+    vm.runInContext(`setupMode = 'mac-tour'`, ctx);
+    expect(vm.runInContext('IS_MAC_APP', ctx)).toBe(true);
+    expect(vm.runInContext('computeStepOrder()', ctx))
+      .toEqual(['setup-step-mac-welcome', 'setup-step-safari', 'setup-step-mac-login']);
+  });
+
+  it('the wizard in the Mac app asks about login just before it finishes', () => {
+    const ctx = load({ mac: true });
+    vm.runInContext(`setupBlockedDomains = ['reddit.com']; setupWantsReasons = false;`, ctx);
+    const order = vm.runInContext('computeStepOrder()', ctx);
+    expect(order[1]).toBe('setup-step-safari');
+    expect(order.slice(-3)).toEqual(['setup-step-access', 'setup-step-mac-login', 'setup-step-done']);
+    expect(order).not.toContain('setup-step-mac-welcome');
+  });
+
+  it('the iPhone app has neither Mac page', () => {
+    const ctx = load({ mac: false });
+    vm.runInContext(`setupBlockedDomains = ['reddit.com'];`, ctx);
+    const order = vm.runInContext('computeStepOrder()', ctx);
+    expect(vm.runInContext('IS_MAC_APP', ctx)).toBe(false);
+    expect(order.filter(id => id.startsWith('setup-step-mac'))).toEqual([]);
+  });
+
+  it('the tour never writes a setup draft', () => {
+    const ctx = load({ mac: true });
+    const writes = [];
+    vm.runInContext(`setupMode = 'mac-tour'; setupDraftReady = true;`, ctx);
+    ctx.chrome.storage.local.set = (obj) => writes.push(obj);
+    vm.runInContext('saveSetupDraft()', ctx);
+    expect(writes).toEqual([]);
+    // The same call in the wizard does write, so the empty list above means
+    // something.
+    vm.runInContext(`setupMode = 'full'`, ctx);
+    vm.runInContext('saveSetupDraft()', ctx);
+    expect(writes).toHaveLength(1);
+  });
+});

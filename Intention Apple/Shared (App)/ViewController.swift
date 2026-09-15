@@ -9,10 +9,13 @@ import WebKit
 
 #if os(iOS)
 import UIKit
+import CoreText
+import SafariServices
 typealias PlatformViewController = UIViewController
 #elseif os(macOS)
 import Cocoa
 import SafariServices
+import ServiceManagement
 typealias PlatformViewController = NSViewController
 #endif
 
@@ -53,6 +56,11 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     }
 
     private lazy var extensionBanner: UIView = makeExtensionBanner()
+
+    // "Intention / Getting ready…", native, for the moment before WebKit has
+    // painted anything. The page opens on the same two lines (#boot-view), so
+    // the hand-over is invisible.
+    private var launchPlaceholder: UIView?
 #endif
 
     override func viewDidLoad() {
@@ -81,6 +89,7 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         // separate status page with no progress in it at all.
         setUpNativeBridge()
         BackgroundJSHost.shared.start()
+        BackgroundJSHost.shared.attach(to: view)
         // Listen for renewals / Ask-to-Buy approvals for as long as the app is
         // alive, or StoreKit never finishes those transactions.
         if #available(iOS 15.0, macOS 12.0, *) {
@@ -89,6 +98,22 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         loadOptionsPage()
 
 #if os(iOS)
+        // The page's own paper colour behind the web view while it loads, in
+        // both appearances, instead of the white flash that read as a blank
+        // screen before the first paint.
+        let paper = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0x1c / 255, green: 0x1a / 255, blue: 0x23 / 255, alpha: 1)
+                : UIColor(red: 0xfa / 255, green: 0xf8 / 255, blue: 0xf4 / 255, alpha: 1)
+        }
+        view.backgroundColor = paper
+        // Transparent until the page paints, so the native placeholder behind it
+        // shows through. Starting the web content process alone takes a second
+        // or more on a cold launch, and nothing the page does can paint sooner.
+        self.webView.isOpaque = false
+        self.webView.backgroundColor = .clear
+        self.webView.scrollView.backgroundColor = .clear
+        setUpLaunchPlaceholder()
         self.webView.scrollView.isScrollEnabled = true
         setUpExtensionBanner()
         NotificationCenter.default.addObserver(
@@ -173,6 +198,72 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         NSLog("[Intention] webView didFailProvisionalNavigation: %@", String(describing: error))
+    }
+
+#if os(iOS)
+    private static var bundledFontsRegistered = false
+
+    private static func registerBundledFonts() {
+        guard !bundledFontsRegistered else { return }
+        bundledFontsRegistered = true
+        let urls = Bundle.main.urls(forResourcesWithExtension: "woff2", subdirectory: "fonts") ?? []
+        guard !urls.isEmpty else { return }
+        CTFontManagerRegisterFontURLs(urls as CFArray, .process, true, nil)
+    }
+
+    private func setUpLaunchPlaceholder() {
+        let ink = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0xf5 / 255, green: 0xf4 / 255, blue: 0xf7 / 255, alpha: 1)
+                : UIColor(red: 0x44 / 255, green: 0x40 / 255, blue: 0x54 / 255, alpha: 1)
+        }
+        let muted = UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0xb6 / 255, green: 0xb3 / 255, blue: 0xbf / 255, alpha: 1)
+                : UIColor(red: 0x6e / 255, green: 0x6b / 255, blue: 0x7c / 255, alpha: 1)
+        }
+        // Arvo, the page's own face, so nothing changes typeface when the page
+        // takes over. The app bundle already carries the web fonts; CoreText
+        // reads WOFF2 directly.
+        Self.registerBundledFonts()
+
+        let name = UILabel()
+        name.text = "Intention"
+        name.textColor = ink
+        name.font = UIFont(name: "Arvo-Bold", size: 28) ?? .boldSystemFont(ofSize: 28)
+
+        let status = UILabel()
+        status.text = "Getting ready\u{2026}"
+        status.textColor = muted
+        status.font = UIFont(name: "Arvo", size: 14) ?? .systemFont(ofSize: 14)
+
+        let stack = UIStackView(arrangedSubviews: [name, status])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isAccessibilityElement = true
+        stack.accessibilityLabel = "Intention, getting ready"
+        view.insertSubview(stack, belowSubview: webView)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+        launchPlaceholder = stack
+    }
+#endif
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+#if os(iOS)
+        // didFinish can land a frame or two before WebKit's first paint, and
+        // taking the placeholder away then left exactly the blank frame it is
+        // there to prevent. The page's opaque ground covers it once painted, so
+        // it goes a little later, as tidying rather than as a hand-over.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.launchPlaceholder?.removeFromSuperview()
+            self?.launchPlaceholder = nil
+        }
+#endif
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -312,9 +403,48 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             // Nothing native waits on this on the Mac; AppDelegate's
             // disabled-extension notice keys off the real switch instead.
             invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "loginItem":
+            invokeBridgeCallback(callbackId, result: loginItemState())
+        case "setLoginItem":
+            let enabled = (dict["enabled"] as? Bool) ?? false
+            if #available(macOS 13.0, *) {
+                do {
+                    if enabled {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+                } catch {
+                    // Registering an app that is already registered (or
+                    // unregistering one that isn't) throws too. The state read
+                    // back below is the answer either way.
+                    NSLog("[Intention] login item change failed: %@", String(describing: error))
+                }
+            }
+            invokeBridgeCallback(callbackId, result: loginItemState())
+        case "openLoginItemsSettings":
+            if #available(macOS 13.0, *) {
+                SMAppService.openSystemSettingsLoginItems()
+            }
+            invokeBridgeCallback(callbackId, result: ["ok": true])
         default:
             invokeBridgeCallback(callbackId, result: ["error": "unknown extension action: \(action)"])
         }
+    }
+
+    // "Open Intention at login", as the page's switch needs it. `requiresApproval`
+    // is macOS holding a registration until the user allows it under System
+    // Settings → General → Login Items — on, from our side, but not yet real.
+    private func loginItemState() -> [String: Any] {
+        guard #available(macOS 13.0, *) else {
+            return ["available": false, "enabled": false, "requiresApproval": false]
+        }
+        let status = SMAppService.mainApp.status
+        return [
+            "available": true,
+            "enabled": status == .enabled,
+            "requiresApproval": status == .requiresApproval
+        ]
     }
 #endif
 
@@ -329,14 +459,22 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     private func handleExtensionMessage(action: String, dict: [String: Any], callbackId: String) {
         switch action {
         case "status":
-            let seenAt = AppGroupStorage.extensionLastSeenAt()
-            let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
-            invokeBridgeCallback(callbackId, result: [
-                "active": isFresh,
-                "platform": "ios",
-                "settingsPath": safariExtensionSettingsPath,
-                "lastSeenAt": seenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
-            ])
+            readExtensionEnabled { [weak self] enabled in
+                guard let self else { return }
+                let seenAt = AppGroupStorage.extensionLastSeenAt()
+                let isFresh = seenAt.map { Date().timeIntervalSince($0) < self.extensionHeartbeatFreshnessWindow } ?? false
+                self.invokeBridgeCallback(callbackId, result: [
+                    "active": enabled ?? isFresh,
+                    "platform": "ios",
+                    // iOS 26.2 can read the switch itself and open Safari's
+                    // Extensions page directly; before that the wizard has to
+                    // spell out the path and wait for Safari to run it.
+                    "readsSwitch": enabled != nil,
+                    "opensExtensionSettings": self.canOpenExtensionSettings,
+                    "settingsPath": self.safariExtensionSettingsPath,
+                    "lastSeenAt": seenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
+                ])
+            }
         case "openSafari":
             openSafari()
             invokeBridgeCallback(callbackId, result: ["ok": true])
@@ -445,7 +583,9 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.text = "Intention's Safari extension isn't active yet, so blocked websites won't stop you.\n1. Go to \(safariExtensionSettingsPath) and turn on Intention Safari Extension.\n2. Open Safari and load any page once to activate it."
+        label.text = canOpenExtensionSettings
+            ? "Intention's Safari extension is off, so blocked websites won't stop you. Tap Turn On, then switch on Intention and allow it on every website."
+            : "Intention's Safari extension isn't active yet, so blocked websites won't stop you.\n1. Go to \(safariExtensionSettingsPath) and turn on Intention Safari Extension.\n2. Open Safari and load any page once to activate it."
         label.textColor = UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)
         label.numberOfLines = 0
         label.font = .systemFont(ofSize: 13)
@@ -465,7 +605,9 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             return button
         }
 
-        let safariButton = filledButton("Open Safari", action: #selector(openSafari))
+        let safariButton = canOpenExtensionSettings
+            ? filledButton("Turn On", action: #selector(openSettings))
+            : filledButton("Open Safari", action: #selector(openSafari))
 
         var dismissConfig = UIButton.Configuration.plain()
         var dismissTitleContainer = AttributeContainer()
@@ -510,10 +652,31 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     }
 
     @objc private func updateExtensionBanner() {
-        let seenAt = AppGroupStorage.extensionLastSeenAt()
-        let isFresh = seenAt.map { Date().timeIntervalSince($0) < extensionHeartbeatFreshnessWindow } ?? false
-        extensionBanner.isHidden = isFresh || extensionBannerDismissed || !setupComplete
-        view.setNeedsLayout()
+        readExtensionEnabled { [weak self] enabled in
+            guard let self else { return }
+            let seenAt = AppGroupStorage.extensionLastSeenAt()
+            let isFresh = seenAt.map { Date().timeIntervalSince($0) < self.extensionHeartbeatFreshnessWindow } ?? false
+            self.extensionBanner.isHidden = (enabled ?? isFresh) || self.extensionBannerDismissed || !self.setupComplete
+            self.view.setNeedsLayout()
+        }
+    }
+
+    // iOS 26.2+: Safari's real on/off switch for the extension. nil below that,
+    // or when Safari can't answer, and callers fall back to the heartbeat.
+    private func readExtensionEnabled(_ completion: @escaping (Bool?) -> Void) {
+        guard #available(iOS 26.2, *) else {
+            completion(nil)
+            return
+        }
+        SFSafariExtensionManager.getStateOfExtension(withIdentifier: extensionBundleIdentifier) { state, error in
+            let enabled: Bool? = (error == nil) ? state?.isEnabled : nil
+            DispatchQueue.main.async { completion(enabled) }
+        }
+    }
+
+    private var canOpenExtensionSettings: Bool {
+        if #available(iOS 26.2, *) { return true }
+        return false
     }
 
     // Keep the options page readable while the banner is up: push the web
@@ -531,14 +694,25 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         updateExtensionBanner()
     }
 
-    // There's no public URL scheme into the Safari Extensions settings page
-    // specifically, but openSettingsURLString does drop the user into the
-    // Settings app itself (on this app's own page) rather than leaving them to
-    // find it from the home screen — real help even though it can't land on
-    // the exact screen the wizard describes.
+    // iOS 26.2 opens Safari's Extensions settings with Intention's row, which
+    // is the screen the wizard asks for. Before that there is no public way
+    // there, so this falls back to the Settings app on this app's own page, as
+    // it does if the direct call fails.
     @objc private func openSettings() {
-        guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(settingsURL)
+        let openAppSettings = {
+            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+            UIApplication.shared.open(settingsURL)
+        }
+        guard #available(iOS 26.2, *) else {
+            openAppSettings()
+            return
+        }
+        SFSafariSettings.openExtensionsSettings(forIdentifiers: [extensionBundleIdentifier]) { error in
+            if let error {
+                NSLog("[Intention] couldn't open Safari extension settings: %@", String(describing: error))
+                openAppSettings()
+            }
+        }
     }
 
     @objc private func openSafari() {

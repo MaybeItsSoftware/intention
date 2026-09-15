@@ -1146,6 +1146,45 @@ describe('allowed accounts', () => {
   });
 });
 
+describe('Reddit subreddit and post allowlists', () => {
+  const POST = 'https://www.reddit.com/r/rust/comments/abc123/why_is_it_fast/';
+  it('accepts a subreddit name or link and a post link, with their identities normalized', () => {
+    expect(P.normalizeSubredditInput('r/Rust')).toBe('rust');
+    expect(P.normalizeSubredditInput('https://old.reddit.com/r/Rust/')).toBe('rust');
+    expect(P.normalizeRedditPostInput(POST)).toBe('rust:abc123');
+    expect(P.normalizeRedditPostInput('reddit.com/r/rust/comments/ABC123')).toBe('rust:abc123');
+  });
+
+  it('opens the whole allowed subreddit, including its posts, on Reddit hosts only', () => {
+    const entry = { allowedSubreddits: ['rust'] };
+    expect(P.resolvePartVerdict(entry, POST).gated).toBe(false);
+    expect(P.resolvePartVerdict(entry, 'https://old.reddit.com/r/rust/').gated).toBe(false);
+    expect(P.resolvePartVerdict(entry, 'https://www.reddit.com/r/cats/').gated).toBe(true);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com.evil.test/r/rust/').gated).toBe(true);
+  });
+
+  it('opens one post without opening the subreddit or another post', () => {
+    const entry = { allowedRedditPosts: ['rust:abc123'] };
+    expect(P.resolvePartVerdict(entry, POST).gated).toBe(false);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com/r/rust/comments/abc123/why_is_it_fast/?sort=new').gated).toBe(false);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com/r/rust/').gated).toBe(true);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com/r/rust/comments/def456/').gated).toBe(true);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com/r/cats/comments/abc123/').gated).toBe(true);
+    expect(P.resolvePartVerdict(entry, 'https://reddit.com/comments/abc123/').gated).toBe(true);
+  });
+
+  it('rejects broad feeds and malformed lists, and carries the lists into the page watcher', () => {
+    expect(P.normalizeSubredditInput('r/all')).toBe(null);
+    expect(P.normalizeSubredditInput('https://www.reddit.com/r/popular/')).toBe(null);
+    expect(P.normalizeRedditPostInput('https://reddit.com/r/rust/')).toBe(null);
+    expect(P.normalizeRedditPostInput('https://reddit.com.evil.test/r/rust/comments/abc123')).toBe(null);
+    const entry = { allowedSubreddits: ['RUST', 'rust', 'all', '../cats'], allowedRedditPosts: ['RUST:ABC123', 'cats:bad/id'] };
+    expect(P.pageRuleFor(entry)).toEqual({ scope: 'all', parts: [], allowedSubreddits: ['rust'], allowedRedditPosts: ['rust:abc123'] });
+    expect(P.hasPageRule(entry)).toBe(true);
+    expect(P.hasPartRule(entry)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 5. No copy has come back, and no dependency has crept in
 // ---------------------------------------------------------------------------

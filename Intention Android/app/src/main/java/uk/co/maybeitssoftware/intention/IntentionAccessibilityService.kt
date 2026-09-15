@@ -2,8 +2,11 @@ package uk.co.maybeitssoftware.intention
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioManager
+import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -157,6 +160,18 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val expiryRecheck = Runnable { recheckForeground() }
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                ForegroundPass.sync(applicationContext, null)
+                SessionOverlay.hide(applicationContext)
+                handler.removeCallbacks(expiryRecheck)
+            } else if (intent.action == Intent.ACTION_SCREEN_ON) {
+                recheckForeground()
+            }
+        }
+    }
+    private var screenReceiverRegistered = false
     private var lastForegroundPackage: String? = null
     private var lastPipPauseAt = 0L
     // Which blocked packages have already eaten their one pause for the
@@ -169,11 +184,23 @@ class IntentionAccessibilityService : AccessibilityService() {
         // A pass can outlive this service — a reboot, an app update, the system
         // reclaiming the process — so put its timer back rather than waiting
         // for the next app switch to notice.
-        SessionOverlay.sync(applicationContext)
+        if (!screenReceiverRegistered) {
+            registerReceiver(screenReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            })
+            screenReceiverRegistered = true
+        }
+        val root = rootInActiveWindow
+        val target = foregroundTarget(root?.packageName?.toString(), root)
+        ForegroundPass.sync(applicationContext, target)
+        SessionOverlay.sync(applicationContext, target)
     }
 
     override fun onDestroy() {
         if (instance == this) instance = null
+        unregisterScreenReceiver()
+        ForegroundPass.sync(applicationContext, null)
         handler.removeCallbacks(expiryRecheck)
         // The pass timer is a window this service added to the WindowManager,
         // so it does not go away with the service: left behind it would sit on
@@ -185,8 +212,17 @@ class IntentionAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        unregisterScreenReceiver()
+        ForegroundPass.sync(applicationContext, null)
         SessionOverlay.hide(applicationContext)
         return super.onUnbind(intent)
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (screenReceiverRegistered) {
+            unregisterReceiver(screenReceiver)
+            screenReceiverRegistered = false
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -202,14 +238,14 @@ class IntentionAccessibilityService : AccessibilityService() {
 
         val packageName = event.packageName?.toString() ?: return
 
-        // Whatever just came to the front, the pass timer has to be right about
-        // it — including when that is one of our own screens, which is the one
-        // case it must NOT float over (the coach is a full-screen block; a
-        // timer on top of it would be reporting a session that is over). So
-        // this sits above the early return below, not below it.
-        if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            SessionOverlay.sync(applicationContext, overOwnUi = packageName == this.packageName)
-        }
+        // Update the pass before checking it, and remove its floating window
+        // as soon as a different app comes to the foreground.
+        val activeRoot = rootInActiveWindow ?: getRootFromEvent(event)
+        val activePackage = activeRoot?.packageName?.toString() ?: packageName
+        val target = foregroundTarget(activePackage, activeRoot)
+        ForegroundPass.sync(applicationContext, target)
+        SessionOverlay.sync(applicationContext, target)
+        if (target == null) handler.removeCallbacks(expiryRecheck)
 
         // Skip our own app packages
         if (packageName == this.packageName) return
@@ -314,10 +350,10 @@ class IntentionAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         val lastCheck = lastContentCheckAt[packageName] ?: 0L
         if (now - lastCheck < CONTENT_CHECK_THROTTLE_MS) return
-        lastContentCheckAt[packageName] = now
 
         val root = rootInActiveWindow ?: getRootFromEvent(event) ?: return
         val urlText = findBrowserUrlText(root, packageName, urlBarIds) ?: return
+        lastContentCheckAt[packageName] = now
         if (isBlankPage(urlText)) {
             onBrowserLeftBlockedSite(packageName)
             return
@@ -401,17 +437,19 @@ class IntentionAccessibilityService : AccessibilityService() {
     // the next app switch or navigation.
     fun recheckForeground() {
         handler.removeCallbacks(expiryRecheck)
-        // Hosts were deduped against lastSeenHost while the session was
-        // active; clear so the next content event re-evaluates them.
-        lastSeenHost.clear()
-
         val root = rootInActiveWindow
         val foreground = root?.packageName?.toString() ?: lastForegroundPackage
         // Expiry is the pass timer's most important moment. This runs when a
         // pass runs out — from the alarm or from the in-process re-check — and
         // again once one has been ended early, and the badge has to go in both
         // cases; a live pass that is merely still running re-renders instead.
-        SessionOverlay.sync(applicationContext, overOwnUi = foreground == this.packageName)
+        val target = foregroundTarget(foreground, root)
+        // Hosts were deduped while the pass was live; an expiry needs a fresh
+        // check, but first retain the loaded host for address-bar edit mode.
+        lastSeenHost.clear()
+        ForegroundPass.sync(applicationContext, target)
+        SessionOverlay.sync(applicationContext, target)
+        if (target != null) sessionExpiresAt(target)?.let { scheduleExpiryRecheck(it) }
 
         val packageName = foreground ?: return
         if (packageName == this.packageName) return
@@ -476,14 +514,35 @@ class IntentionAccessibilityService : AccessibilityService() {
         handler.postDelayed(expiryRecheck, delay)
     }
 
+    private fun foregroundTarget(packageName: String?, root: AccessibilityNodeInfo?): String? {
+        if (packageName == null || packageName == this.packageName) return null
+        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!power.isInteractive) return null
+        if (isAppBlocked(packageName)) return packageName
+        val urlIds = BROWSER_URL_BAR_IDS[packageName] ?: return null
+        val url = root?.let { findBrowserUrlText(it, packageName, urlIds) }
+        // Editing an address does not change the loaded page. Keep its pass
+        // until a committed URL appears or the browser leaves the foreground.
+        val host = if (url == null && lastForegroundPackage == packageName) {
+            lastSeenHost[packageName]
+        } else url?.let { extractHost(it) }
+        return host?.let { findBlockedDomain(it) }
+    }
+
     // Raw URL-bar text, or null when no URL bar could be read at all (the
     // toolbar is mid-animation, hidden while scrolling, a browser update
     // renamed the view ID…). An empty string is not the same thing: it means
     // the bar is there and showing nothing, i.e. a blank/new tab.
     private fun findBrowserUrlText(root: AccessibilityNodeInfo, packageName: String, urlBarIds: List<String>): String? {
+        val bars = urlBarIds.flatMap { idName ->
+            root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName") ?: emptyList()
+        }
+        // Some browsers expose both a display label and an edit field. Check
+        // every field before taking text from either one, so autocomplete in
+        // the second field cannot be mistaken for a loaded URL in the first.
+        if (bars.any { it.isFocused && it.isEditable }) return null
         var sawEmptyBar = false
-        for (idName in urlBarIds) {
-            val node = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idName")?.firstOrNull() ?: continue
+        for (node in bars) {
             val text = node.text?.toString()
             if (!text.isNullOrBlank()) return text
             sawEmptyBar = true
@@ -592,7 +651,13 @@ class IntentionAccessibilityService : AccessibilityService() {
                 if (domain == key) {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
-                    val expirationTime = startTime + (intervalMinutes * 60 * 1000)
+                    val paused = session.optLong("pausedDurationMs", 0L)
+                    val pausedAt = session.optLong("pausedAt", 0L)
+                    val foregroundExpiry = PassClock.expiresAt(startTime, intervalMinutes, paused) +
+                        (if (pausedAt > 0L) (System.currentTimeMillis() - pausedAt).coerceAtLeast(0L) else 0L)
+                    val wallExpiresAt = session.optLong("wallExpiresAt", 0L)
+                    val expirationTime = if (wallExpiresAt > 0L) minOf(foregroundExpiry, wallExpiresAt)
+                        else foregroundExpiry
                     if (expirationTime > (latest ?: 0L)) {
                         latest = expirationTime
                     }

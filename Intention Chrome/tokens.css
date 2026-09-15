@@ -128,3 +128,12 @@
     --scrim: rgba(0, 0, 0, 0.6);
   }
 }
+
+/* The Mac app is a window, not a web page: WebKit's rubber-band bounce at the
+   top and bottom of the scroll reads as a browser showing through. The class
+   is set by the app's bridge (ios-bridge.js), so a browser tab keeps its
+   ordinary behaviour and the iPhone app keeps the bounce iOS users expect. */
+html.platform-mac,
+html.platform-mac body {
+  overscroll-behavior: none;
+}

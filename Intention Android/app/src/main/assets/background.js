@@ -493,8 +493,24 @@ function readSession(activeSessions, tabId, domain, { live = true } = {}) {
 // where the shields re-arm natively and no alarm ever fires).
 function activeSession(session) {
   if (!session || session.endedAt) return null;
-  const expiresAt = session.startTime + (session.intervalMinutes * 60000);
-  return Date.now() < expiresAt ? session : null;
+  const now = Date.now();
+  return sessionElapsedMs(session, now) < Number(session.intervalMinutes) * 60000 &&
+    (!session.wallExpiresAt || now < Number(session.wallExpiresAt)) ? session : null;
+}
+
+// Android records time away from a native target. Sessions without these
+// fields retain their original wall-clock behavior on browsers and iOS.
+function sessionElapsedMs(session, now = Date.now()) {
+  const effectiveNow = session.pausedAt ? Math.min(now, Number(session.pausedAt)) : now;
+  return Math.max(0, effectiveNow - Number(session.startTime) -
+    Math.max(0, Number(session.pausedDurationMs) || 0));
+}
+
+function sessionExpiryTime(session) {
+  const foregroundExpiry = session.pausedAt ? Infinity :
+    Number(session.startTime) + Number(session.intervalMinutes) * 60000 +
+      Math.max(0, Number(session.pausedDurationMs) || 0);
+  return session.wallExpiresAt ? Math.min(foregroundExpiry, Number(session.wallExpiresAt)) : foregroundExpiry;
 }
 
 // Whether this session's minutes still need recording. Distinct from
@@ -867,6 +883,13 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     // accessibility service), so bank the minutes now — they'd be lost if the
     // user never came back — but leave the session in place, marked ended, so
     // the check-in prompt can still quote what they said they came for.
+    const { activeSessions = {} } = await getStorage(['activeSessions']);
+    const nativeSession = activeSessions[sessionKey];
+    if (activeSession(nativeSession)) {
+      const expiry = sessionExpiryTime(nativeSession);
+      if (Number.isFinite(expiry)) chrome.alarms.create(`checkin-${sessionKey}`, { when: expiry });
+      return;
+    }
     await bankExpiredSession(sessionKey);
     return;
   }
@@ -919,9 +942,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 async function bankExpiredSession(sessionKey) {
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const session = activeSessions[sessionKey];
-  if (!session || isBanked(session)) return;
-  const elapsed = (Date.now() - session.startTime) / 60000;
-  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes), 'ran_out');
+  if (!session || isBanked(session) || activeSession(session)) return;
+  const elapsed = sessionElapsedMs(session) / 60000;
+  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes), 'ran_out', session.startTime);
   await mutateStorage('activeSessions', (sessions) => {
     if (sessions[sessionKey]) sessions[sessionKey].endedAt = Date.now();
   });
@@ -982,9 +1005,9 @@ async function migrateSessionKeys() {
   });
   for (const [oldKey, newKey, session] of renames) {
     chrome.alarms.clear(`checkin-${oldKey}`);
-    if (!isBanked(session)) {
+    if (!isBanked(session) && Number.isFinite(sessionExpiryTime(session))) {
       chrome.alarms.create(`checkin-${newKey}`, {
-        when: session.startTime + session.intervalMinutes * 60000
+        when: sessionExpiryTime(session)
       });
     }
   }
@@ -1000,13 +1023,17 @@ async function reconcileSessions() {
   const rearmed = [];
   for (const [sessionKey, session] of Object.entries(activeSessions)) {
     if (!session || isBanked(session)) continue;
-    const expiresAt = session.startTime + (session.intervalMinutes * 60000);
+    const expiresAt = sessionExpiryTime(session);
     if (Date.now() >= expiresAt) {
       await bankExpiredSession(sessionKey);
       banked.push(sessionKey);
     } else {
-      chrome.alarms.create(`checkin-${sessionKey}`, { when: expiresAt });
-      rearmed.push(sessionKey);
+      if (Number.isFinite(expiresAt)) {
+        chrome.alarms.create(`checkin-${sessionKey}`, { when: expiresAt });
+        rearmed.push(sessionKey);
+      } else {
+        chrome.alarms.clear(`checkin-${sessionKey}`);
+      }
     }
   }
   if (banked.length || rearmed.length) {
@@ -1026,8 +1053,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Classifies who sent a runtime message. Three shapes exist in practice:
 // extension pages (options/coaching) carry a sender.url under our own origin
-// (and on Safari no sender.tab); the native hosts (Android BackgroundJsHelper,
-// iOS BackgroundJSHost) deliver a literally empty sender; everything else is a
+// (and on Safari no sender.tab); native hosts carry no tab or URL (Android
+// marks its platform so pass time can follow foreground use); everything else is a
 // content script running inside an arbitrary web page and gets no privilege.
 function senderTrust(sender) {
   if (sender?.url && sender.url.startsWith(chrome.runtime.getURL(''))) return 'extension';
@@ -1158,6 +1185,7 @@ async function handleMessage(message, sender) {
     case 'chat':
       return handleChat({
         tabId,
+        androidForegroundTime: senderTrust(sender) === 'native' && sender.nativePlatform === 'android',
         mode: message.mode,
         domain: message.domain,
         isApp: message.isApp,
@@ -1230,7 +1258,9 @@ async function handleMessage(message, sender) {
           !hostMatchesDomain(senderPageHost(sender), message.domain)) {
         return { denied: 'not available' };
       }
-      return intentionGrant({ tabId, domain: message.domain, isApp: message.isApp });
+      return intentionGrant({ tabId, domain: message.domain, isApp: message.isApp,
+        reason: message.reason, minutes: message.minutes,
+        androidForegroundTime: senderTrust(sender) === 'native' && sender.nativePlatform === 'android' });
     }
     case 'applySettingChange': {
       // Our own UI asking for a loosening without the coach. It is never
@@ -1687,9 +1717,37 @@ async function getAccess(sender) {
 // yesterday rather than the one it replaced.
 async function getIntention(domain) {
   await applyDuePendingChanges();
-  const stored = await getStorage(['domainLimits', 'appLimits']);
-  const { opens, minutesEach } = resolveIntention(limitEntryFor(domain, stored));
+  const stored = await getStorage(['domainLimits', 'appLimits', 'activeSessions']);
+  const resolved = resolveIntention(limitEntryFor(domain, stored));
   const stats = domain ? await getStatsForDomain(domain) : { grantsToday: 0 };
+  if (resolved.mode === 'dailyTime') {
+    // A live pass has not yet been banked into dailyStats. Reserve its whole
+    // duration while it is live, so parallel tabs cannot each take the same
+    // remaining minutes. Closing one early banks only what was used and
+    // releases the rest for a later visit.
+    const now = Date.now();
+    let liveElapsed = 0, liveReserved = 0;
+    for (const session of Object.values(stored.activeSessions || {})) {
+      if (!session || session.domain !== domain || isBanked(session) ||
+          (session.wallExpiresAt && now >= Number(session.wallExpiresAt))) continue;
+      const elapsed = sessionElapsedMs(session, now) / 60000;
+      const duration = Math.max(0, Number(session.intervalMinutes) || 0);
+      liveElapsed += Math.min(elapsed, duration);
+      liveReserved += duration;
+    }
+    const display = await getDisplayStats();
+    const banked = Math.max(0, Number(display.dailyStats?.[dateKey()]?.[domain]?.minutes) || 0);
+    return {
+      ...resolved,
+      minutesUsed: Math.min(resolved.dailyMinutes, Math.ceil(banked + liveElapsed)),
+      minutesLeft: Math.max(0, Math.floor(resolved.dailyMinutes - banked - liveReserved)),
+      visitMinutesMax: Math.max(0, Math.min(
+        Math.floor(resolved.dailyMinutes - banked - liveReserved),
+        Math.floor((nextDayStart(now) - now) / 60000)
+      ))
+    };
+  }
+  const { opens, minutesEach } = resolved;
   const opensUsed = Math.min(opens, Math.max(0, stats.grantsToday - (stats.negotiatedToday || 0)));
   return { opens, minutesEach, opensUsed, opensLeft: Math.max(0, opens - opensUsed) };
 }
@@ -1770,7 +1828,7 @@ function sanitizeLimitsPartRules(limits) {
   const out = {};
   for (const [target, entry] of Object.entries(limits)) {
     if (!entry || typeof entry !== 'object') { out[target] = entry; continue; }
-    const withAccounts = sanitizeLimitsAllowedAccounts(entry);
+    const withAccounts = sanitizeLimitsRedditAllow(sanitizeLimitsAllowedAccounts(entry));
     if (!('scope' in withAccounts) && !('parts' in withAccounts)) { out[target] = withAccounts; continue; }
     const clean = sanitizePartRule(withAccounts);
     const next = { ...withAccounts };
@@ -1798,6 +1856,18 @@ function sanitizeLimitsAllowedAccounts(entry) {
   const next = { ...entry };
   if (clean.length) next.allowedAccounts = clean;
   else delete next.allowedAccounts;
+  return next;
+}
+
+function sanitizeLimitsRedditAllow(entry) {
+  if (!('allowedSubreddits' in entry) && !('allowedRedditPosts' in entry)) return entry;
+  const next = { ...entry };
+  const subs = sanitizeAllowedSubreddits(entry.allowedSubreddits);
+  const posts = sanitizeAllowedRedditPosts(entry.allowedRedditPosts);
+  if (subs.length) next.allowedSubreddits = subs;
+  else delete next.allowedSubreddits;
+  if (posts.length) next.allowedRedditPosts = posts;
+  else delete next.allowedRedditPosts;
   return next;
 }
 
@@ -1865,7 +1935,8 @@ function holdPartRuleDirection(next, stored) {
 async function limitsForWrite(key, limits) {
   const cleaned = sanitizeLimitsPartRules(limits);
   const stored = (await getStorage([key]))[key];
-  return holdAllowedAccountsDirection(holdIntentionDirection(holdPartRuleDirection(cleaned, stored), stored), stored);
+  return holdRedditAllowDirection(holdAllowedAccountsDirection(
+    holdIntentionDirection(holdPartRuleDirection(cleaned, stored), stored), stored), stored);
 }
 
 // The allowlist's direction guard. Taking an account off the list is a
@@ -1888,6 +1959,36 @@ function holdAllowedAccountsDirection(next, stored) {
     const held = { ...entry };
     if (kept.length) held.allowedAccounts = kept;
     else delete held.allowedAccounts;
+    out[target] = held;
+  }
+  return out;
+}
+
+// A direct limits-map save may remove Reddit allowances, but additions must
+// come through the delayed settings change or the coach-approved path.
+function holdRedditAllowDirection(next, stored) {
+  if (!next || typeof next !== 'object') return next;
+  const before = stored && typeof stored === 'object' ? stored : {};
+  const out = {};
+  for (const [target, entry] of Object.entries(next)) {
+    if (!entry || typeof entry !== 'object') { out[target] = entry; continue; }
+    const prior = before[target] && typeof before[target] === 'object' ? before[target] : {};
+    const wasSubs = sanitizeAllowedSubreddits(prior.allowedSubreddits);
+    const wasPosts = sanitizeAllowedRedditPosts(prior.allowedRedditPosts);
+    const wantSubs = sanitizeAllowedSubreddits(entry.allowedSubreddits);
+    const wantPosts = sanitizeAllowedRedditPosts(entry.allowedRedditPosts);
+    if (!redditAllowEditIsLoosening(
+      { subreddits: wasSubs, posts: wasPosts }, { subreddits: wantSubs, posts: wantPosts })) {
+      out[target] = entry;
+      continue;
+    }
+    const held = { ...entry };
+    const subs = wantSubs.filter(x => wasSubs.includes(x));
+    const posts = wantPosts.filter(x => wasPosts.includes(x));
+    if (subs.length) held.allowedSubreddits = subs;
+    else delete held.allowedSubreddits;
+    if (posts.length) held.allowedRedditPosts = posts;
+    else delete held.allowedRedditPosts;
     out[target] = held;
   }
   return out;
@@ -1997,6 +2098,14 @@ function holdIntentionDirection(next, stored) {
     }
     const was = resolveIntention(prior);
     const want = resolveIntention(entry);
+    if (was.mode === 'dailyTime' || want.mode === 'dailyTime') {
+      out[target] = { ...entry,
+        intentionMode: prior.intentionMode || 'opens',
+        dailyTimeMinutes: prior.dailyTimeMinutes,
+        maxGrants: prior.maxGrants,
+        passMinutes: prior.passMinutes };
+      continue;
+    }
     out[target] = {
       ...entry,
       maxGrants: Math.min(was.opens, want.opens),
@@ -2223,7 +2332,7 @@ function describePartContext(entry, url) {
   }
 }
 
-async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext }) {
+async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, changeType, currentValue, newValue, pageContext, androidForegroundTime }) {
   const { userContext, contextProjects, contextReasons, coachInstructions, coachObservations = [], serviceReasons = {} } = await getStorage(['userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'coachObservations', 'serviceReasons']);
   // What the user said this particular service is for, written during setup
   // when they were nowhere near it. One lookup covers both gates: `domain` is
@@ -2317,6 +2426,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       grantsToday: stats.grantsToday,
       grantsCap: limits.opens,
       minutesEach: limits.minutesEach,
+      dailyTimeMinutes: limits.mode === 'dailyTime' ? limits.dailyMinutes : null,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekAll: stats.minutesWeekAll,
@@ -2356,6 +2466,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       grantsToday: stats.grantsToday,
       grantsCap: limits.opens,
       minutesEach: limits.minutesEach,
+      dailyTimeMinutes: limits.mode === 'dailyTime' ? limits.dailyMinutes : null,
       minutesTodaySite: stats.minutesToday,
       minutesTodayAll: stats.minutesTodayAll,
       minutesWeekSite: stats.minutesWeek,
@@ -2384,6 +2495,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
     // An allowlist's values are lists of handles, and the new one carries only
     // the additions — so the coach reads the list as it would stand after.
     const isAccountChange = changeType === 'allow_accounts';
+    const isRedditChange = changeType === 'allow_reddit';
     // The leaving conversation is about the install, not about a target, so it
     // is the one settings gate that needs the aggregate picture: how long they
     // have been at this and how much is on their list. Read only for the two
@@ -2415,12 +2527,18 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       changeType,
       currentValue: isScopeChange ? describeScopeForHuman(currentValue, displayName)
         : isIntentionChange ? describeIntentionForHuman(currentValue)
-          : isAccountChange ? describeAllowedAccountsForHuman(currentValue, displayName) : currentValue,
+          : isAccountChange ? describeAllowedAccountsForHuman(currentValue, displayName)
+            : isRedditChange ? describeRedditAllowForHuman(currentValue) : currentValue,
       newValue: isScopeChange ? describeScopeForHuman(newValue, displayName)
         : isIntentionChange ? describeIntentionForHuman(newValue)
           : isAccountChange ? describeAllowedAccountsForHuman(
             sanitizeAllowedAccounts(currentValue).concat(sanitizeAllowedAccounts(newValue)), displayName)
-            : newValue,
+            : isRedditChange ? describeRedditAllowForHuman({
+              subreddits: sanitizeAllowedSubreddits((currentValue && currentValue.subreddits) || [])
+                .concat(sanitizeAllowedSubreddits(newValue && newValue.subreddits)),
+              posts: sanitizeAllowedRedditPosts((currentValue && currentValue.posts) || [])
+                .concat(sanitizeAllowedRedditPosts(newValue && newValue.posts))
+            }) : newValue,
       userContext,
       contextProjects,
       contextReasons,
@@ -2539,7 +2657,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           : null;
         if (wantsPage && !scope) {
           systemNote = 'There was no single page to pin that to, so your pass covers the whole site for the full time.';
-          correction = 'Your grant_access call asked for scope "page", but Intention could not identify a single page to scope it to \u2014 the destination is a feed, an app, or its address was not recorded. The pass was granted for the WHOLE SITE instead. Tell the user that, honestly and in your own words.';
+          correction = 'Your grant_access call asked for scope "page", but Intention could not identify a single page to scope it to: the destination is a feed, an app, or its address was not recorded. The pass was granted for the WHOLE SITE instead. Tell the user that, honestly and in your own words.';
         }
 
         // The coach is the way PAST the user's intention, never a way around
@@ -2549,8 +2667,13 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         // already free is the one outcome nobody wants. Refused, and the
         // coach is told why.
         if (intention.opensLeft > 0) {
-          systemNote = `You still have ${intention.opensLeft} free ${intention.opensLeft === 1 ? 'open' : 'opens'} today \u2014 use one from the gate instead.`;
+          systemNote = `You still have ${intention.opensLeft} free ${intention.opensLeft === 1 ? 'open' : 'opens'} today. Use one from the gate instead.`;
           correction = `Your grant_access call was NOT applied: the user still has ${intention.opensLeft} of today's intended opens left, which the gate gives them for free. Tell them to use one of those.`;
+          continue;
+        }
+        if (intention.mode === 'dailyTime' && intention.visitMinutesMax > 0) {
+          systemNote = `You still have ${intention.visitMinutesMax} minutes of today's intended time available. Choose a visit length at the gate instead.`;
+          correction = `Your grant_access call was NOT applied: the user still has ${intention.visitMinutesMax} minutes of today's intended time available for a free visit at the gate. Tell them to use that time there.`;
           continue;
         }
 
@@ -2566,7 +2689,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           // clamped-minutes one is the more surprising of the two, and a
           // single correction turn is the whole budget.
           correction = `You asked for ${requested} minutes, but only ${minutes} were available under ${STRICT_PHASE_CLAMP_CAUSE}. The pass was granted for ${minutes} minutes.`;
-          systemNote = `Extra time comes in passes of up to ${strictCap} minutes \u2014 your pass is ${minutes} minutes.`;
+          systemNote = `Extra time comes in passes of up to ${strictCap} minutes, and your pass is ${minutes} minutes.`;
         }
 
         const reason = String(input.reason || '').slice(0, 240);
@@ -2574,7 +2697,8 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
         // feeds stats.grantsToday and reasonsToday, so an inlined version that
         // skips it silently disables both the daily cap checked above and the
         // escalating skepticism the check-in prompt is built on.
-        grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope, negotiated: true });
+        grantedSession = await grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
+          scope, negotiated: true, androidForegroundTime });
       } else if (tc.name === 'note_observation' && (mode === 'gate' || mode === 'checkin')) {
         // The coach's cross-day memory. Capped, deduplicated, and readable in
         // settings — a bounded notepad, not a dossier.
@@ -2601,7 +2725,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       // grantSession runs) must be cleared too, or the honesty turn would
       // assert a grant that never actually landed.
       correction = '';
-      systemNote = 'Something went wrong applying that \u2014 try describing what you want again.';
+      systemNote = 'Something went wrong applying that. Try describing what you want again.';
     }
   }
 
@@ -2618,29 +2742,30 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       // page only" and the re-gate that follows read as the tool going wrong
       // rather than as the thing they just agreed to.
       acceptanceFallback = grantedSession.scope
-        ? `Okay \u2014 you've got ${mins} minute${mins === 1 ? '' : 's'} on that page${r}. Leave it and the block comes straight back, and you keep the minutes you don't use.`
-        : `Okay \u2014 you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
+        ? `Okay, you've got ${mins} minute${mins === 1 ? '' : 's'} on that page${r}. Leave it and the block comes straight back, and you keep the minutes you don't use.`
+        : `Okay, you've got ${mins} minute${mins === 1 ? '' : 's'}${r}. Make it count; I'll check in when the time's up.`;
     } else if (settingApproved) {
-      if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced \u2014 I've removed ${displayName} from your blocklist.`;
-      else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case \u2014 your new intention for ${displayName} starts now.`;
-      else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') acceptanceFallback = `Okay, that's a fair correction \u2014 I've saved your new wording for ${displayName}.`;
+      if (changeType === 'remove' || changeType === 'remove_app') acceptanceFallback = `Alright, I'm convinced. I've removed ${displayName} from your blocklist.`;
+      else if (changeType === 'increase_limit' || changeType === 'increase_app_limit') acceptanceFallback = `Okay, you've made your case. Your new intention for ${displayName} starts now.`;
+      else if (changeType === 'edit_site_purpose' || changeType === 'edit_site_legitimate') acceptanceFallback = `Okay, that's a fair correction. I've saved your new wording for ${displayName}.`;
       // Named rather than left to the generic line below, because "I've made
       // that change" after a conversation about which SECTIONS stay blocked
       // tells the user nothing about what is now open to them.
-      else if (changeType === 'narrow_block_scope' || changeType === 'narrow_app_block_scope') acceptanceFallback = `Alright \u2014 I've changed which parts of ${displayName} are blocked. The rest is yours.`;
-      else if (changeType === 'allow_accounts') acceptanceFallback = `Alright \u2014 that account stays open on ${displayName} from now on.`;
-      else if (changeType === 'disable_all') acceptanceFallback = `Understood \u2014 I've turned off blocking for now. Be intentional with it.`;
+      else if (changeType === 'narrow_block_scope' || changeType === 'narrow_app_block_scope') acceptanceFallback = `Alright, I've changed which parts of ${displayName} are blocked. The rest is yours.`;
+      else if (changeType === 'allow_accounts') acceptanceFallback = `Alright, that account stays open on ${displayName} from now on.`;
+      else if (changeType === 'allow_reddit') acceptanceFallback = 'Alright, those Reddit pages stay open from now on.';
+      else if (changeType === 'disable_all') acceptanceFallback = `Understood, I've turned off blocking for now. Be intentional with it.`;
       // Two shapes, because approving a removal with a cool-off set does not
       // remove anything — and a farewell line under a screen that still says
       // "22 hours to go" would read as the button having failed.
       else if (changeType === 'uninstall') {
         const delay = formatLeaveDelay(settingApproved.delayMinutes);
         acceptanceFallback = delay
-          ? `Understood. Your ${delay} starts now \u2014 come back when it's up and it'll be one tap. I won't get in your way again before then.`
-          : `Understood. I've stepped out of the way \u2014 go ahead and remove it. Look after yourself.`;
+          ? `Understood. Your ${delay} starts now. Come back when it's up and it'll be one tap. I won't get in your way again before then.`
+          : `Understood. I've stepped out of the way. Go ahead and remove it. Look after yourself.`;
       }
-      else if (changeType === 'decrease_leave_delay') acceptanceFallback = `Alright \u2014 I've shortened the wait on removing Intention.`;
-      else acceptanceFallback = `Okay, I'm convinced \u2014 I've made that change.`;
+      else if (changeType === 'decrease_leave_delay') acceptanceFallback = `Alright, I've shortened the wait on removing Intention.`;
+      else acceptanceFallback = `Okay, I'm convinced. I've made that change.`;
     }
   }
   const firstText = rawText || acceptanceFallback;
@@ -2944,6 +3069,26 @@ async function applySettingChange({ domain, changeType, newValue }) {
     return { changeType, domain, domainLimits: limits, allowedAccounts: merged };
   }
 
+  if (changeType === 'allow_reddit') {
+    if (!domain || !redditSupportedFor(domain)) return null;
+    const addsSubs = sanitizeAllowedSubreddits(newValue && newValue.subreddits);
+    const addsPosts = sanitizeAllowedRedditPosts(newValue && newValue.posts);
+    if (!addsSubs.length && !addsPosts.length) return null;
+    const limits = { ...domainLimits };
+    const entry = { ...(limits[domain] || { maxGrants: INTENTION_DEFAULTS.maxGrants }) };
+    entry.allowedSubreddits = sanitizeAllowedSubreddits(
+      sanitizeAllowedSubreddits(entry.allowedSubreddits).concat(addsSubs));
+    entry.allowedRedditPosts = sanitizeAllowedRedditPosts(
+      sanitizeAllowedRedditPosts(entry.allowedRedditPosts).concat(addsPosts));
+    if (!entry.allowedSubreddits.length) delete entry.allowedSubreddits;
+    if (!entry.allowedRedditPosts.length) delete entry.allowedRedditPosts;
+    limits[domain] = entry;
+    await setStorage({ domainLimits: limits });
+    await syncBlockingRules();
+    return { changeType, domain, domainLimits: limits,
+      allowedSubreddits: entry.allowedSubreddits || [], allowedRedditPosts: entry.allowedRedditPosts || [] };
+  }
+
   // `increase_quick_check` / `increase_app_quick_check` used to be handled
   // here. The quick check is retired, nothing can request either change type
   // any more, and an unrecognised changeType falls through to the null below
@@ -3027,7 +3172,7 @@ async function applySettingChange({ domain, changeType, newValue }) {
 // recordGrant still accepts a { quickCheck } option and tracking.js still
 // keeps that tally — see the note there. Nothing passes it any more: every
 // grant is a normal grant now, so every grant counts against the daily cap.
-async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope, negotiated }) {
+async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason, scope, negotiated, wallExpiresAt, androidForegroundTime }) {
   const grantOptions = {};
   if (scope) grantOptions.scope = 'page';
   if (negotiated) grantOptions.negotiated = true;
@@ -3039,11 +3184,13 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const previous = activeSessions[sessionKey];
   if (previous && !isBanked(previous)) {
-    const elapsed = (Date.now() - previous.startTime) / 60000;
-    await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes), 'extended');
+    const elapsed = sessionElapsedMs(previous) / 60000;
+    await recordSessionMinutes(previous.domain, Math.min(elapsed, previous.intervalMinutes), 'extended', previous.startTime);
   }
 
   const session = { domain, reason, intervalMinutes: minutes, startTime: Date.now() };
+  if (androidForegroundTime && tabId == null) session.pausedAt = session.startTime;
+  if (tabId == null && wallExpiresAt) session.wallExpiresAt = wallExpiresAt;
   // Written ONLY when there is one. Absence is the third state and it is the
   // entire migration story: every session already in storage, every site pass
   // granted after this, and every intentionGrant carry no `scope` key and are
@@ -3054,7 +3201,9 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
   // of which need to. Never write { kind: 'site' }.
   if (scope) session.scope = scope;
   await mutateStorage('activeSessions', (sessions) => { sessions[sessionKey] = session; });
-  chrome.alarms.create(`checkin-${sessionKey}`, { delayInMinutes: minutes });
+  if (Number.isFinite(sessionExpiryTime(session))) {
+    chrome.alarms.create(`checkin-${sessionKey}`, { when: sessionExpiryTime(session) });
+  }
   // Apps have no network rules to allow — the Android accessibility
   // service reads activeSessions directly to let the app through — and
   // neither do the native ports, which have no tab to scope a rule to.
@@ -3067,16 +3216,45 @@ async function grantSession({ sessionKey, tabId, domain, isApp, minutes, reason,
 // One of the day's intended opens: a timed pass of the intention's length,
 // with no conversation and no credit. Same bookkeeping as a negotiated pass —
 // it goes through grantSession — so it counts toward the day the same way.
-async function intentionGrant({ tabId, domain, isApp }) {
+const intentionGrantLocks = new Map();
+
+async function intentionGrant({ tabId, domain, isApp, reason, minutes, androidForegroundTime }) {
+  // Serialize grants for a target. Two tabs can ask while both getIntention
+  // reads are in flight; only the second may see the first one's reservation.
+  const prior = intentionGrantLocks.get(domain) || Promise.resolve();
+  const work = prior.catch(() => {}).then(() => intentionGrantUnlocked({ tabId, domain, isApp,
+    reason, minutes, androidForegroundTime }));
+  intentionGrantLocks.set(domain, work);
+  try { return await work; }
+  finally { if (intentionGrantLocks.get(domain) === work) intentionGrantLocks.delete(domain); }
+}
+
+async function intentionGrantUnlocked({ tabId, domain, isApp, reason, minutes, androidForegroundTime }) {
   const sessionKey = sessionKeyFor(tabId, domain);
   if (!sessionKey) return { denied: 'no session target' };
 
   const intention = await getIntention(domain);
+  const why = typeof reason === 'string' ? reason.trim().slice(0, 500) : '';
+  if (!why) return { denied: 'reason required', intention };
+  if (intention.mode === 'dailyTime') {
+    if (intention.dailyMinutes === 0 || intention.minutesLeft <= 0) return { denied: 'intention spent', intention };
+    const requested = Number(minutes);
+    const untilMidnight = Math.floor((nextDayStart() - Date.now()) / 60000);
+    if (!Number.isInteger(requested) || requested < 1 || requested > intention.minutesLeft || requested > untilMidnight) {
+      return { denied: 'invalid visit duration', intention };
+    }
+    const grantedSession = await grantSession({
+      sessionKey, tabId, domain, isApp, minutes: requested, reason: why,
+      wallExpiresAt: nextDayStart(), androidForegroundTime
+    });
+    return { grantedSession };
+  }
   if (intention.opens === 0) return { denied: 'blocked', intention };
   if (intention.opensLeft <= 0) return { denied: 'intention spent', intention };
 
   const grantedSession = await grantSession({
-    sessionKey, tabId, domain, isApp, minutes: intention.minutesEach, reason: 'intention'
+    sessionKey, tabId, domain, isApp, minutes: intention.minutesEach, reason: why,
+    androidForegroundTime
   });
   return { grantedSession };
 }
@@ -3104,7 +3282,7 @@ const IMMEDIATE_CHANGE_TYPES = ['edit_site_purpose', 'edit_site_legitimate', 'un
 
 const DEFERRED_CHANGE_TYPES = [
   'remove', 'remove_app', 'increase_limit', 'increase_app_limit',
-  'narrow_block_scope', 'narrow_app_block_scope', 'allow_accounts', 'disable_all', 'decrease_leave_delay'
+  'narrow_block_scope', 'narrow_app_block_scope', 'allow_accounts', 'allow_reddit', 'disable_all', 'decrease_leave_delay'
 ];
 
 async function requestSettingChange({ changeType, domain, newValue }) {
@@ -3206,19 +3384,27 @@ async function dropSupersededRaises(partial) {
 function withIntention(entry, value) {
   const base = entry ? { ...entry } : { ...INTENTION_DEFAULTS };
   const v = (value && typeof value === 'object') ? value : {};
+  if (v.intentionMode === 'dailyTime') {
+    const next = resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: v.dailyTimeMinutes });
+    base.intentionMode = 'dailyTime';
+    base.dailyTimeMinutes = next.dailyMinutes;
+    return base;
+  }
   const next = resolveIntention({
     maxGrants: v.maxGrants !== undefined ? v.maxGrants : base.maxGrants,
     passMinutes: v.passMinutes !== undefined ? v.passMinutes : base.passMinutes
   });
   base.maxGrants = next.opens;
   base.passMinutes = next.minutesEach;
+  if (base.intentionMode === 'dailyTime' || v.intentionMode === 'opens') base.intentionMode = 'opens';
   return base;
 }
 
 // "3 opens a day, 10 minutes each" — the sentence both the settings row and
 // the settings-gate coach use for an intention.
 function describeIntentionForHuman(value) {
-  const { opens, minutesEach } = resolveIntention(value && typeof value === 'object' ? value : null);
+  const { mode, dailyMinutes, opens, minutesEach } = resolveIntention(value && typeof value === 'object' ? value : null);
+  if (mode === 'dailyTime') return `${dailyMinutes} minutes a day, chosen per visit`;
   if (opens === 0) return 'blocked outright (no opens)';
   return `${opens} ${opens === 1 ? 'open' : 'opens'} a day, ${minutesEach} minutes each`;
 }
@@ -3245,7 +3431,7 @@ async function retireSessionKey(sessionKey, outcome) {
     // An already-banked session (see bankExpiredSession) must not be counted
     // twice — drop it, but don't re-record its minutes.
     if (!isBanked(session)) {
-      const elapsed = (Date.now() - session.startTime) / 60000;
+      const elapsed = sessionElapsedMs(session) / 60000;
       const used = Math.min(elapsed, session.intervalMinutes);
       // Closing the tab with time still on the clock is the win the coach is
       // told to celebrate, so only claim it when they genuinely left time
@@ -3253,7 +3439,7 @@ async function retireSessionKey(sessionKey, outcome) {
       const resolved = outcome === 'ended'
         ? (used < session.intervalMinutes - 0.5 ? 'closed_early' : 'finished')
         : outcome;
-      await recordSessionMinutes(session.domain, used, resolved);
+      await recordSessionMinutes(session.domain, used, resolved, session.startTime);
     }
     await mutateStorage('activeSessions', (sessions) => { delete sessions[sessionKey]; });
   }

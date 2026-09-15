@@ -302,7 +302,7 @@ function openReportSheet(text) {
       sheet.innerHTML = '';
       const done = doc.createElement('p');
       done.className = 'int-report-done';
-      done.textContent = 'Thanks — that’s been sent. We read every report and use them to fix what the coach says.';
+      done.textContent = 'Thanks, that’s been sent. We read every report and use them to fix what the coach says.';
       sheet.appendChild(done);
       setTimeout(close, 2200);
     });

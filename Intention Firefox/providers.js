@@ -265,7 +265,7 @@ async function postCoachReport({ backendUrl, accessToken, reported, prompt, note
   }, 15000);
   if (!res.ok) {
     const err = new Error(res.status === 429
-      ? "That's a lot of reports at once \u2014 give it a minute and try again."
+      ? "That's a lot of reports at once. Give it a minute and try again."
       : `Report failed (${res.status})`);
     err.code = res.status === 429 ? 'rate_limited' : 'backend_error';
     throw err;

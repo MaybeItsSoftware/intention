@@ -83,7 +83,72 @@ describe('sessionKeyFor', () => {
   });
 });
 
+describe('Reddit subreddit and post allowances', () => {
+  const seed = () => ({ ...CONFIGURED, setupComplete: true, blockedDomains: ['reddit.com'],
+    domainLimits: { ...CONFIGURED.domainLimits, 'reddit.com': {
+      maxGrants: 0, passMinutes: 10, allowedSubreddits: ['rust'], allowedRedditPosts: ['cats:abc123']
+    } } });
+
+  it('lets a visit to an allowed subreddit or post through and gates their neighbours', async () => {
+    const { ctx } = loadBackground({ seed: seed() });
+    expect((await ctx.checkPageMatch('www.reddit.com', 3, null, 'https://www.reddit.com/r/rust/')).isBlocked).toBe(false);
+    expect((await ctx.checkPageMatch('www.reddit.com', 3, null, 'https://www.reddit.com/r/cats/comments/abc123/')).isBlocked).toBe(false);
+    expect((await ctx.checkPageMatch('www.reddit.com', 3, null, 'https://www.reddit.com/r/cats/')).isBlocked).toBe(true);
+  });
+
+  it('allows direct removal but holds direct additions back', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    await ctx.saveSettings({ domainLimits: { 'reddit.com': {
+      maxGrants: 0, passMinutes: 10, allowedSubreddits: ['cats'],
+      allowedRedditPosts: ['cats:abc123', 'rust:def456']
+    } } });
+    expect(chrome.storage._store.domainLimits['reddit.com'].allowedSubreddits).toBeUndefined();
+    expect(chrome.storage._store.domainLimits['reddit.com'].allowedRedditPosts).toEqual(['cats:abc123']);
+  });
+
+  it('queues an addition for tomorrow, then merges it with the stored lists', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    const value = { subreddits: ['cats'], posts: ['rust:def456'] };
+    const queued = await ctx.handleMessage({ action: 'applySettingChange', changeType: 'allow_reddit',
+      domain: 'reddit.com', newValue: value }, EXT_PAGE);
+    expect(queued.scheduled).toBe(true);
+    expect(chrome.storage._store.domainLimits['reddit.com'].allowedSubreddits).toEqual(['rust']);
+    const applied = await ctx.applySettingChange({ changeType: 'allow_reddit', domain: 'reddit.com', newValue: value });
+    expect(applied.allowedSubreddits).toEqual(['rust', 'cats']);
+    expect(applied.allowedRedditPosts).toEqual(['cats:abc123', 'rust:def456']);
+  });
+
+  it('refuses unusable and non-Reddit additions', async () => {
+    const { ctx } = loadBackground({ seed: seed() });
+    expect(await ctx.applySettingChange({ changeType: 'allow_reddit', domain: 'instagram.com',
+      newValue: { subreddits: ['rust'] } })).toBe(null);
+    expect(await ctx.applySettingChange({ changeType: 'allow_reddit', domain: 'reddit.com',
+      newValue: { subreddits: ['all'], posts: ['../bad'] } })).toBe(null);
+  });
+});
+
 describe('activeSession', () => {
+  it('charges only foreground time for a paused native target', () => {
+    const { ctx } = loadBackground();
+    const now = Date.now();
+    const session = { domain: 'com.instagram.android', startTime: now - 40 * 60000,
+      intervalMinutes: 10, pausedDurationMs: 3 * 60000, pausedAt: now - 35 * 60000 };
+    expect(ctx.activeSession(session)).toBe(session);
+    expect(ctx.sessionElapsedMs(session, now)).toBe(2 * 60000);
+    expect(ctx.sessionExpiryTime(session)).toBe(Infinity);
+    delete session.pausedAt;
+    session.pausedDurationMs = 38 * 60000;
+    expect(ctx.sessionExpiryTime(session)).toBe(now + 8 * 60000);
+  });
+
+  it('ends a daily visit at midnight even when it was paused', () => {
+    const { ctx } = loadBackground();
+    const now = Date.now();
+    const session = { domain: 'com.instagram.android', startTime: now - 2 * 60000,
+      intervalMinutes: 10, pausedAt: now - 60000, wallExpiresAt: now - 1 };
+    expect(ctx.activeSession(session)).toBe(null);
+  });
+
   it('rejects a banked session even when its time has not run out', () => {
     const { ctx } = loadBackground();
     const session = { domain: 'x.com', startTime: Date.now(), intervalMinutes: 10, endedAt: Date.now() };
@@ -102,6 +167,33 @@ describe('activeSession', () => {
     const { ctx } = loadBackground();
     const session = { domain: 'x.com', startTime: Date.now(), intervalMinutes: 10 };
     expect(ctx.activeSession(session)).toBe(session);
+  });
+});
+
+describe('Android foreground passes', () => {
+  it('starts paused until the target returns from the coach', async () => {
+    const { ctx, chrome } = loadBackground({ seed: {
+      ...CONFIGURED, appLimits: { 'com.instagram.android': { maxGrants: 1, passMinutes: 10 } }
+    } });
+    const response = await ctx.handleMessage({ action: 'intentionGrant',
+      domain: 'com.instagram.android', isApp: true, reason: 'reply to a friend' },
+    { nativePlatform: 'android' });
+    expect(response.grantedSession.pausedAt).toBe(response.grantedSession.startTime);
+    expect(ctx.activeSession(response.grantedSession)).toBe(response.grantedSession);
+    expect(chrome.alarms._created).toEqual([]);
+  });
+
+  it('ignores a stale alarm while the pass is paused', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: {
+      ...CONFIGURED, activeSessions: { 'target:com.instagram.android': {
+        domain: 'com.instagram.android', reason: 'message a friend',
+        startTime: Date.now() - 40 * 60000, intervalMinutes: 10,
+        pausedAt: Date.now() - 38 * 60000
+      } }
+    } });
+    await listeners.alarm({ name: 'checkin-target:com.instagram.android' });
+    expect(chrome.storage._store.activeSessions['target:com.instagram.android'].endedAt).toBeUndefined();
+    expect(ctx.activeSession(chrome.storage._store.activeSessions['target:com.instagram.android'])).not.toBeNull();
   });
 });
 
@@ -1475,7 +1567,7 @@ describe('an AI-granted pass is recorded like any other', () => {
     );
     expect(resp.grantedSession ?? null).toBe(null);
     expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
-    expect(resp.systemNote).toBe('You still have 2 free opens today — use one from the gate instead.');
+    expect(resp.systemNote).toBe('You still have 2 free opens today. Use one from the gate instead.');
     // Rejection + honesty turn.
     expect(fetch.calls.length).toBe(2);
   });
@@ -1534,7 +1626,7 @@ describe('an AI-granted pass is recorded like any other', () => {
       seed: { ...seed, domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } }
     });
     await viaSimple.ctx.handleMessage(
-      { action: 'intentionGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs' },
       tab(7)
     );
 
@@ -1798,7 +1890,7 @@ describe('privileged message actions are gated on sender and intention', () => {
     const { ctx, chrome } = loadBackground({ seed: BLOCKED });
     for (const sender of [tab(7), EXT_PAGE, NATIVE]) {
       const resp = await ctx.handleMessage(
-        { action: 'intentionGrant', domain: 'instagram.com', tabId: 7 }, sender
+        { action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs', tabId: 7 }, sender
       );
       expect(resp.grantedSession).toBeUndefined();
       expect(resp.denied).toBeTruthy();
@@ -1810,7 +1902,7 @@ describe('privileged message actions are gated on sender and intention', () => {
   it('refuses a content script asking for a different site than its own', async () => {
     const { ctx } = loadBackground({ seed: WITH_OPENS });
     const resp = await ctx.handleMessage(
-      { action: 'intentionGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs' },
       tab(7, 'evil.com')
     );
     expect(resp.grantedSession).toBeUndefined();
@@ -1820,7 +1912,7 @@ describe('privileged message actions are gated on sender and intention', () => {
   it('grants one open of the intended length from the blocked page itself', async () => {
     const { ctx } = loadBackground({ seed: WITH_OPENS });
     const resp = await ctx.handleMessage(
-      { action: 'intentionGrant', domain: 'instagram.com' },
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs' },
       tab(7, 'www.instagram.com')
     );
     expect(resp.grantedSession.intervalMinutes).toBe(5);
@@ -1831,7 +1923,7 @@ describe('privileged message actions are gated on sender and intention', () => {
     for (const sender of [EXT_PAGE, NATIVE]) {
       const { ctx } = loadBackground({ seed: WITH_OPENS });
       const resp = await ctx.handleMessage(
-        { action: 'intentionGrant', domain: 'instagram.com', tabId: 7 }, sender
+        { action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs', tabId: 7 }, sender
       );
       expect(resp.grantedSession).toBeDefined();
     }
@@ -1840,11 +1932,11 @@ describe('privileged message actions are gated on sender and intention', () => {
   it('stops at the intention: the third open of two is refused', async () => {
     const { ctx, chrome } = loadBackground({ seed: WITH_OPENS });
     for (let i = 0; i < 2; i++) {
-      const ok = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com' }, NATIVE);
+      const ok = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs' }, NATIVE);
       expect(ok.grantedSession).toBeDefined();
       delete chrome.storage._store.activeSessions['target:instagram.com'];
     }
-    const third = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com' }, NATIVE);
+    const third = await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com', reason: 'check DMs' }, NATIVE);
     expect(third.grantedSession).toBeUndefined();
     expect(third.denied).toBe('intention spent');
     // A free open is never recorded as negotiated.
@@ -1861,6 +1953,64 @@ describe('privileged message actions are gated on sender and intention', () => {
     expect(resp?.scheduled).toBeUndefined();
     expect(chrome.storage._store.blockedDomains).toEqual(['instagram.com']);
     expect(chrome.storage._store.pendingChanges).toBeUndefined();
+  });
+});
+
+describe('daily time allowance', () => {
+  const DAILY = {
+    ...CONFIGURED,
+    blockedDomains: ['instagram.com'],
+    domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 30 } }
+  };
+
+  it('requires a reason and a chosen duration for each free pass', async () => {
+    const { ctx, chrome } = loadBackground({ seed: DAILY });
+    const noReason = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', minutes: 10 }, NATIVE
+    );
+    expect(noReason.denied).toBe('reason required');
+    const noMinutes = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'Read a message' }, NATIVE
+    );
+    expect(noMinutes.denied).toBe('invalid visit duration');
+    expect(chrome.storage._store.activeSessions ?? {}).toEqual({});
+  });
+
+  it('reserves the selected time and releases unused minutes when a pass ends early', async () => {
+    const { ctx, chrome } = loadBackground({ seed: DAILY });
+    const first = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'Read a message', minutes: 20 }, NATIVE
+    );
+    expect(first.grantedSession.intervalMinutes).toBe(20);
+    expect((await ctx.getIntention('instagram.com')).minutesLeft).toBe(10);
+    chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 5 * 60000;
+    await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com', reason: 'done' }, NATIVE);
+    expect((await ctx.getIntention('instagram.com')).minutesLeft).toBeGreaterThanOrEqual(24);
+    const second = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'Check a reply', minutes: 20 }, NATIVE
+    );
+    expect(second.grantedSession.intervalMinutes).toBe(20);
+    expect((await ctx.getIntention('instagram.com')).minutesLeft).toBeLessThanOrEqual(5);
+  });
+
+  it('serializes parallel requests so they cannot both spend the same remaining time', async () => {
+    const { ctx } = loadBackground({ seed: DAILY });
+    const ask = () => ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'Check updates', minutes: 20 }, NATIVE
+    );
+    const [a, b] = await Promise.all([ask(), ask()]);
+    expect([a, b].filter(r => r.grantedSession)).toHaveLength(1);
+    expect([a, b].filter(r => r.denied)).toHaveLength(1);
+  });
+
+  it('keeps negotiated time behind the coach while free daily time remains', async () => {
+    const { ctx, chrome } = loadBackground({ seed: DAILY, fetch: grantingFetch(5, 'check updates') });
+    const resp = await ctx.handleMessage(
+      { action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'Need to check updates' }, NATIVE
+    );
+    expect(resp.grantedSession ?? null).toBe(null);
+    expect(resp.systemNote).toContain('minutes of today\'s intended time available');
+    expect(chrome.storage._store.activeSessions?.['target:instagram.com']).toBeUndefined();
   });
 });
 
@@ -2286,7 +2436,7 @@ describe('the honesty turn after a clamped or rejected grant', () => {
     );
 
     expect(res.grantedSession.intervalMinutes).toBe(10);
-    expect(res.systemNote).toBe('Extra time comes in passes of up to 10 minutes — your pass is 10 minutes.');
+    expect(res.systemNote).toBe('Extra time comes in passes of up to 10 minutes, and your pass is 10 minutes.');
     expect(fetch.calls.length).toBe(2);
 
     // The correction turn carries no tools (an empty array is omitted from

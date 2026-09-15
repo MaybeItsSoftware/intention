@@ -126,7 +126,12 @@
     openSafari: function(callback) { extensionCall('openSafari', null, callback); },
     // Lets the web layer own the enable-the-extension prompt during setup, so
     // the native banner doesn't say the same thing over the top of it.
-    setSetupComplete: function(value, callback) { extensionCall('setSetupComplete', { value: !!value }, callback); }
+    setSetupComplete: function(value, callback) { extensionCall('setSetupComplete', { value: !!value }, callback); },
+    // Mac only: "Open Intention at login" (SMAppService). Each resolves
+    // { available, enabled, requiresApproval }.
+    loginItem: function(callback) { extensionCall('loginItem', null, callback); },
+    setLoginItem: function(enabled, callback) { extensionCall('setLoginItem', { enabled: !!enabled }, callback); },
+    openLoginItemsSettings: function(callback) { extensionCall('openLoginItemsSettings', null, callback); }
   };
 
   window.intentionBilling = {

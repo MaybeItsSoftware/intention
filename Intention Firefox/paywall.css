@@ -193,7 +193,7 @@
 #int-pw-provider::placeholder,
 #int-pw-key::placeholder { color: var(--text-dim); }
 
-.int-paywall button {
+.int-paywall button:not(.int-pw-plan) {
   padding: 10px 16px;
   border-radius: var(--radius-control);
   border: none;
@@ -212,7 +212,7 @@
 }
 
 .int-paywall button.secondary:hover { background: var(--hover); }
-.int-paywall button:not(.secondary):hover { background: var(--primary-solid-hover); }
+.int-paywall button:not(.secondary):not(.int-pw-plan):hover { background: var(--primary-solid-hover); }
 
 .int-paywall button:focus-visible {
   outline: 2px solid var(--primary);

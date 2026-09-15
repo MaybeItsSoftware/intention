@@ -219,6 +219,17 @@ async function main() {
     record('it starts at the default of three',
       (await page.textContent('#setup-intention-opens')) === '3');
 
+    await page.click('#setup-intention-mode [data-mode="dailyTime"]');
+    await page.click('#setup-intention-daily [data-minutes="60"]');
+    const timeDraft = await page.evaluate(() => setupDomainLimits['instagram.com']);
+    record('can choose a daily time allowance instead of visit count',
+      timeDraft?.intentionMode === 'dailyTime' && timeDraft?.dailyTimeMinutes === 60,
+      JSON.stringify(timeDraft));
+    record('the daily allowance hides the visit counter',
+      await page.locator('#setup-step-intention .setup-counter').isHidden());
+    await page.click('#setup-intention-mode [data-mode="opens"]');
+    for (let i = 0; i < 3; i++) await page.click('#setup-intention-minus');
+
     await page.click('#setup-intention-plus');
     await page.click('[data-minutes="15"]');
     await page.waitForTimeout(80);
@@ -275,7 +286,7 @@ async function main() {
     record('tapping a chip presses it',
       (await chip('instagram.com', 'needs', 'dm').getAttribute('aria-pressed')) === 'true');
     record('and rewrites the preview into what the coach will do',
-      (await preview('instagram.com')) === 'Your coach will hear you out for a DM reply — and push back on the feed, Reels and Explore.',
+      (await preview('instagram.com')) === 'Your coach will hear you out for a DM reply, and push back on the feed, Reels and Explore.',
       await preview('instagram.com'));
 
     // The phone case that used to lose the answer: a chip tap that does not

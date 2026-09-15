@@ -192,6 +192,23 @@ describe('isLoosening', () => {
   });
 });
 
+describe('daily time intention', () => {
+  it('resolves a daily allowance independently of visit count', () => {
+    expect(R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: 60 }))
+      .toEqual({ mode: 'dailyTime', dailyMinutes: 60, opens: 0, minutesEach: 0 });
+    expect(R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: 77 }).dailyMinutes).toBe(60);
+  });
+
+  it('defers increases and flexible switches that allow at least the old total', () => {
+    const visits = { maxGrants: 3, passMinutes: 10 };
+    const daily = { intentionMode: 'dailyTime', dailyTimeMinutes: 30 };
+    expect(R.isLoosening(visits, daily)).toBe(true);
+    expect(R.isLoosening(daily, { intentionMode: 'dailyTime', dailyTimeMinutes: 60 })).toBe(true);
+    expect(R.isLoosening(daily, visits)).toBe(false);
+    expect(R.isLoosening(visits, { intentionMode: 'dailyTime', dailyTimeMinutes: 15 })).toBe(false);
+  });
+});
+
 describe('nextDayStart', () => {
   it('is local midnight at the start of the next day', () => {
     const at = new Date(2026, 8, 13, 23, 55).getTime();

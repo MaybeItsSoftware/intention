@@ -290,6 +290,16 @@ describe('recordWalkAway', () => {
 });
 
 describe('recordSessionMinutes', () => {
+  it('banks a paused visit on the day it began after midnight', async () => {
+    const { ctx, chrome } = fresh();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(12, 0, 0, 0);
+    await ctx.recordSessionMinutes('twitter.com', 2, 'ran_out', yesterday.getTime());
+    expect(chrome.storage._store.dailyStats[ctx.dateKey(yesterday)]['twitter.com'].minutes).toBe(2);
+    expect((await ctx.getStatsForDomain('twitter.com')).minutesToday).toBe(0);
+  });
+
   it('accumulates minutesToday and minutesTodayAll', async () => {
     const { ctx } = fresh();
     await ctx.recordSessionMinutes('twitter.com', 7);

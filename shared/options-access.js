@@ -58,7 +58,7 @@ async function verifyAndStore(platform, receipt) {
       pendingVerification: true,
       lastError: String(e.message || e)
     });
-    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically — reopen Settings to retry.");
+    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically. Reopen Settings to retry.");
   }
 }
 

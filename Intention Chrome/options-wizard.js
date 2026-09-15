@@ -35,6 +35,12 @@ let setupServiceAnswers = {};
 let setupWantsReasons = null;
 let setupStep = 1;
 let setupStepOrder = [];
+// 'full' is the wizard. 'mac-tour' is the Mac app's short welcome for someone
+// whose setup is already done — set up in Safari before the app was ever
+// opened — and who would otherwise land on Today with no idea what the window
+// is for. It shares the pages and the nav, and writes nothing but its own
+// "seen it" mark (markMacOnboarded in options.js).
+let setupMode = 'full';
 // Which way the last page change went, so the next page slides in from the
 // side it is coming from.
 let setupDirection = 1;
@@ -54,8 +60,10 @@ function getInstalledApps() {
   });
 }
 
-function showSetupView() {
-  document.getElementById('setup-view').hidden = false;
+function showSetupView(mode = 'full') {
+  setupMode = mode === 'mac-tour' ? 'mac-tour' : 'full';
+  // #setup-view itself is shown by the first showStep, together with its page:
+  // shown now, it would be an empty progress bar and nav under the boot screen.
   document.getElementById('settings-view').hidden = true;
   document.body.classList.remove('in-settings');
 
@@ -63,6 +71,7 @@ function showSetupView() {
 
   renderWelcomeStep();
   if (HAS_SAFARI_EXTENSION) wireSafariStep();
+  if (IS_MAC_APP) renderMacWelcomeStep();
   renderSetupDomains();
   if (HAS_APP_BLOCKING) {
     renderSetupApps();
@@ -75,7 +84,7 @@ function showSetupView() {
   // API key there and nothing else.
   if (BYOK_IS_PRIMARY) {
     document.getElementById('setup-access-how').textContent =
-      'The coach runs on your own AI provider key. Nothing to set up now — only if you ever need it.';
+      'The coach runs on your own AI provider key. Nothing to set up now, only if you ever need it.';
   }
 
   const backBtn = document.getElementById('setup-back-btn');
@@ -100,8 +109,11 @@ function showSetupView() {
     // wizard (a Safari toggle, a system permission prompt), so they are re-read
     // on arrival rather than trusted from whenever the page was built.
     if (section === 'setup-step-safari') refreshSafariStatus();
+    if (section === 'setup-step-mac-login') wireLoginSwitch('setup-login-btn', 'setup-login-sub', 'setup-login-approve-btn');
     if (section === 'setup-step-apps' && HAS_IOS_APP_BLOCKING) refreshSetupIOSApps();
     el.hidden = false;
+    document.getElementById('setup-view').hidden = false;
+    hideBootView();
     playStepEntrance(el);
 
     refreshSetupNav();
@@ -123,7 +135,7 @@ function showSetupView() {
 
   backBtn.onclick = () => { if (setupStep > 1) showStep(setupStep - 1); };
   nextBtn.onclick = () => { if (setupStep < setupStepOrder.length) showStep(setupStep + 1); };
-  saveBtn.onclick = () => finishSetup();
+  saveBtn.onclick = () => (setupMode === 'mac-tour' ? finishMacTour() : finishSetup());
 
   document.getElementById('setup-reasons-yes-btn').onclick = () => {
     setupWantsReasons = true;
@@ -138,7 +150,9 @@ function showSetupView() {
     showStep(at === -1 ? setupStep + 1 : at + 1);
   };
 
-  restoreSetupDraft().then(step => showStep(step));
+  // The tour has no draft: it holds no answers, and restoring the wizard's
+  // draft into it would put someone's half-built list on a page about the app.
+  (setupMode === 'mac-tour' ? Promise.resolve(1) : restoreSetupDraft()).then(step => showStep(step));
 }
 
 // Set by showSetupView so list renderers and the draft restore can drive the
@@ -184,6 +198,9 @@ function intentionTargets() {
 // what each service is for, and then — only on a yes — one page per service;
 // what happens past an intention; done.
 function computeStepOrder() {
+  if (setupMode === 'mac-tour') {
+    return ['setup-step-mac-welcome', 'setup-step-safari', 'setup-step-mac-login'];
+  }
   const order = ['setup-step-welcome'];
   if (HAS_SAFARI_EXTENSION) order.push('setup-step-safari');
   if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING) order.push('setup-step-apps');
@@ -196,7 +213,9 @@ function computeStepOrder() {
       for (const group of groups) order.push(`setup-step-purpose:${group.key}`);
     }
   }
-  order.push('setup-step-access', 'setup-step-done');
+  order.push('setup-step-access');
+  if (IS_MAC_APP) order.push('setup-step-mac-login');
+  order.push('setup-step-done');
   return order;
 }
 
@@ -224,6 +243,8 @@ function setupProgressLabel(pageId) {
     case 'setup-step-reasons': return 'Purpose';
     case 'setup-step-purpose': return `Purpose · ${runOf('setup-step-purpose')}`;
     case 'setup-step-access': return 'More time';
+    case 'setup-step-mac-welcome': return 'Intention for Mac';
+    case 'setup-step-mac-login': return 'This Mac';
     case 'setup-step-done': return 'Ready';
     default: return '';
   }
@@ -254,7 +275,9 @@ function refreshSetupNav() {
   backBtn.hidden = setupStep === 1;
   nextBtn.hidden = last || section === 'setup-step-reasons';
   saveBtn.hidden = !last;
-  saveBtn.disabled = !ok;
+  // The tour changes no rules, so there is nothing it could be finished without.
+  saveBtn.disabled = setupMode === 'full' && !ok;
+  saveBtn.textContent = setupMode === 'mac-tour' ? 'Open Intention' : 'Start';
   nextBtn.textContent = section === 'setup-step-welcome' ? 'Begin' : 'Continue';
   // Leaving the last pick page with nothing picked would walk into a run of
   // pages about nothing. Every other page can always be left.
@@ -313,7 +336,7 @@ function saveSetupDraft() {
   // Any immediate save subsumes a deferred one: they write the same state, read
   // at the same moment from the same variables.
   cancelPendingSetupDraftSave();
-  if (!setupDraftReady) return;
+  if (!setupDraftReady || setupMode !== 'full') return;
   // The step is stored as its id — a page id, which for the per-target pages
   // carries the target — rather than an index: an index means nothing once the
   // list the pages are built from has changed.
@@ -442,11 +465,12 @@ function setupLimitsFor(target) {
 
 const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
-function intentionSumLine({ opens, minutesEach }) {
+function intentionSumLine({ mode, dailyMinutes, opens, minutesEach }) {
+  if (mode === 'dailyTime') return `Up to ${dailyMinutes} minutes a day. Choose how much of the remaining time to spend on each visit.`;
   if (opens === 0) return "Blocked outright. If something ever needs it, that's a conversation with the coach.";
   const total = opens * minutesEach;
   const visits = opens === 1 ? 'one visit' : `${NUMBER_WORDS[opens] || opens} visits`;
-  return `Up to ${total} minutes a day, in ${visits}. Each one is a single tap — nothing to explain.`;
+  return `Up to ${total} minutes a day, in ${visits}. Give a reason when you use one.`;
 }
 
 function wireIntentionStep() {
@@ -457,6 +481,8 @@ function wireIntentionStep() {
     const next = fn(now);
     limits[setupIntentionTarget] = {
       ...(limits[setupIntentionTarget] || {}),
+      intentionMode: next.mode === 'dailyTime' ? 'dailyTime' : 'opens',
+      dailyTimeMinutes: next.dailyMinutes,
       maxGrants: next.opens,
       passMinutes: next.minutesEach
     };
@@ -467,6 +493,34 @@ function wireIntentionStep() {
     change(i => ({ ...i, opens: Math.max(0, i.opens - 1) }));
   document.getElementById('setup-intention-plus').onclick = () =>
     change(i => ({ ...i, opens: Math.min(MAX_OPENS, i.opens + 1) }));
+
+  const modes = document.getElementById('setup-intention-mode');
+  modes.textContent = '';
+  for (const [mode, title] of [['opens', 'Visits per day'], ['dailyTime', 'Time per day']]) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'setup-mode-chip';
+    chip.dataset.mode = mode;
+    chip.setAttribute('role', 'radio');
+    chip.textContent = title;
+    chip.addEventListener('click', () => change(i => mode === 'dailyTime'
+      ? { mode, dailyMinutes: i.opens * i.minutesEach || 30, opens: i.opens, minutesEach: i.minutesEach }
+      : { mode, opens: Math.min(MAX_OPENS, Math.max(1, Math.ceil(i.dailyMinutes / 10))), minutesEach: 10 }));
+    modes.appendChild(chip);
+  }
+
+  const daily = document.getElementById('setup-intention-daily');
+  daily.textContent = '';
+  for (const minutes of DAILY_TIME_CHOICES) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'setup-minute-chip';
+    chip.dataset.minutes = String(minutes);
+    chip.setAttribute('role', 'radio');
+    chip.textContent = `${minutes} min`;
+    chip.addEventListener('click', () => change(i => ({ ...i, dailyMinutes: minutes })));
+    daily.appendChild(chip);
+  }
 
   const chips = document.getElementById('setup-intention-minutes');
   chips.textContent = '';
@@ -493,7 +547,9 @@ function wireIntentionStep() {
     const here = resolveIntention(setupLimitsFor(setupIntentionTarget)[setupIntentionTarget]);
     for (const target of targets.slice(at + 1)) {
       const limits = setupLimitsFor(target);
-      limits[target] = { ...(limits[target] || {}), maxGrants: here.opens, passMinutes: here.minutesEach };
+      limits[target] = { ...(limits[target] || {}),
+        intentionMode: here.mode === 'dailyTime' ? 'dailyTime' : 'opens',
+        dailyTimeMinutes: here.dailyMinutes, maxGrants: here.opens, passMinutes: here.minutesEach };
     }
     const lastIntention = setupStepOrder.map(sectionOf).lastIndexOf('setup-step-intention');
     showSetupStep(lastIntention + 2);
@@ -508,7 +564,23 @@ function renderIntentionStep(target, { bump = false } = {}) {
   applyServiceMark(document.getElementById('setup-intention-mark'),
     { key: serviceKeyFor(target), label });
   document.getElementById('setup-intention-question').textContent =
-    `How many times a day do you want to open ${label}?`;
+    intention.mode === 'dailyTime'
+      ? `How much time a day do you want for ${label}?`
+      : `How many times a day do you want to open ${label}?`;
+
+  for (const chip of document.querySelectorAll('#setup-intention-mode .setup-mode-chip')) {
+    const on = chip.dataset.mode === (intention.mode || 'opens');
+    chip.classList.toggle('selected', on);
+    chip.setAttribute('aria-checked', String(on));
+  }
+  document.querySelector('#setup-step-intention .setup-counter').hidden = intention.mode === 'dailyTime';
+  document.getElementById('setup-intention-dots').hidden = intention.mode === 'dailyTime';
+  document.getElementById('setup-intention-daily-wrap').hidden = intention.mode !== 'dailyTime';
+  for (const chip of document.querySelectorAll('#setup-intention-daily .setup-minute-chip')) {
+    const on = Number(chip.dataset.minutes) === intention.dailyMinutes;
+    chip.classList.toggle('selected', on);
+    chip.setAttribute('aria-checked', String(on));
+  }
 
   const value = document.getElementById('setup-intention-opens');
   value.textContent = String(intention.opens);
@@ -533,7 +605,7 @@ function renderIntentionStep(target, { bump = false } = {}) {
   }
 
   const minutesWrap = document.getElementById('setup-intention-minutes-wrap');
-  minutesWrap.hidden = intention.opens === 0;
+  minutesWrap.hidden = intention.mode === 'dailyTime' || intention.opens === 0;
   for (const chip of document.querySelectorAll('#setup-intention-minutes .setup-minute-chip')) {
     const on = Number(chip.dataset.minutes) === intention.minutesEach;
     chip.classList.toggle('selected', on);
@@ -688,7 +760,7 @@ function previewLineFor(group) {
     .map(chip => chip.you);
   if (phrases.length) {
     const feed = serviceAnswerCatalogue(group.key).feed;
-    return `Your coach will hear you out for ${joinAlternatives(phrases)} — and push back on ${feed}.`;
+    return `Your coach will hear you out for ${joinAlternatives(phrases)}, and push back on ${feed}.`;
   }
   if (answers.costs.length) {
     return `Your coach will know why ${group.label} is on your list, and will ask what you came for.`;
@@ -944,18 +1016,21 @@ async function refreshSafariStatus() {
 
   // The host reports the path that matches this device (it moved in iOS 18,
   // and the Mac says Settings or Preferences depending on macOS) rather than
-  // the page guessing. On iOS the button opens the Settings app itself (no
-  // public deep link into the Extensions page), so the first step is spelled
-  // out in full; on the Mac it lands on Intention's own row in Safari.
+  // the page guessing. The Mac, and iOS from 26.2, open Safari's Extensions
+  // settings straight at Intention and read the switch itself. Older iOS can
+  // only open the Settings app, so the path is spelled out and the page waits
+  // for Safari to run the extension once.
   const isMac = !!(st && st.platform === 'mac');
+  const direct = isMac || !!(st && st.opensExtensionSettings);
+  const readsSwitch = isMac || !!(st && st.readsSwitch);
   const path = (st && st.settingsPath) || (isMac ? 'Safari → Settings → Extensions' : 'Settings → Apps → Safari → Extensions');
   const lede = document.getElementById('setup-safari-lede');
   if (lede) {
     lede.textContent = isMac
-      ? 'Website blocking runs inside Safari, and only you can switch it on — macOS doesn\u2019t let an app do it for you.'
-      : 'Website blocking runs inside Safari, and only you can switch it on — iOS doesn\u2019t let an app do it for you.';
+      ? 'Website blocking runs inside Safari, and only you can switch it on. macOS doesn\u2019t let an app do it for you.'
+      : 'Website blocking runs inside Safari, and only you can switch it on. iOS doesn\u2019t let an app do it for you.';
   }
-  settingsBtn.textContent = isMac ? 'Open Safari Settings' : 'Open Settings';
+  settingsBtn.textContent = direct ? 'Open Safari Settings' : 'Open Settings';
   const steps = isMac
     ? [
       `Click "Open Safari Settings" below. It opens ${path} with Intention selected.`,
@@ -963,12 +1038,19 @@ async function refreshSafariStatus() {
       'Under Permissions, set it to Allow on every website, or it can only see the sites you approve one at a time.',
       'This page notices on its own once the box is ticked.'
     ]
-    : [
-      `Tap "Open Settings" below, then go to ${path}.`,
-      'Turn on Intention Safari Extension.',
-      'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
-      'Come back here and tap "I turned it on" — this page notices on its own once the extension has run.'
-    ];
+    : direct
+      ? [
+        'Tap "Open Safari Settings" below. It opens Safari\u2019s extension settings for Intention.',
+        'Turn on Intention.',
+        'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
+        'Come back here. This page notices on its own once it\u2019s on.'
+      ]
+      : [
+        `Tap "Open Settings" below, then go to ${path}.`,
+        'Turn on Intention Safari Extension.',
+        'Set it to Allow for every website, or it can only see the sites you approve one at a time.',
+        'Come back here and tap "I turned it on". This page notices on its own once the extension has run.'
+      ];
   listEl.innerHTML = '';
   for (const text of steps) {
     const li = document.createElement('li');
@@ -982,12 +1064,12 @@ async function refreshSafariStatus() {
   openBtn.hidden = active;
   hintEl.hidden = active;
   statusEl.className = active ? 'setup-check ok' : 'setup-check';
-  // The Mac reads the switch itself, so there is no "go and wake it up" step
+  // Where the switch itself can be read there is no "go and wake it up" step
   // and no need for the open-Safari button.
-  if (isMac) openBtn.hidden = true;
+  if (readsSwitch) openBtn.hidden = true;
   statusEl.textContent = active
-    ? 'The Safari extension is on and running. Nothing else to do here.'
-    : isMac
+    ? 'The Safari extension is on. Nothing else to do here.'
+    : readsSwitch
       ? 'Not on yet.'
       : 'Not running yet. After turning it on, open Safari and load any page once. That’s what wakes the extension up.';
 }
@@ -1017,8 +1099,12 @@ function collectServiceReasons() {
 async function finishSetup() {
   // Every target leaves with a whole intention, whatever the draft held.
   const withIntention = (entry) => {
-    const { opens, minutesEach } = resolveIntention(entry);
+    const { mode, dailyMinutes, opens, minutesEach } = resolveIntention(entry);
     const out = { ...(entry || {}), maxGrants: opens, passMinutes: minutesEach };
+    if (mode === 'dailyTime') {
+      out.intentionMode = 'dailyTime';
+      out.dailyTimeMinutes = dailyMinutes;
+    }
     return out;
   };
   const domainLimits = {};
@@ -1057,5 +1143,38 @@ async function finishSetup() {
   });
 
   clearSetupDraft();
+  // Someone who set up in the Mac app has already seen what the tour says.
+  if (IS_MAC_APP) await markMacOnboarded();
   await renderCurrentView();
+}
+
+async function finishMacTour() {
+  await markMacOnboarded();
+  await renderCurrentView();
+}
+
+// ---- Page: Intention for Mac (the tour's first page) -----------------------
+
+async function renderMacWelcomeStep() {
+  const list = document.getElementById('setup-mac-welcome-list');
+  if (!list) return;
+  const state = await getConfig();
+  const sites = (state && state.blockedDomains) || [];
+  const count = sites.length;
+  const items = [
+    count
+      ? `Today: your streak, your week, and each of your ${count} ${count === 1 ? 'site' : 'sites'} against its intention, from every Safari profile on this Mac.`
+      : 'Today: your streak and your week, once there’s a site on your list.',
+    'Intentions: what’s on your list. Fewer opens take effect straight away; more waits until tomorrow.',
+    'Your coach, a click away when something genuinely needs more time.'
+  ];
+  list.textContent = '';
+  for (const text of items) {
+    const li = document.createElement('li');
+    li.textContent = text;
+    list.appendChild(li);
+  }
+  document.getElementById('setup-mac-welcome-lede').textContent = count
+    ? 'You’ve already set Intention up in Safari. This window is where you see how it’s going.'
+    : 'Intention’s Safari extension is already set up here. This window is where you see how it’s going.';
 }

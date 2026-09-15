@@ -7,10 +7,10 @@
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="paywall.css">
   <style>
-    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
-    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: swap; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
-    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: swap; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
-    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: swap; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 400; font-display: block; src: url('fonts/Arvo-Regular.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: normal; font-weight: 700; font-display: block; src: url('fonts/Arvo-Bold.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 400; font-display: block; src: url('fonts/Arvo-Italic.woff2') format('woff2'); }
+    @font-face { font-family: 'Arvo'; font-style: italic; font-weight: 700; font-display: block; src: url('fonts/Arvo-BoldItalic.woff2') format('woff2'); }
     html, body {
       margin: 0;
       padding: 0;
@@ -331,6 +331,33 @@
       flex-wrap: wrap;
       gap: 12px;
     }
+    .int-visit-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      width: 100%;
+      margin-bottom: 4px;
+    }
+    .int-visit-label {
+      display: flex;
+      flex: 1 1 220px;
+      flex-direction: column;
+      gap: 7px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .int-visit-input {
+      width: 100%;
+      min-height: 44px;
+      padding: 9px 12px;
+      border: 1px solid var(--border-input);
+      border-radius: var(--radius-control);
+      background: var(--paper);
+      color: var(--ink);
+      font: inherit;
+      font-size: 16px;
+    }
+    .int-visit-minutes { max-width: 140px; }
     .int-solid-btn {
       border: 1px solid var(--ink);
       background: var(--ink);

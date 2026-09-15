@@ -35,6 +35,7 @@ const INTENTION_DEFAULTS = { maxGrants: 3, passMinutes: 10 };
 // is a ladder: this is a commitment, and four rungs are enough to mean
 // something without inviting "call it eleven".
 const PASS_MINUTE_CHOICES = [5, 10, 15, 30];
+const DAILY_TIME_CHOICES = [15, 30, 45, 60, 90, 120, 180, 240];
 
 // Opens per day never goes past this. Beyond ten a day the intention has
 // stopped describing an intention.
@@ -63,6 +64,17 @@ function limitEntryFor(target, stored) {
 // snaps DOWN to the rung below it — the same direction normalizeLeaveDelay
 // snaps, for the same reason: being wrong must only ever mean less time.
 function resolveIntention(entry) {
+  if (entry && entry.intentionMode === 'dailyTime') {
+    const raw = Number(entry.dailyTimeMinutes);
+    let dailyMinutes = DAILY_TIME_CHOICES[1];
+    if (Number.isFinite(raw) && raw >= 0) {
+      dailyMinutes = raw < DAILY_TIME_CHOICES[0] ? 0 : DAILY_TIME_CHOICES[0];
+      for (const choice of DAILY_TIME_CHOICES) {
+        if (choice <= raw) dailyMinutes = choice;
+      }
+    }
+    return { mode: 'dailyTime', dailyMinutes, opens: 0, minutesEach: 0 };
+  }
   const rawOpens = entry ? Number(entry.maxGrants) : NaN;
   const opens = Number.isFinite(rawOpens)
     ? Math.max(0, Math.min(MAX_OPENS, Math.floor(rawOpens)))
@@ -88,6 +100,9 @@ function resolveIntention(entry) {
 function isLoosening(current, next) {
   const a = resolveIntention(current);
   const b = resolveIntention(next);
+  if (a.mode === 'dailyTime' && b.mode === 'dailyTime') return b.dailyMinutes > a.dailyMinutes;
+  if (a.mode === 'dailyTime') return b.opens * b.minutesEach > a.dailyMinutes;
+  if (b.mode === 'dailyTime') return b.dailyMinutes >= a.opens * a.minutesEach;
   return b.opens > a.opens || b.minutesEach > a.minutesEach;
 }
 
