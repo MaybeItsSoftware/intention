@@ -65,11 +65,12 @@ function loadProducts() {
 
 // --- page ------------------------------------------------------------------
 
-// options.css declares its own @font-face against a relative fonts/ path,
-// which resolves to nothing for a page set via setContent. Drop those and use
-// the base64-embedded faces the other generators already rely on.
+// Use the same stylesheet order as options.html. Without paywall.css, plan
+// names and descriptions collapse into one unstyled line in review images.
+// Relative font files cannot resolve for setContent, so embed their faces.
 function loadOptionsCss() {
-  const css = fs.readFileSync(path.join(SHARED, 'options.css'), 'utf8');
+  const css = ['tokens.css', 'paywall.css', 'options.css']
+    .map(file => fs.readFileSync(path.join(SHARED, file), 'utf8')).join('\n');
   return fontFaceCss(FONTS_DIR) + css.replace(/^@font-face \{[^}]*\}\n?/gm, '');
 }
 
@@ -154,6 +155,14 @@ async function main() {
   const rendered = await page.evaluate(() => document.querySelectorAll('.int-pw-plan').length);
   if (rendered !== products.length) {
     throw new Error(`Paywall rendered ${rendered} plan buttons, expected ${products.length}`);
+  }
+  const planStyle = await page.evaluate(() => {
+    const btn = document.querySelector('.int-pw-plan');
+    const style = getComputedStyle(btn);
+    return { background: style.backgroundColor, color: style.color };
+  });
+  if (planStyle.background !== 'rgb(255, 255, 255)' || planStyle.color !== 'rgb(68, 64, 84)') {
+    throw new Error('The review screenshot lost the paywall plan styles.');
   }
 
   // A review screenshot should look like something taken on a device, so this
