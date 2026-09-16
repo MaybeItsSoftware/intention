@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Intention",
-  "version": "0.23.1",
-  "description": "AI-powered focus gate. Bring your own LLM to coach you past distracting sites.",
+  "version": "0.24.2",
+  "description": "Focus gate for distracting sites. Explain each visit, set daily limits, and see where your time goes.",
   "homepage_url": "https://github.com/MaybeItsAdam/intention",
   "permissions": [
     "storage",

@@ -21,9 +21,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     //
     // Deliberately narrow: we only speak up if we have previously seen the
     // extension enabled on this Mac. A fresh install where it has never been
-    // turned on is the host page's job (ViewController's didFinish already
-    // drives Main.html's enable/disable copy) and duplicating that here would
-    // be a second onboarding nag over the top of the first.
+    // turned on is the setup wizard's job (its "Turn on the Safari extension"
+    // step) and duplicating that here would be a second onboarding nag over
+    // the top of the first.
     private let sawEnabledKey = "IntentionSafariExtensionWasEnabled"
 
     // Set when we surface the notice, cleared the moment the extension comes
@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var stateCheckInFlight = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configureMainWindow()
         checkExtensionState()
     }
 
@@ -45,8 +46,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkExtensionState()
     }
 
+    // The window is a dashboard now, not a one-shot "go and enable the
+    // extension" page, so closing it leaves the app in the Dock like any other
+    // Mac app and clicking the Dock icon brings it back. Blocking itself never
+    // depended on the app running — that is the extension, inside Safari.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            NSApp.windows.first { $0.contentViewController is ViewController }?.makeKeyAndOrderFront(nil)
+        }
         return true
+    }
+
+    // MARK: - Window
+
+    // Narrow windows get the page's single-column phone layout, which still
+    // works; the floor only stops the window being dragged into something
+    // narrower than a phone. The autosave name remembers where and how big the
+    // user left it.
+    private func configureMainWindow() {
+        guard let window = NSApp.windows.first(where: { $0.contentViewController is ViewController }) else { return }
+        window.minSize = NSSize(width: 480, height: 560)
+        window.setFrameAutosaveName("IntentionMainWindow")
     }
 
     // MARK: - Extension state
@@ -98,7 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Intention's Safari extension is turned off"
-        alert.informativeText = "Blocked sites aren't being blocked. You can turn it back on in Safari's Extensions settings — or leave it off, and this won't ask again."
+        alert.informativeText = "Blocked sites aren't being blocked. You can turn it back on in Safari's Extensions settings, or leave it off and this won't ask again."
         alert.addButton(withTitle: "Open Safari Settings")
         alert.addButton(withTitle: "Leave It Off")
 

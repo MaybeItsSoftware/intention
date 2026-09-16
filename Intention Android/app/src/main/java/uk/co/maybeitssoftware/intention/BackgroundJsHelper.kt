@@ -114,7 +114,9 @@ object BackgroundJsHelper {
                 // chat history and check-in alarm. The shared background.js keys
                 // per blocked target when the sender has no tab (sessionKeyFor),
                 // which is also what the iOS host sends.
-                val senderJson = "{}"
+                // The shared worker distinguishes Android's foreground-time
+                // passes from iOS's native wall-clock passes by this marker.
+                val senderJson = "{\"nativePlatform\":\"android\"}"
                 // messageJson is already-escaped JSON text (e.g. multi-line userContext
                 // becomes literal "\n" sequences). Wrapping it in a hand-escaped single-quoted
                 // JS literal double-unescapes those sequences into raw control characters,

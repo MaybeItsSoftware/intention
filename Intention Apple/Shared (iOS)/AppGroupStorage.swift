@@ -27,9 +27,18 @@ enum AppGroupStorage {
     }
 
     // Mirrors chrome.storage.local.get: returns only the requested keys that
-    // are present, or the entire store when `keys` is empty.
+    // are present, or the entire store when `keys` is empty. `webActivity` is
+    // overlaid from its own key — see AppGroupConfig.webActivityKey.
     static func get(_ keys: [String]) -> [String: Any] {
-        let all = readAll()
+        var all = readAll()
+        if keys.isEmpty || keys.contains(AppGroupConfig.webActivityKey) {
+            let activity = readWebActivity()
+            if activity.isEmpty {
+                all.removeValue(forKey: AppGroupConfig.webActivityKey)
+            } else {
+                all[AppGroupConfig.webActivityKey] = activity
+            }
+        }
         guard !keys.isEmpty else { return all }
         var result: [String: Any] = [:]
         for key in keys where all[key] != nil {
@@ -42,7 +51,10 @@ enum AppGroupStorage {
     static func set(_ items: [String: Any]) {
         guard let defaults, !items.isEmpty else { return }
         var all = readAll()
-        for (key, value) in items {
+        // The extension is the only writer of webActivity; an app-side write
+        // (a data import, a set of everything it just read) must not land in
+        // the blob, where it would shadow nothing and go stale.
+        for (key, value) in items where key != AppGroupConfig.webActivityKey {
             all[key] = value
         }
         guard let data = try? JSONSerialization.data(withJSONObject: all, options: []) else { return }
@@ -63,9 +75,11 @@ enum AppGroupStorage {
         defaults.set(data, forKey: storageKey)
     }
 
-    // Mirrors chrome.storage.local.clear: clears all items.
+    // Mirrors chrome.storage.local.clear: clears all items, pushed website
+    // activity included. Safari will push its own days again next time it runs.
     static func clear() {
         guard let defaults else { return }
+        defaults.removeObject(forKey: AppGroupConfig.webActivityKey)
         guard let data = try? JSONSerialization.data(withJSONObject: [String: Any](), options: []) else { return }
         defaults.set(data, forKey: storageKey)
     }
@@ -84,6 +98,31 @@ enum AppGroupStorage {
         }
         guard !filtered.isEmpty else { return }
         set(filtered)
+    }
+
+    // Extension-facing: replaces this source's pushed days. `days` is
+    // { "YYYY-MM-DD": { domain: { minutes, grants, negotiated, … } } }, numbers
+    // only, built by tracking.js's activityForNative.
+    static func mergeWebActivity(sourceId: String, days: [String: Any], startedAt: Double) {
+        guard let defaults, !sourceId.isEmpty else { return }
+        let now = Date().timeIntervalSince1970 * 1000
+        var sources = readWebActivity()
+        var entry: [String: Any] = ["updatedAt": now, "days": days]
+        if startedAt > 0 { entry["startedAt"] = startedAt }
+        sources[sourceId] = entry
+        let cutoff = now - AppGroupConfig.webActivityStaleAfter * 1000
+        sources = sources.filter { _, value in
+            let updatedAt = ((value as? [String: Any])?["updatedAt"] as? NSNumber)?.doubleValue ?? 0
+            return updatedAt >= cutoff
+        }
+        guard JSONSerialization.isValidJSONObject(sources),
+              let data = try? JSONSerialization.data(withJSONObject: sources, options: []) else { return }
+        defaults.set(data, forKey: AppGroupConfig.webActivityKey)
+    }
+
+    private static func readWebActivity() -> [String: Any] {
+        guard let defaults, let data = defaults.data(forKey: AppGroupConfig.webActivityKey) else { return [:] }
+        return (try? JSONSerialization.jsonObject(with: data, options: [])) as? [String: Any] ?? [:]
     }
 
     static func stampExtensionHeartbeat() {

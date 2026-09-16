@@ -168,19 +168,25 @@ describe('the intention', () => {
     return { li, fields };
   };
   const stepper = (fields) => findAll(fields, 'stepper-btn');
-  const chips = (fields) => findAll(fields, 'chip');
 
   it('shows opens a day and minutes each, named by micro-labels', () => {
     const { fields } = build();
-    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Opens', 'Each time']);
-    expect(find(fields, 'stepper-value').textContent).toBe('3 opens a day');
-    const selected = chips(fields).filter(c => c.getAttribute('aria-checked') === 'true');
-    expect(selected.map(c => c.textContent)).toEqual(['10 min']);
+    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Daily allowance', 'Visits per day', 'Minutes per visit']);
+    expect(findAll(fields, 'stepper-input').map(i => i.value)).toEqual(['3', '10']);
+    expect(find(fields, 'intention-summary').textContent).toContain('30 minutes per day');
+  });
+
+  it('shows the daily maximum instead of visit-count controls in time mode', () => {
+    const { fields } = build({ intentionMode: 'dailyTime', dailyTimeMinutes: 60 });
+    expect(findAll(fields, 'micro-label').map(l => l.textContent))
+      .toEqual(['Daily allowance', 'Total minutes per day']);
+    expect(stepper(fields)).toHaveLength(2);
+    expect(find(fields, 'stepper-input').value).toBe('60');
   });
 
   it('calls zero opens what it is', () => {
     const { fields } = build({ maxGrants: 0, passMinutes: 10 });
-    expect(find(fields, 'stepper-value').textContent).toBe('Blocked');
+    expect(find(fields, 'intention-summary').textContent).toContain('Blocked outright');
     expect(stepper(fields)[0].disabled).toBe(true);
   });
 
@@ -194,9 +200,9 @@ describe('the intention', () => {
 
   it('shorter opens is a tightening too', async () => {
     const { fields } = build();
-    await fire(chips(fields).find(c => c.textContent === '5 min'), 'click');
+    await fire(stepper(fields)[2], 'click');
     expect(gates).toEqual([]);
-    expect(saved[0].domainLimits['instagram.com']).toMatchObject({ maxGrants: 3, passMinutes: 5 });
+    expect(saved[0].domainLimits['instagram.com']).toMatchObject({ maxGrants: 3, passMinutes: 9 });
   });
 
   it('more opens is a loosening — asked for, and not written meanwhile', async () => {
@@ -211,9 +217,43 @@ describe('the intention', () => {
 
   it('longer opens is a loosening too', async () => {
     const { fields } = build();
-    await fire(chips(fields).find(c => c.textContent === '30 min'), 'click');
+    await fire(stepper(fields)[3], 'click');
     expect(saved).toEqual([]);
-    expect(gates[0].newValue).toEqual({ maxGrants: 3, passMinutes: 30 });
+    expect(gates[0].newValue).toEqual({ maxGrants: 3, passMinutes: 11 });
+  });
+
+  it('accepts a custom whole-minute duration and preserves it through saving', async () => {
+    const { fields } = build();
+    const input = findAll(fields, 'stepper-input')[1];
+    input.value = '7';
+    await fire(input, 'change');
+    expect(gates).toEqual([]);
+    expect(saved[0].domainLimits['instagram.com'].passMinutes).toBe(7);
+  });
+
+  it('a single daily minute more is deferred while a single minute less saves', async () => {
+    config.domainLimits['instagram.com'] = { intentionMode: 'dailyTime', dailyTimeMinutes: 47 };
+    let fields = build().fields;
+    await fire(stepper(fields)[1], 'click');
+    expect(saved).toEqual([]);
+    expect(gates[0].newValue.dailyTimeMinutes).toBe(48);
+    fields = build().fields;
+    await fire(stepper(fields)[0], 'click');
+    expect(saved[0].domainLimits['instagram.com'].dailyTimeMinutes).toBe(46);
+  });
+
+  it('restores empty inputs and clamps custom minutes to the supported bounds', async () => {
+    const { fields } = build();
+    const input = findAll(fields, 'stepper-input')[1];
+    input.value = '';
+    await fire(input, 'change');
+    expect(input.value).toBe('10');
+    expect(saved).toEqual([]);
+    input.value = '99';
+    await fire(input, 'change');
+    expect(gates[0].newValue.passMinutes).toBe(30);
+    // A pending change must not look as if it has already taken effect.
+    expect(input.value).toBe('10');
   });
 
   it('keeps the part rule on the entry when it saves a tightening', async () => {
@@ -237,6 +277,7 @@ describe('the intention', () => {
     const { li } = build();
     const more = find(li, 'row-more');
     expect(more.tagName).toBe('details');
+    expect(more.children[0].textContent).toBe('Website rules and reasons');
     expect(find(more, 'row-reasons')).toBeDefined();
   });
 });
@@ -252,7 +293,7 @@ describe('the two site-specific answers', () => {
     expect(findAll(wrap, 'row-reason-input')).toHaveLength(2);
     // The visible caption repeats down the page; the accessible one doesn't.
     expect(findAll(wrap, 'row-reason-input')[1].getAttribute('aria-label'))
-      .toBe('Why you need it — instagram.com');
+      .toBe('Why you need it: instagram.com');
   });
 
   it('says where an answer is shared, because editing here edits there', () => {
@@ -414,13 +455,13 @@ describe('the parts-of-the-site control', () => {
     expect(group.getAttribute('role')).toBe('group');
     expect(group.getAttribute('aria-label')).toBe('Which parts of instagram.com are blocked');
     expect(scopeButtons(field).map(b => b.textContent))
-      .toEqual(['All of it', 'Only some parts', 'All except']);
-    expect(pressed(field)).toEqual(['Only some parts']);
+      .toEqual(['Block everything', 'Block selected parts', 'Allow selected parts']);
+    expect(pressed(field)).toEqual(['Block selected parts']);
   });
 
   it('opens on "All of it" for every row written before this existed', () => {
     const field = build({ maxGrants: 3, passMinutes: 10 });
-    expect(pressed(field)).toEqual(['All of it']);
+    expect(pressed(field)).toEqual(['Block everything']);
     // Nothing to list and nothing to explain until a scope is chosen.
     expect(find(field, 'row-parts-helper').hidden).toBe(true);
   });
@@ -455,7 +496,19 @@ describe('the parts-of-the-site control', () => {
     await fire(scopeButtons(field)[1], 'click');
     expect(saved).toEqual([]);
     expect(gates).toEqual([]);
-    expect(pressed(field)).toEqual(['Only some parts']);
+    expect(pressed(field)).toEqual(['Block selected parts']);
+  });
+
+  it.each([[1, 'only'], [2, 'except']])('opens the picker immediately for a new %s scope and requests the selected part', async (buttonIndex, scope) => {
+    const field = build({ maxGrants: 3 });
+    await fire(scopeButtons(field)[buttonIndex], 'click');
+    const picker = doc.body.children.at(-1);
+    expect(picker.className).toBe('add-modal part-picker-modal');
+    const dialog = find(picker, 'add-modal-box');
+    expect(dialog.getAttribute('aria-labelledby')).toBe(dialog.children[0].children[0].id);
+    await fire(findAll(picker, 'part-picker-option')[0], 'click');
+    expect(doc.body.children).not.toContain(picker);
+    expect(gates[0].newValue).toEqual({ scope, parts: ['instagram:reels'] });
   });
 
   it('explains what each scope means once it has something to act on', () => {
@@ -557,8 +610,8 @@ describe('the parts-of-the-site control', () => {
     // does, by choosing the scope first.
     const open = async (entry = { maxGrants: 3 }) => {
       const field = build(entry);
-      if (pressed(field)[0] === 'All of it') await fire(scopeButtons(field)[1], 'click');
-      find(field, 'row-parts-add')._handlers.click[0]({});
+      if (pressed(field)[0] === 'Block everything') await fire(scopeButtons(field)[1], 'click');
+      else find(field, 'row-parts-add')._handlers.click[0]({});
       return { field, picker: doc.body.children.at(-1) };
     };
 
@@ -722,7 +775,7 @@ describe('section rules on an app row', () => {
     load({ host: ANDROID });
     const field = build('com.instagram.android', 'Instagram');
     expect(scopeButtons(field).map(b => b.textContent))
-      .toEqual(['All of it', 'Only some parts', 'All except']);
+      .toEqual(['Block everything', 'Block selected parts', 'Allow selected parts']);
     expect(find(field, 'row-parts-unavailable')).toBeUndefined();
   });
 
@@ -841,9 +894,9 @@ describe('section rules on an app row', () => {
     it('speaks about an app rather than a website throughout', async () => {
       load({ host: ANDROID });
       const field = build('com.google.android.youtube', 'YouTube', { maxGrants: 3, scope: 'except', parts: ['youtube:subs'] });
-      expect(find(field, 'micro-label').textContent).toBe('Parts of the app');
+      expect(find(field, 'micro-label').textContent).toBe('What to block in this app');
       expect(helperText(field)).toBe('All of YouTube is blocked except the sections below.');
-      expect(find(field, 'row-parts-add').textContent).toBe('+ Add a section');
+      expect(find(field, 'row-parts-add').textContent).toBe('Choose a section');
     });
   });
 
@@ -972,5 +1025,62 @@ describe('always-allowed accounts', () => {
     expect(gates).toEqual([]);
     expect(saved).toEqual([]);
     expect(find(field, 'int-pw-error').hidden).toBe(false);
+  });
+});
+
+describe('Reddit allowances on the website row', () => {
+  const build = entry => ctx.buildRowRedditAllowField('reddit.com', 'Reddit', entry, noop);
+  const add = async (field, kind, text) => {
+    const group = find(field, `row-reddit-${kind}-input`);
+    group.children[0].value = text;
+    await fire(group.children[1], 'click');
+  };
+
+  it('shows both lists and offers the control on Reddit web, never its app', () => {
+    const field = build({ allowedSubreddits: ['rust'], allowedRedditPosts: ['cats:abc123'] });
+    expect(findAll(field, 'row-part-chip').map(c => c.children[0].textContent)).toEqual(['r/rust', 'r/cats · abc123']);
+    const body = (target, kind) => {
+      const li = makeElement('li');
+      ctx.buildRowBody({ li, fields: makeElement('div'), target, label: target,
+        limitInfo: { maxGrants: 3 }, kind, serviceReasons: {}, rerender: noop });
+      return li;
+    };
+    expect(find(body('reddit.com', ctx.ROW_KINDS.domain), 'row-reddit-field')).toBeTruthy();
+    expect(find(body('com.reddit.frontpage', ctx.ROW_KINDS.app), 'row-reddit-field')).toBeUndefined();
+  });
+
+  it('removes an allowance directly and deletes the empty key', async () => {
+    config.domainLimits['reddit.com'] = { maxGrants: 3, allowedSubreddits: ['rust'], allowedRedditPosts: ['cats:abc123'] };
+    const field = build(config.domainLimits['reddit.com']);
+    await fire(findAll(field, 'row-part-chip-remove')[0], 'click');
+    expect(gates).toEqual([]);
+    expect('allowedSubreddits' in saved[0].domainLimits['reddit.com']).toBe(false);
+    expect(saved[0].domainLimits['reddit.com'].allowedRedditPosts).toEqual(['cats:abc123']);
+  });
+
+  it('asks for a subreddit and for a post instead of saving an addition directly', async () => {
+    const field = build({ maxGrants: 3 });
+    await add(field, 'subreddits', 'r/Rust');
+    await add(field, 'posts', 'https://www.reddit.com/r/cats/comments/ABC123/cute_cat/');
+    expect(saved).toEqual([]);
+    expect(gates.map(g => g.changeType)).toEqual(['allow_reddit', 'allow_reddit']);
+    expect(gates[0].newValue).toEqual({ subreddits: ['rust'], posts: [] });
+    expect(gates[1].newValue).toEqual({ subreddits: [], posts: ['cats:abc123'] });
+  });
+
+  it('preserves earlier pending additions when another is requested', async () => {
+    config.pendingChanges = [{ changeType: 'allow_reddit', domain: 'reddit.com', newValue: { subreddits: ['rust'], posts: [] } }];
+    const field = build({ maxGrants: 3 });
+    await add(field, 'posts', 'https://reddit.com/r/cats/comments/abc123/');
+    expect(gates[0].newValue).toEqual({ subreddits: ['rust'], posts: ['cats:abc123'] });
+  });
+
+  it('rejects a broad feed or a post without a subreddit', async () => {
+    const field = build({ maxGrants: 3 });
+    await add(field, 'subreddits', 'r/all');
+    await add(field, 'posts', 'https://reddit.com/comments/abc123/');
+    expect(gates).toEqual([]);
+    expect(saved).toEqual([]);
+    expect(findAll(field, 'int-pw-error').every(e => e.hidden === false)).toBe(true);
   });
 });

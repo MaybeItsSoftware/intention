@@ -339,7 +339,7 @@ describe('callIntentionHosted', () => {
     const error = await ctx.callLLM(HOSTED).catch(e => e);
     expect(error.code).toBe('balance_exhausted');
     expect(ctx.isEntitlementError(error)).toBe(true);
-    expect(error.message).toMatch(/out of coaching credit/i);
+    expect(error.message).toMatch(/not enough coaching credit/i);
   });
 
   it('does not treat a server error as an entitlement problem', async () => {

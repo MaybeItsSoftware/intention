@@ -29,11 +29,11 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
             // The subtitle spells the path out, because "open Intention" alone
             // leaves them hunting for the right tab.
             subtitle: ShieldConfiguration.Label(
-                text: "You chose to block this. To ask for time, open Intention and go to Unlock → Ask your coach for time.",
+                text: "You chose to block this. To ask for time, open Intention and tap Ask for time, at the top of Today.",
                 color: UIColor(red: 0.63, green: 0.65, blue: 0.70, alpha: 1.0)
             ),
             primaryButtonLabel: ShieldConfiguration.Label(
-                text: "Close — ask Intention for time",
+                text: "Close, then ask Intention for time",
                 color: UIColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1.0)
             ),
             primaryButtonBackgroundColor: UIColor(red: 0.91, green: 0.91, blue: 0.92, alpha: 1.0)

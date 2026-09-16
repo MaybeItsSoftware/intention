@@ -290,6 +290,16 @@ describe('recordWalkAway', () => {
 });
 
 describe('recordSessionMinutes', () => {
+  it('banks a paused visit on the day it began after midnight', async () => {
+    const { ctx, chrome } = fresh();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(12, 0, 0, 0);
+    await ctx.recordSessionMinutes('twitter.com', 2, 'ran_out', yesterday.getTime());
+    expect(chrome.storage._store.dailyStats[ctx.dateKey(yesterday)]['twitter.com'].minutes).toBe(2);
+    expect((await ctx.getStatsForDomain('twitter.com')).minutesToday).toBe(0);
+  });
+
   it('accumulates minutesToday and minutesTodayAll', async () => {
     const { ctx } = fresh();
     await ctx.recordSessionMinutes('twitter.com', 7);
@@ -357,6 +367,36 @@ describe('aggregation across days and domains', () => {
     expect(stats.reasonsToday).toEqual(['a']);
   });
 
+  it('getStatsSummary gives the Today tab opens as well as minutes, per target', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('twitter.com', 10, 'a');
+    await ctx.recordGrant('twitter.com', 10, 'b');
+    await ctx.recordGrant('twitter.com', 5, 'more', { negotiated: true });
+    await ctx.recordSessionMinutes('twitter.com', 24);
+    const summary = await ctx.getStatsSummary();
+    expect(summary.perTargetToday['twitter.com']).toEqual({ minutes: 24, grants: 3, negotiated: 1 });
+  });
+
+  it('getStatsSummary lays out the week oldest first, with empty days and days before setup', async () => {
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    const { ctx } = fresh({ setupCompletedAt: twoDaysAgo.getTime() });
+    const keys = ctx.daysAgoKeys(7);
+    await ctx.recordSessionMinutes('reddit.com', 12);
+    const summary = await ctx.getStatsSummary();
+    expect(summary.week.map(d => d.date)).toEqual(keys.slice().reverse());
+    expect(summary.week[6]).toEqual({ date: keys[0], minutes: 12, kept: true, counted: true });
+    expect(summary.week[5].minutes).toBe(0);
+    expect(summary.week.filter(d => d.counted)).toHaveLength(3);
+  });
+
+  it('getStatsSummary marks a day with a negotiated pass as not kept', async () => {
+    const { ctx } = fresh();
+    await ctx.recordGrant('reddit.com', 5, 'please', { negotiated: true });
+    const summary = await ctx.getStatsSummary();
+    expect(summary.week[6].kept).toBe(false);
+  });
+
   it('getStatsSummary aggregates today across sites', async () => {
     const { ctx } = fresh();
     await ctx.recordSessionMinutes('twitter.com', 10);
@@ -416,5 +456,97 @@ describe('computeStreak', () => {
   it('counts nothing before setup', () => {
     const { ctx } = fresh();
     expect(ctx.computeStreak({}, key(ctx, 13), new Date(2026, 8, 11).getTime()).days).toBe(3);
+  });
+});
+
+// Safari's website time reaches the iPhone and Mac apps one way: the extension
+// pushes numbers under its own source id, the app adds every source into what
+// it shows and never writes any of it back.
+describe('website activity bridge', () => {
+  function withNative({ seed = {}, userAgent } = {}) {
+    const chrome = makeMockChrome(seed);
+    const sent = [];
+    const extraGlobals = {
+      browser: { runtime: { sendNativeMessage: async (_id, msg) => { sent.push(msg); return { ok: true }; } } }
+    };
+    if (userAgent !== undefined) extraGlobals.IS_APPLE_BUILD = userAgent === 'safari';
+    const ctx = loadSource('tracking.js', { chrome, extraGlobals });
+    return { ctx, chrome, sent };
+  }
+
+  it('mergeDailyStats sums every source into the local days', () => {
+    const { ctx } = fresh();
+    const today = ctx.dateKey();
+    const local = { [today]: { 'reddit.com': { minutes: 4, grants: 1, sessions: [{ reason: 'kept here' }] } } };
+    const merged = ctx.mergeDailyStats(local, {
+      mac: { updatedAt: 1, days: { [today]: { 'reddit.com': { minutes: 10, negotiated: 1 }, 'x.com': { minutes: 3 } } } },
+      work: { updatedAt: 1, days: { [today]: { 'x.com': { minutes: 2 } } } }
+    });
+    expect(merged[today]['reddit.com']).toMatchObject({ minutes: 14, grants: 1, negotiated: 1 });
+    expect(merged[today]['reddit.com'].sessions).toEqual([{ reason: 'kept here' }]);
+    expect(merged[today]['x.com'].minutes).toBe(5);
+    // The stored object is never mutated by a read.
+    expect(local[today]['reddit.com'].minutes).toBe(4);
+  });
+
+  it('mergeDailyStats hands back local untouched when nothing was pushed', () => {
+    const { ctx } = fresh();
+    const local = { '2026-09-01': { 'a.com': { minutes: 1 } } };
+    expect(ctx.mergeDailyStats(local, undefined)).toBe(local);
+    expect(ctx.mergeDailyStats(local, {})).toBe(local);
+  });
+
+  it('getStatsSummary and getUsageLog include pushed website time', async () => {
+    const today = new Date();
+    const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const { ctx } = fresh({
+      dailyStats: { [key]: { 'com.app': { minutes: 5 } } },
+      webActivity: { safari: { updatedAt: Date.now(), days: { [key]: { 'reddit.com': { minutes: 12 } } } } }
+    });
+    const summary = await ctx.getStatsSummary();
+    expect(summary.minutesToday).toBe(17);
+    expect(summary.perSiteToday['reddit.com']).toBe(12);
+    const log = await ctx.getUsageLog(7);
+    expect(log.map(e => e.domain)).toEqual(['reddit.com', 'com.app']);
+  });
+
+  it('streak starts from the earliest pushed setup when the app has none of its own', async () => {
+    const started = Date.now() - 5 * 86400000;
+    const { ctx } = fresh({ webActivity: { safari: { updatedAt: Date.now(), startedAt: started, days: {} } } });
+    const summary = await ctx.getStatsSummary();
+    expect(summary.streak.days).toBe(6);
+  });
+
+  it('pushes slimmed numbers only, under a stable source id', async () => {
+    const { ctx, chrome, sent } = withNative();
+    const key = ctx.dateKey();
+    await chrome.storage.local.set({
+      dailyStats: { [key]: { 'reddit.com': { minutes: 7, grants: 1, sessions: [{ reason: 'private' }] } } },
+      setupCompletedAt: 1234
+    });
+    await ctx.pushActivityToNative();
+    await ctx.pushActivityToNative();
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toMatchObject({ action: 'pushActivity', startedAt: 1234 });
+    expect(sent[0].days).toEqual({ [key]: { 'reddit.com': { minutes: 7, grants: 1 } } });
+    expect(sent[0].sourceId).toBeTruthy();
+    expect(sent[1].sourceId).toBe(sent[0].sourceId);
+  });
+
+  it('throttles pushes after stats writes', async () => {
+    const { ctx, sent } = withNative();
+    await ctx.recordSessionMinutes('reddit.com', 3);
+    await ctx.recordSessionMinutes('reddit.com', 2);
+    await new Promise(r => setTimeout(r, 10));
+    expect(sent.filter(m => m.action === 'pushActivity')).toHaveLength(1);
+  });
+
+  it('never pushes without native messaging, or on a non-Apple build that has it', async () => {
+    const { ctx } = fresh();
+    await ctx.recordSessionMinutes('reddit.com', 3);
+    const firefox = withNative({ userAgent: 'firefox' });
+    await firefox.ctx.recordSessionMinutes('reddit.com', 3);
+    await firefox.ctx.pushActivityToNative();
+    expect(firefox.sent.filter(m => m.action === 'pushActivity')).toHaveLength(0);
   });
 });

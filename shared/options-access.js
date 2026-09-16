@@ -58,7 +58,7 @@ async function verifyAndStore(platform, receipt) {
       pendingVerification: true,
       lastError: String(e.message || e)
     });
-    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically — reopen Settings to retry.");
+    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically. Reopen Settings to retry.");
   }
 }
 
@@ -185,17 +185,20 @@ async function envKeyDefaults() {
     const provider = wanted && PROVIDERS[wanted] && !PROVIDERS[wanted].hosted ? wanted : '';
     const apiKey = (provider && env[`${provider.toUpperCase()}_API_KEY`]) || env.API_KEY || '';
     if (!provider && !apiKey) return null;
-    return { provider, apiKey };
+    const model = (provider && env[`${provider.toUpperCase()}_MODEL`]) || env.DEFAULT_MODEL || '';
+    return { provider, apiKey, model };
   } catch (e) {
     return null;
   }
 }
 
-async function refreshAccessUI(containerId, { compact = false } = {}) {
+async function refreshAccessUI(containerId, { compact = false, errorCode = null } = {}) {
   const container = document.getElementById(containerId);
   if (!container) return;
   const access = await getAccessState();
   const entitlement = access?.entitlement || null;
+  refreshCoachAccessStatus(access, errorCode);
+  const keyConfig = BYOK_IS_OFFERED && !compact ? await getConfig() : null;
 
   const rerender = () => refreshAccessUI(containerId, { compact });
 
@@ -203,6 +206,8 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
     entitlement,
     compact,
     keyDefaults: await envKeyDefaults(),
+    keyConfig,
+    errorCode,
     // A custom key is access too, but it leaves no entitlement behind — without
     // this the paywall keeps asking for one after the key is already working.
     route: access?.route || null,
@@ -283,18 +288,17 @@ async function refreshAccessUI(containerId, { compact = false } = {}) {
     // Only Android's bridge can answer this; Apple's omits it and it stays
     // undefined, which renders nothing. See storeAccountRestored in billing.js.
     accountRestored: await accountRestoredFlag(),
-    // Offered wherever a store doesn't forbid it: Chrome/Firefox, where it is
-    // the way in, and Android, where it sits under the purchase buttons as an
-    // alternative. On Apple it stays null and lives solely in Settings ->
-    // Advanced (see BYOK_IS_OFFERED in billing.js for why the two differ).
-    //
-    // Entering the key in place, rather than jumping to a disclosure inside a
-    // disclosure, is reserved for builds where BYOK leads — and only in the
-    // full-size paywall. The compact one renders inside a blocked page, which
-    // is the worst possible moment to ask someone to go and fetch a key.
-    onUseOwnKey: BYOK_IS_OFFERED ? () => openAdvancedKeySection() : null,
-    onSaveKey: BYOK_IS_PRIMARY && !compact ? async ({ provider, apiKey, model }) => {
+    // Provider configuration belongs to the API-key flow. Apple has no flow;
+    // compact gates send users to the full settings card instead of collecting
+    // credentials while they are trying to open a blocked page.
+    onUseOwnKey: BYOK_IS_OFFERED ? () => openOwnKeyFlow() : null,
+    onSaveKey: BYOK_IS_OFFERED && !compact ? async ({ provider, apiKey, model }) => {
       await sendBg({ action: 'saveSettings', config: { provider, apiKey, model } });
+      await rerender();
+      await onAccessChanged();
+    } : null,
+    onRemoveKey: BYOK_IS_OFFERED && !compact ? async () => {
+      await sendBg({ action: 'saveSettings', config: { provider: '', apiKey: '', model: '' } });
       await rerender();
       await onAccessChanged();
     } : null
@@ -364,6 +368,7 @@ function wireAccessRefreshOnReturn(containerId) {
 // stops offering a locked coach (or starts offering an unlocked one).
 async function onAccessChanged() {
   const access = await getAccessState();
+  refreshCoachAccessStatus(access);
   const modal = document.getElementById('paywall-modal');
   if (access?.route !== 'locked' && modal && !modal.hidden) modal.hidden = true;
   // The header chip is the one balance readout that is on screen no matter
@@ -373,32 +378,58 @@ async function onAccessChanged() {
 
 // The setup wizard and the settings view both need a way to send someone who
 // is locked out to the purchase flow without derailing what they were doing.
-async function openPaywallModal() {
+async function openPaywallModal(errorCode = null) {
   const modal = document.getElementById('paywall-modal');
   modal.hidden = false;
-  await refreshAccessUI('paywall-modal-body', { compact: true });
+  await refreshAccessUI('paywall-modal-body', { compact: true, errorCode });
 }
 
-async function openAdvancedKeySection() {
-  // Reached from the onboarding paywall on browser and Android builds: the
-  // advanced field lives in the settings view, so the wizard has to be
-  // committed first or the click would silently do nothing behind a hidden
-  // view. Committing is safe by then — the access step is the last thing
-  // before "done", and blocking is already configured either way.
+async function openOwnKeyFlow() {
+  // A compact gate hands off to the full settings flow. If setup is still
+  // showing, finish it first so the destination is visible.
   if (!document.getElementById('setup-view').hidden) {
     await finishSetup();
   }
   setSettingsSection('settings');
-  const advanced = document.getElementById('advanced-card');
-  const keyDetails = document.getElementById('custom-key-details');
   const modal = document.getElementById('paywall-modal');
   if (modal) modal.hidden = true;
-  if (advanced) advanced.open = true;
+  await refreshAccessUI('access-paywall');
+  const keyDetails = document.getElementById('int-pw-key-route');
   if (keyDetails) {
     keyDetails.open = true;
     keyDetails.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
-  document.getElementById('api-key-input-2')?.focus();
+  document.getElementById('int-pw-key')?.focus();
+}
+
+function refreshCoachAccessStatus(access, errorCode = null) {
+  const status = document.getElementById('coach-access-status');
+  if (!status || !access) return;
+  status.innerHTML = '';
+  const locked = access.route === 'locked';
+  const low = access.route === 'hosted' && !!access.lowCredit;
+  const insufficient = errorCode === 'balance_exhausted';
+  status.hidden = !locked && !low && !insufficient;
+  if (status.hidden) return;
+  const message = document.createElement('p');
+  message.textContent = BILLING_MODE === 'byok'
+    ? 'Your coach needs an API key before you can talk.'
+    : insufficient
+      ? 'Not enough coaching credit to send this message. Top up to continue.'
+      : locked
+      ? 'No coaching credit. Top up before talking with your coach.'
+      : `Coaching credit is low: ${Number(access.balanceCredits || 0).toLocaleString()} credits. Top up soon to keep talking.`;
+  status.appendChild(message);
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'secondary';
+  button.textContent = BILLING_MODE === 'byok' ? 'Set up your API key' : 'Top up coaching credit';
+  button.addEventListener('click', () => {
+    if (BILLING_MODE === 'byok') { openOwnKeyFlow(); return; }
+    setSettingsSection('settings');
+    document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  status.appendChild(button);
 }
 
 // Every coach entry point funnels through this: with no access, the paywall

@@ -107,27 +107,15 @@ Deferred because it is Kotlin outside the shared web layer and could not be run
 or screenshotted during the audit. It is squarely an onboarding problem and
 should not stay deferred long.
 
-### 2.3 The macOS host app has no onboarding at all
+### 2.3 The macOS host app has no onboarding at all — RESOLVED
 
-`Intention Apple/Shared (App)/Resources/Base.lproj/Main.html` is a separate,
-minimal page untouched by the design system. It:
-
-- calls the product **"Intention Safari"** (the Xcode target name leaking; the
-  name appears nowhere else in the product)
-- offers one button reading **"Quit and Open Safari Extensions Preferences…"**,
-  which threatens to quit the app the user just opened
-- carries its own bare "Coaching Credit" / "Recover an interrupted purchase"
-  block with none of the shared paywall's copy
-
-A macOS user reaches the real wizard only by opening the *extension's* options
-page, which nothing tells them to do.
-
-Deferred for the same reason as 2.2, plus the name leak may need an Xcode
-project change rather than a copy change.
-
----
-
-## 3. Follow-ups created or left by the audit work
+The Mac app no longer has a page of its own. It loads the shared
+`options.html` exactly as the iPhone app does, with the coach running in-app
+(`BackgroundJSHost`), so a Mac user gets the real wizard on first launch — its
+Safari step reads the extension's actual on/off state and opens Intention's row
+in Safari's Extensions settings. The window is named "Intention", the
+"Quit and Open…" button is gone, and credit is bought through the shared
+paywall. `Main.html`, `Script.js` and `Style.css` are deleted.
 
 ### 3.1 "Absolute max" vs "Daily limit" vocabulary split — RESOLVED
 
@@ -278,11 +266,9 @@ app. Not fixed here for the reason §2 gives: it is Kotlin that cannot be
 rendered from a dev machine, and §2.2 already wants that screen redesigned
 rather than recoloured. Do both at once, on a device.
 
-### 6.2 The macOS host shell is untouched
+### 6.2 The macOS host shell is untouched — RESOLVED
 
-`Intention Apple/Shared (App)/Resources/Main.html` and `Style.css` are outside
-`shared/`, have no tokens, and now differ from everything else. Same reason as
-§2.3 — it needs Xcode to look at.
+Deleted along with §2.3: there is no Mac-only shell left to theme.
 
 ### 6.3 The browser build's "use your own API key" route has no form on the
 coaching page
@@ -383,13 +369,8 @@ mistaken for a defect on first pass; clicking between the two apps a few times
 re-arms it exactly as designed. It self-heals on launch, and the alternative —
 polling, or dropping the once-per-event guard — buys a nag. Left as is.
 
-Note that it deliberately does **not** touch
-`Shared (App)/Resources/Base.lproj/Main.html`. Adding a state line to that page
-would have been the obvious place for this, and it was left alone on purpose:
-§2.3 and §6.2 both want that shell *redesigned* — it still calls the product
-"Intention Safari", still offers to quit the app you just opened, and still has
-none of the design system — and patching a page that is scheduled for a rewrite
-buys a worse rewrite. This is "we knew and chose not to", not an oversight.
+(The host page this note once left alone is gone — see §2.3. The app now shows
+the extension's real state in the settings sidebar and the wizard.)
 
 ### 7.2 Instagram and TikTok page scope ships inert on purpose
 

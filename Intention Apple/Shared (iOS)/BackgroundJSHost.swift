@@ -18,6 +18,11 @@
 
 import Foundation
 import WebKit
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 final class BackgroundJSHost: NSObject {
     static let shared = BackgroundJSHost()
@@ -72,6 +77,38 @@ final class BackgroundJSHost: NSObject {
             return
         }
         hostedWebView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+    }
+
+#if os(iOS)
+    typealias HostView = UIView
+#elseif os(macOS)
+    typealias HostView = NSView
+#endif
+
+    // Puts the hidden web view inside the app's own view hierarchy, behind the
+    // visible page, at 1x1.
+    //
+    // A WKWebView that belongs to no window is, to WebKit, a page nobody can
+    // see, and iOS is free to throttle or suspend its web content process. On
+    // a real device that is what left the settings page waiting on a getConfig
+    // the background never got to answer — App Review's "blank page without
+    // functionality right after launch". In a window it is a visible page like
+    // any other, and it stays live for as long as the app is in front.
+    func attach(to container: HostView) {
+        runOnMain { [weak self] in
+            self?.setUpWebViewIfNeeded()
+            guard let hostedWebView = self?.webView, hostedWebView.superview !== container else { return }
+            hostedWebView.removeFromSuperview()
+            hostedWebView.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+#if os(iOS)
+            hostedWebView.isUserInteractionEnabled = false
+            hostedWebView.accessibilityElementsHidden = true
+            container.insertSubview(hostedWebView, at: 0)
+#elseif os(macOS)
+            hostedWebView.setAccessibilityElement(false)
+            container.addSubview(hostedWebView, positioned: .below, relativeTo: nil)
+#endif
+        }
     }
 
     // Sends `message` to background.js's chrome.runtime.onMessage listeners,

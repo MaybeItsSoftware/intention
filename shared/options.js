@@ -80,38 +80,150 @@ function allBlockedTargets() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  populateProviderDropdowns();
-  await renderCurrentView();
+  bindOnce('boot-retry-btn', 'click', () => window.location.reload());
+  // The last line of defence against a blank screen: if no view has put
+  // anything up by now, say so and offer the one thing that can help.
+  setTimeout(() => {
+    if (!document.getElementById('boot-view').hidden) bootFailed();
+  }, BOOT_WATCHDOG_MS);
+  try {
+    await renderCurrentView();
+  } catch (e) {
+    console.error('[Intention] first render failed', e);
+    bootFailed();
+  }
 });
 
+// How long the first screen waits on the background before it stops waiting.
+// The extensions answer in milliseconds; the native hosts have to start a web
+// view first, which is usually well under this.
+const BOOT_CONFIG_TIMEOUT_MS = 4000;
+const BOOT_WATCHDOG_MS = 15000;
+// Named rather than "everything": not every native bridge reads a null key list
+// as the whole store.
+const BOOT_STORAGE_KEYS = [
+  'setupComplete', 'setupCompletedAt', 'blockedDomains', 'domainLimits', 'blockedApps',
+  'appLimits', 'appLabels', 'serviceReasons', 'pendingChanges', 'userContext',
+  'contextProjects', 'contextReasons', 'coachInstructions', 'provider', 'model',
+  'apiKey', 'entitlement', 'leaveDelayMinutes'
+];
+
+// The first read of the config, with a way round a background that is slow or
+// gone. Storage itself does not go through the background in any build — in
+// the apps it is the App Group, answered natively — so it can always say
+// whether setup is done, which is all the first screen needs to pick a view.
+// Later reads go through getConfig as normal.
+async function getBootConfig() {
+  const timedOut = Symbol('timeout');
+  const state = await Promise.race([
+    getConfig(),
+    new Promise(resolve => setTimeout(() => resolve(timedOut), BOOT_CONFIG_TIMEOUT_MS))
+  ]);
+  if (state && state !== timedOut) return state;
+  console.warn('[Intention] background did not answer getConfig; reading storage directly');
+  return new Promise(resolve => {
+    try {
+      chrome.storage.local.get(BOOT_STORAGE_KEYS, (stored) => resolve(stored || {}));
+    } catch (e) {
+      resolve({});
+    }
+  });
+}
+
+// Called by whichever view has just put real content on screen — not when the
+// view is merely chosen, since the wizard's pages are all hidden until its
+// first showStep, and hiding this any earlier left a gap with nothing on it.
+function hideBootView() {
+  const boot = document.getElementById('boot-view');
+  if (boot) boot.hidden = true;
+}
+
+function bootFailed() {
+  const boot = document.getElementById('boot-view');
+  if (!boot) return;
+  document.getElementById('setup-view').hidden = true;
+  document.getElementById('settings-view').hidden = true;
+  boot.hidden = false;
+  document.getElementById('boot-status').textContent = 'Intention didn’t start properly. Try again, and if it keeps happening, restart the app.';
+  document.getElementById('boot-retry-btn').hidden = false;
+}
+
 async function renderCurrentView() {
-  const state = await getConfig();
+  const state = await getBootConfig();
   const setupComplete = !!state?.setupComplete;
   // The iOS host shows its own "turn on the Safari extension" banner, which
   // would otherwise sit on top of the wizard step that says the same thing at
   // greater length. Hand over while the wizard is running, take it back after.
   if (HAS_SAFARI_EXTENSION) window.intentionExtension.setSetupComplete(setupComplete);
-  if (setupComplete) showSettingsView(state);
+  // Setting up in Safari first is the common way onto a Mac, and it marks
+  // setup complete before the app has ever opened — so the app would have
+  // skipped straight past anything that explained it. It gets its own short
+  // welcome instead, once.
+  if (setupComplete && IS_MAC_APP && !(await macOnboarded())) showSetupView('mac-tour');
+  else if (setupComplete) showSettingsView(state);
   else showSetupView();
+}
+
+// In the App Group, not CONFIG_KEYS: it is about this app on this Mac, and the
+// extension has no reason to see it.
+async function macOnboarded() {
+  try {
+    const stored = await new Promise(resolve => chrome.storage.local.get(['macOnboardedAt'], resolve));
+    return !!(stored && stored.macOnboardedAt);
+  } catch (e) {
+    return true;
+  }
+}
+
+function markMacOnboarded() {
+  return new Promise(resolve => {
+    try { chrome.storage.local.set({ macOnboardedAt: Date.now() }, () => resolve()); } catch (e) { resolve(); }
+  });
+}
+
+// The "Open Intention at login" switch, in the Mac welcome and the This Mac
+// card. SMAppService (macOS 13+) owns the real state, so every paint reads it
+// back rather than trusting the click: macOS can answer "needs approval", and
+// the user can change it in System Settings behind our back.
+async function wireLoginSwitch(btnId, subId, approveId) {
+  if (!IS_MAC_APP || !window.intentionExtension.loginItem) return;
+  const btn = document.getElementById(btnId);
+  const sub = document.getElementById(subId);
+  const approve = document.getElementById(approveId);
+  if (!btn || !sub || !approve) return;
+
+  const paint = (st) => {
+    const available = !!(st && st.available);
+    const pending = !!(st && st.requiresApproval);
+    const on = !!(st && st.enabled) || pending;
+    btn.disabled = !available;
+    btn.setAttribute('aria-checked', String(on));
+    approve.hidden = !pending;
+    sub.textContent = !available
+      ? 'Needs macOS 13 or later.'
+      : pending
+        ? 'macOS wants you to allow it in Login Items first.'
+        : on ? 'On. Intention opens when you log in.' : 'Off.';
+  };
+  const read = () => new Promise(resolve => window.intentionExtension.loginItem(resolve)).then(paint);
+
+  if (!btn.dataset.wired) {
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
+      const on = btn.getAttribute('aria-checked') === 'true';
+      btn.disabled = true;
+      const st = await new Promise(resolve => window.intentionExtension.setLoginItem(!on, resolve));
+      paint(st);
+    });
+    approve.addEventListener('click', () => window.intentionExtension.openLoginItemsSettings());
+    // Back from System Settings is when an approval lands.
+    window.addEventListener('intention-app-active', read);
+  }
+  await read();
 }
 
 // Only the bring-your-own-key providers are listed: the hosted provider isn't
 // something the user picks, it's what a coaching-credit balance routes to.
-function populateProviderDropdowns() {
-  for (const id of ['provider-select-2']) {
-    const sel = document.getElementById(id);
-    if (!sel) continue;
-    sel.innerHTML = '';
-    for (const [key, cfg] of Object.entries(PROVIDERS)) {
-      if (cfg.hosted) continue;
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = cfg.label;
-      sel.appendChild(opt);
-    }
-  }
-}
-
 const HAS_APP_BLOCKING = !!window.intentionApps;
 // iOS app blocking goes through the native Screen Time bridge instead of a
 // package list — the FamilyActivitySelection is opaque, so the web layer only
@@ -123,6 +235,9 @@ const HAS_IOS_APP_BLOCKING = !HAS_APP_BLOCKING && !!window.intentionScreenTime;
 // waking up. Absent everywhere else — on Chrome/Firefox/macOS the extension is
 // already running by the time this page is open.
 const HAS_SAFARI_EXTENSION = !!window.intentionExtension;
+// The Mac app specifically (ios-bridge.js marks the root before any script
+// here runs). It gets its own welcome, a login-item switch, and no Screen Time.
+const IS_MAC_APP = HAS_SAFARI_EXTENSION && document.documentElement.classList.contains('platform-mac');
 
 
 // ---- Mobile Apps/Websites tab toggle ----
@@ -155,14 +270,27 @@ function applySettingsTab() {
   document.getElementById('websites-card').classList.toggle('tab-hidden', activeSettingsTab !== 'websites');
 }
 
-// ---- Mobile section tabs (Blocking / Activity / Coach / Unlock / Settings) ----
+// ---- Section tabs (Today / Intentions / Coach / Settings) ----
+//
+// Today used to be split across Blocking (the streak, what starts tomorrow),
+// Activity (three lines of minutes and a log) and, on iPhone, a separate Unlock
+// tab. It is one page now, and the page someone lands on. The old names still
+// resolve — a remembered tab from before, a notification, the chat's
+// "?section=" button, Android's deep-link extra — so nothing that links here
+// has to change with it.
+const SETTINGS_SECTIONS = ['today', 'intentions', 'coach', 'settings'];
+const SECTION_ALIASES = { blocking: 'intentions', activity: 'today', unlock: 'today' };
+const SECTION_TITLES = { today: 'Today', intentions: 'Intentions', coach: 'Coach', settings: 'Settings' };
 
-const SETTINGS_SECTIONS = ['blocking', 'activity', 'coach', 'unlock', 'settings'];
+function resolveSection(name) {
+  const section = SECTION_ALIASES[name] || name;
+  return SETTINGS_SECTIONS.includes(section) ? section : null;
+}
+
 let activeSettingsSection = (() => {
   try {
-    const saved = localStorage.getItem('activeSettingsSection');
-    return SETTINGS_SECTIONS.includes(saved) ? saved : 'blocking';
-  } catch (e) { return 'blocking'; }
+    return resolveSection(localStorage.getItem('activeSettingsSection')) || 'today';
+  } catch (e) { return 'today'; }
 })();
 
 function initSectionTabs() {
@@ -184,7 +312,7 @@ function applyIOSUnlockLanding() {
   iosScreenTimeStatus().then(st => {
     if (!st || !st.authorized || !(st.selectionCount > 0)) return;
     if (new URLSearchParams(window.location.search).get('section')) return;
-    setSettingsSection('unlock');
+    setSettingsSection('today');
   });
 }
 
@@ -192,12 +320,20 @@ function applyIOSUnlockLanding() {
 // button) overrides whatever tab localStorage last remembered, so the user
 // actually lands where the link promised instead of wherever they left off.
 function applyDeepLinkSection() {
-  const section = new URLSearchParams(window.location.search).get('section');
-  if (!section || !SETTINGS_SECTIONS.includes(section)) return;
+  const requested = new URLSearchParams(window.location.search).get('section');
+  const section = resolveSection(requested);
+  if (!section) return;
   setSettingsSection(section);
-  const target = document.querySelector(`#settings-view [data-section="${section}"]`);
+  // An old "?section=unlock" still means the card, not just the page it is on.
+  const target = requested === 'unlock'
+    ? document.getElementById('unlock-card')
+    : document.querySelector(`#settings-view [data-section="${section}"]`);
   target?.scrollIntoView({ block: 'start' });
-  if (section === 'settings') document.getElementById('api-key-input-2')?.focus();
+  if (section === 'settings') {
+    const keyFlow = document.getElementById('int-pw-key-route');
+    if (keyFlow) keyFlow.open = true;
+    document.getElementById('int-pw-key')?.focus();
+  }
 }
 
 // The header credit chip: the balance, on every tab, on every settings open.
@@ -215,7 +351,10 @@ async function refreshCreditChip() {
   const chip = document.getElementById('credit-chip');
   if (!chip) return;
   const access = await getAccessState();
-  if (!access || access.route === 'byok') {
+  // Chrome and Firefox run on the user's own key and nothing else, so there is
+  // no balance to show even before a key is saved — "Credit 0" in the sidebar
+  // would offer them something those builds cannot sell.
+  if (!access || access.route === 'byok' || BILLING_MODE === 'byok') {
     chip.hidden = true;
     return;
   }
@@ -230,7 +369,8 @@ async function refreshCreditChip() {
   chip.hidden = false;
 }
 
-function setSettingsSection(section) {
+function setSettingsSection(name) {
+  const section = resolveSection(name) || 'today';
   activeSettingsSection = section;
   try { localStorage.setItem('activeSettingsSection', section); } catch (e) {}
   applySettingsSection();
@@ -248,6 +388,11 @@ function applySettingsSection() {
   document.querySelectorAll('#settings-view [data-section]').forEach(el => {
     el.classList.toggle('section-hidden', el.dataset.section !== activeSettingsSection);
   });
+  document.getElementById('section-title').textContent = SECTION_TITLES[activeSettingsSection];
+  const dateEl = document.getElementById('section-date');
+  dateEl.textContent = activeSettingsSection === 'today'
+    ? new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })
+    : '';
 }
 
 // ---- Add-item popup modals ----
@@ -421,6 +566,12 @@ function renderContextCard(userContext) {
   } else {
     contextEditInput.value = '';
   }
+  const todayContext = document.getElementById('today-coach-context');
+  if (todayContext) {
+    todayContext.hidden = !hasContext;
+    todayContext.textContent = hasContext ? userContext.trim() : '';
+    document.getElementById('today-coach-empty').hidden = hasContext;
+  }
 }
 
 // The coach's cross-day notepad (see note_observation in background.js).
@@ -465,103 +616,17 @@ function bindOnce(id, event, handler) {
   document.getElementById(id)?.addEventListener(event, handler);
 }
 
-// The custom-key override, on the builds that may have one.
-//
-// Where a store sells credit this really is a developer override and is
-// described as one. On Chrome and Firefox it is one of the two ordinary ways
-// to turn the coach on — offered as such in the AI access card — so calling it
-// "developer mode" down here would only make people think they'd taken a
-// wrong turn. Same fields either way; this is where you change or clear one.
-//
-// On Apple there is no such build. The card is removed from the DOM rather
-// than hidden, so there is nothing a reviewer can open — or a user can find
-// — that enables the coach outside In-App Purchase (guideline 3.1.1; see
-// IS_APPLE_BUILD in providers.js, and resolveAIRoute() in background.js for
-// the routing half, which is what actually makes a stored key inert).
-function wireCustomKeySection(state) {
-  if (IS_APPLE_BUILD) {
-    document.getElementById('advanced-card')?.remove();
-    return;
-  }
-
-  document.getElementById('custom-key-summary-note').textContent =
-    BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
-  document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
-    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here turns the coach off until you add another.'
-    : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
-
-  const provSel = document.getElementById('provider-select-2');
-  const modelInput = document.getElementById('model-input-2');
-  const keyInput = document.getElementById('api-key-input-2');
-  provSel.value = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : 'anthropic';
-  modelInput.value = state.model || '';
-  keyInput.value = state.apiKey || '';
-
-  const syncPlaceholder = () => {
-    const p = PROVIDERS[provSel.value];
-    modelInput.placeholder = p ? p.modelPlaceholder : '';
-  };
-
-  // DEFAULT_PROVIDER was read by nothing at all: env.txt advertised it, the
-  // parser returned it, and no line in the codebase ever looked at the key.
-  // So a file that said `groq` still opened on Anthropic with an empty box,
-  // and the GROQ_API_KEY sitting right underneath was never reachable without
-  // first changing the dropdown by hand. Honoured once, on first load only,
-  // and only when there is no stored provider of the user's own -- applying it
-  // from the change handler too would silently undo every manual selection.
-  let envProviderApplied = false;
-
-  const syncEnvSettings = (parsedEnv) => {
-    if (!envProviderApplied) {
-      envProviderApplied = true;
-      const stored = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : '';
-      const wanted = String(parsedEnv.DEFAULT_PROVIDER || '').trim().toLowerCase();
-      if (!stored && wanted && PROVIDERS[wanted] && !PROVIDERS[wanted].hosted) {
-        provSel.value = wanted;
-        syncPlaceholder();
-      }
-    }
-
-    const provider = provSel.value;
-    const providerKey = `${provider.toUpperCase()}_API_KEY`;
-    const modelKey = `${provider.toUpperCase()}_MODEL`;
-
-    if (!keyInput.value && (parsedEnv[providerKey] || parsedEnv.API_KEY)) {
-      keyInput.value = parsedEnv[providerKey] || parsedEnv.API_KEY;
-    }
-    if (!modelInput.value && (parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL)) {
-      modelInput.value = parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL;
-    }
-  };
-
-  provSel.addEventListener('change', () => {
-    syncPlaceholder();
-    loadEnv().then(syncEnvSettings);
-  });
-  syncPlaceholder();
-  loadEnv().then(syncEnvSettings);
-
-  bindOnce('save-provider-btn', 'click', async () => {
-    const provider = provSel.value;
-    const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
-    const apiKey = keyInput.value.trim();
-    await sendBg({ action: 'saveSettings', config: { provider, model, apiKey } });
-    setStatus('provider-status', apiKey ? 'Saved. Custom key is now in use.' : 'Saved.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
-
-  // Clearing the override drops straight back to the hosted/credit route.
-  bindOnce('clear-provider-btn', 'click', async () => {
-    keyInput.value = '';
-    await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
-    setStatus('provider-status', 'Custom key cleared.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
-}
-
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
+  // Lets the wide layout take the whole window for its sidebar; the wizard
+  // keeps the centred column it was designed in.
+  document.body.classList.add('in-settings');
+  hideBootView();
+  if (IS_MAC_APP) {
+    document.getElementById('mac-app-card').hidden = false;
+    wireLoginSwitch('mac-login-btn', 'mac-login-sub', 'mac-login-approve-btn');
+  }
 
   renderContextCard(state.userContext);
   await renderCoachObservations();
@@ -624,7 +689,7 @@ async function showSettingsView(state) {
   // are still empty looks like the rules vanished just after setup.
   renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
   renderPendingChanges(state);
-  refreshStreak();
+  refreshToday(state);
   wireAddModals();
 
   if (HAS_APP_BLOCKING) {
@@ -642,14 +707,18 @@ async function showSettingsView(state) {
     document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  // ---- Advanced: custom API key ----
-  wireCustomKeySection(state);
-
   initSettingsTabs();
   initSectionTabs();
 
-  const summary = await sendBg({ action: 'getStatsSummary' });
-  renderStats(summary);
+  bindOnce('today-coach-btn', 'click', async () => {
+    if (await requireAccess()) openCoachModal();
+  });
+  bindOnce('usage-log-more', 'click', () => {
+    usageLogExpanded = !usageLogExpanded;
+    applyUsageLogExpanded();
+  });
+  wireTodayRefresh();
+  refreshSideNote();
   await refreshUsageLog(state);
 
   bindOnce('open-coach-btn', 'click', async () => {
@@ -660,302 +729,54 @@ async function showSettingsView(state) {
     document.getElementById('paywall-modal').hidden = true;
   });
 
-  // Disabling all blocking is the biggest loosening of all — gate it.
-  bindOnce('disable-all-btn', 'click', async () => {
-    const cfg = await getConfig();
-    const iosStatus = HAS_IOS_APP_BLOCKING ? await iosScreenTimeStatus() : null;
-    const iosHasApps = !!(iosStatus && iosStatus.selectionCount > 0);
-    if (!(cfg.blockedDomains || []).length && !(cfg.blockedApps || []).length && !iosHasApps) {
-      // Used to write into #prompt-status, which lives inside the collapsed
-      // "Coach instructions" disclosure in a different section — so on mobile
-      // this said nothing at all.
-      setStatus('disable-all-status', 'Nothing is blocked right now.', '');
-      return;
-    }
-    requestLoosening({
-      changeType: 'disable_all',
-      domain: null,
-      title: 'Turn off all blocking?',
-      subtitle: 'This turns off blocking for every site and app on your list.',
-      onApproved: async () => {
-        const state = await getConfig();
-        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
-        if (HAS_APP_BLOCKING) {
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
-        }
-        if (HAS_IOS_APP_BLOCKING) {
-          window.intentionScreenTime.clear(() => refreshIOSAppsCard());
-        }
-      }
-    });
-  });
-
-  await refreshLeavingCard();
-  wireLeavingCard();
-  applyLeaveDeepLink();
-}
-
-// ---- Leaving Intention ----------------------------------------------------
-//
-// The settings half of WP9. The other halves are background.js (the tab
-// interposition, the stand-down, applySettingChange's 'uninstall' branch) and
-// options-coach.js (the always-live exit inside the conversation).
-//
-// The one rule this file must not break: nothing here may ever hide, disable
-// or delay a way out. The cool-off is something the user chose; the exit
-// beside it works during the cool-off, and says so.
-
-// The ladder, in the words the card uses. LEAVE_DELAY_CHOICES in rules.js is
-// the list; this is only how each rung reads, and the second line is what
-// turns a number into a consequence.
-const LEAVE_DELAY_LABELS = {
-  0: { label: 'No delay', detail: 'Talk to your coach, then remove it there and then.' },
-  60: { label: '1 hour', detail: 'Ask now, remove in an hour.' },
-  1440: { label: '24 hours', detail: 'Ask now, remove tomorrow.' },
-  4320: { label: '3 days', detail: 'The longest commitment on offer.' }
-};
-
-// "in 21 hours" / "3 hours ago" — coarse on purpose. A live-ticking countdown
-// to being allowed to leave would be a thing to sit and watch, which is the
-// opposite of what a cool-off is for.
-function formatLeaveSpan(ms) {
-  const minutes = Math.max(0, Math.round(ms / 60000));
-  if (minutes < 1) return 'less than a minute';
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'}`;
-}
-
-// Everything on the card that depends on stored state. Called on open, and
-// again after every action that could have moved it.
-async function refreshLeavingCard() {
-  const card = document.getElementById('leaving-card');
-  if (!card) return;
-  const leave = await sendBg({ action: 'getLeaveState' });
-  if (!leave || leave.error) return;
-  leavingState = leave;
-
-  renderLeaveChoices(leave);
-  renderLeavePending(leave);
-  renderLeaveRemoveRow(leave);
-}
-
-// Held so the click handlers, which are bound once, can read the state the
-// last render painted from rather than re-fetching it on every tap.
-let leavingState = null;
-
-function renderLeaveChoices(leave) {
-  const box = document.getElementById('leave-delay-choices');
-  box.textContent = '';
-  for (const minutes of LEAVE_DELAY_CHOICES) {
-    const copy = LEAVE_DELAY_LABELS[minutes];
-    if (!copy) continue;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pill leave-choice' + (minutes === leave.leaveDelayMinutes ? ' selected' : '');
-    btn.dataset.minutes = String(minutes);
-    btn.setAttribute('aria-pressed', String(minutes === leave.leaveDelayMinutes));
-    btn.appendChild(document.createTextNode(copy.label));
-    const detail = document.createElement('span');
-    detail.className = 'leave-choice-detail';
-    detail.textContent = copy.detail;
-    btn.appendChild(detail);
-    box.appendChild(btn);
-  }
-}
-
-function renderLeavePending(leave) {
-  const box = document.getElementById('leave-pending');
-  box.textContent = '';
-  box.className = 'leave-pending';
-  if (!leave.leaveRequest) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  const now = Date.now();
-  const line = document.createElement('p');
-  line.style.margin = '0';
-  if (leave.ready) {
-    box.classList.add('leave-ready');
-    line.textContent = `Your cool-off is up. Removing Intention is one tap away whenever you want it.`;
-  } else {
-    const asked = formatLeaveSpan(now - (leave.leaveRequest.requestedAt || now));
-    const left = formatLeaveSpan(leave.leaveRequest.availableAt - now);
-    line.textContent = `You asked to remove Intention ${asked} ago. It'll be ready in ${left}.`;
-  }
-  box.appendChild(line);
-
-  const actions = document.createElement('div');
-  actions.className = 'leave-pending-actions';
-  // Live during the wait, not only after it. A cool-off you cannot end is a
-  // lock, and this is not a lock — the copy on the button says exactly what
-  // pressing it costs so that nobody has to find out by pressing it.
-  const now_btn = document.createElement('button');
-  now_btn.type = 'button';
-  now_btn.className = 'secondary';
-  now_btn.id = 'leave-now-anyway-btn';
-  now_btn.textContent = leave.ready ? 'Remove Intention' : 'Remove it now anyway';
-  actions.appendChild(now_btn);
-
-  const cancel = document.createElement('button');
-  cancel.type = 'button';
-  cancel.className = 'secondary';
-  cancel.id = 'leave-cancel-btn';
-  cancel.textContent = 'Changed your mind? Cancel the request';
-  actions.appendChild(cancel);
-  box.appendChild(actions);
-}
-
-// The button that starts the conversation — or, on Apple builds, the paragraph
-// that replaces it.
-function renderLeaveRemoveRow(leave) {
-  const row = document.getElementById('leave-remove-row');
-  row.textContent = '';
-
-  // On Apple builds `chrome.management.uninstallSelf()` would remove the
-  // SAFARI EXTENSION and leave the Intention app exactly where it was —
-  // technically a removal, not the one the button promises. There is no API
-  // that removes a Mac app or an iOS app from inside it, so the honest answer
-  // is directions rather than a button that does the wrong thing.
-  if (IS_APPLE_BUILD || !leave.canSelfUninstall) {
-    const note = document.createElement('p');
-    note.className = 'row-info-note';
-    note.id = 'leave-apple-note';
-    note.textContent = IS_APPLE_BUILD
-      ? 'On iPhone and iPad, remove Intention the way you remove any app: touch and hold its icon, then Remove App. On a Mac, drag Intention out of your Applications folder. Turning the Safari extension off in Safari’s settings stops the website blocking without removing anything.'
-      : 'Remove Intention the way you remove any app on this device, from your system settings.';
-    row.appendChild(note);
-    return;
-  }
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.id = 'leave-now-btn';
-  btn.className = 'secondary';
-  btn.style.width = '100%';
-  btn.textContent = 'Remove Intention';
-  row.appendChild(btn);
-}
-
-// One delegated listener per container, bound once, because every control
-// inside them is repainted on each refresh.
-function wireLeavingCard() {
-  bindOnce('leave-delay-choices', 'click', async (e) => {
-    const btn = e.target.closest ? e.target.closest('.leave-choice') : null;
-    if (!btn) return;
-    const next = normalizeLeaveDelay(btn.dataset.minutes);
-    const current = leavingState ? leavingState.leaveDelayMinutes : 0;
-    if (next === current) return;
-
-    // Lengthening is a tightening: it saves for free, exactly as lowering an
-    // intention does. Shortening is a loosening of a rule they set calmly, so
-    // it waits — out the current cool-off and the night — unless the coach
-    // allows it sooner, the same trade every other control on this page makes. background.js's saveSettings enforces the same direction, so
-    // this branch is the UI half of a rule, not the rule itself.
-    if (next > current) {
-      await sendBg({ action: 'saveSettings', config: { leaveDelayMinutes: next } });
-      await refreshLeavingCard();
-      setStatus('leaving-status', next === 0 ? 'Cool-off turned off.' : 'Saved.', 'success');
-      return;
-    }
-
-    requestLoosening({
-      changeType: 'decrease_leave_delay',
-      domain: null,
-      currentValue: current,
-      newValue: next,
-      title: 'Shorten the wait?',
-      subtitle: 'You chose this wait when you were thinking clearly. A shorter one starts once the current wait would have run out.',
-      onApproved: async () => {
-        await refreshLeavingCard();
-        setStatus('leaving-status', 'Cool-off shortened.', 'success');
-      }
-    });
-  });
-
   bindOnce('export-list-btn', 'click', exportBlocklistFile);
   bindOnce('import-list-btn', 'click', () => document.getElementById('import-list-input')?.click());
   bindOnce('import-list-input', 'change', importBlocklistFile);
-
-  bindOnce('leave-remove-row', 'click', (e) => {
-    if (!e.target.closest || !e.target.closest('#leave-now-btn')) return;
-    openLeaveConversation();
-  });
-
-  bindOnce('leave-pending', 'click', async (e) => {
-    if (!e.target.closest) return;
-    if (e.target.closest('#leave-now-anyway-btn')) {
-      await finishRemoval();
-      return;
-    }
-    if (e.target.closest('#leave-cancel-btn')) {
-      // Cancelling is a tightening — it puts the wait back in front of the
-      // exit — so it costs nothing and is saved directly. The stand-down still
-      // gets written, because this was an outcome of the leaving conversation
-      // like any other and the interposition must not reopen it on the way
-      // back to whatever they were doing.
-      await sendBg({ action: 'saveSettings', config: { leaveRequest: null } });
-      await sendBg({ action: 'beginLeave', reason: 'cancelled' });
-      await refreshLeavingCard();
-      setStatus('leaving-status', 'Request cancelled. Nothing has changed.', 'success');
-    }
-  });
+  applyLeaveDeepLink();
 }
 
-// Open the leaving conversation. Shared by the card's own button and by the
-// ?leave=1 deep link the background's tab interposition opens.
+// The native/browser uninstall deep link and the coach's always-live exit
+// work independently of Settings cards.
 async function openLeaveConversation() {
   const cfg = await getConfig();
   requestLoosening({
     changeType: 'uninstall',
     domain: null,
-    // The cool-off, carried through so the exit button inside the modal can
-    // name what pressing it costs ("this ends your 24 hours"). The coach reads
-    // the same number out of storage rather than from here — a value the page
-    // supplies is a value the page could get wrong.
     currentValue: cfg.leaveDelayMinutes || 0,
     title: 'Before you remove Intention',
-    subtitle: 'Tell your coach what’s going on. You can go ahead and remove it whichever way this conversation goes — the button below stays live the whole time.',
+    subtitle: 'Tell your coach what’s going on. You can go ahead and remove it whichever way this conversation goes. The button below stays live the whole time.',
     onApproved: async () => {
       const leave = await sendBg({ action: 'getLeaveState' });
-      await refreshLeavingCard();
-      // No cool-off set: the coach agreeing IS the clearance, so go straight
-      // to the browser's own removal dialog rather than making the user find
-      // a second button for a decision they have just finished making.
-      if (leave && !leave.leaveRequest) {
+      if (leave && (!leave.leaveRequest || leave.ready)) {
         await finishRemoval();
         return;
       }
-      setSettingsSection('blocking');
-      document.getElementById('leaving-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (leave && leave.leaveRequest) {
+        const available = new Date(leave.leaveRequest.availableAt).toLocaleString();
+        window.alert(`Your cool-off ends ${available}. You can still uninstall at any time. ${removalDirections()}`);
+      }
     }
   });
 }
 
-// The exit itself, from every button that offers one.
-async function finishRemoval() {
-  const result = await sendBg({ action: 'completeRemoval' });
-  // If it worked we are already gone and nothing below runs. The two cases
-  // that reach here are the user declining the browser's confirmation dialog,
-  // and a platform with no self-uninstall at all.
-  if (result && result.reason === 'unsupported') {
-    setStatus('leaving-status', 'Remove Intention from your device’s own settings — see the note above.', '');
-    return;
+function removalDirections() {
+  if (IS_APPLE_BUILD) {
+    return 'On iPhone or iPad, touch and hold Intention, then choose Remove App. On Mac, move Intention from Applications to the Bin.';
   }
-  await refreshLeavingCard();
-  setStatus('leaving-status', 'Nothing removed. Intention is still here whenever you want it gone.', '');
+  if (HAS_APP_BLOCKING) return 'Open Settings → Apps → Intention → Uninstall.';
+  return 'Remove Intention from your browser’s Extensions settings.';
 }
 
-// A tab opened at options.html?leave=1 — by the background when the user lands
-// on chrome://extensions, or by a native host. It opens the conversation; it
-// never removes anything on its own.
+async function finishRemoval() {
+  const result = await sendBg({ action: 'completeRemoval' });
+  if (result && result.reason === 'unsupported') {
+    window.alert(removalDirections());
+  }
+}
+
+// Opening the link starts a conversation; it never uninstalls on its own.
 function applyLeaveDeepLink() {
   if (new URLSearchParams(window.location.search).get('leave') !== '1') return;
-  setSettingsSection('blocking');
-  document.getElementById('leaving-card')?.scrollIntoView({ block: 'start' });
   openLeaveConversation();
 }
 
@@ -1020,9 +841,9 @@ async function importBlocklistFile(event) {
     const result = await sendBg({ action: 'saveSettings', config });
     if (result?.error) throw new Error(result.error);
     await renderCurrentView();
-    setStatus('leaving-status', 'List restored. API keys, credit and history were left on this device.', 'success');
+    setStatus('backup-status', 'List restored. API keys, credit and history were left on this device.', 'success');
   } catch (e) {
-    setStatus('leaving-status', String(e.message || e), 'error');
+    setStatus('backup-status', String(e.message || e), 'error');
   } finally {
     // Selecting the same file later must raise another change event.
     input.value = '';
@@ -1044,7 +865,7 @@ async function exportBlocklistFile() {
   // Revoked on a turn of the event loop rather than immediately: Safari has
   // not always started the download by the time click() returns.
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  setStatus('leaving-status', 'Saved. Keep it somewhere you’ll find it.', 'success');
+  setStatus('backup-status', 'Saved. Keep it somewhere you’ll find it.', 'success');
 }
 
 // ---- iOS Screen Time apps card ----
@@ -1071,7 +892,6 @@ function wireIOSAppsCard() {
     window.intentionScreenTime.authorize(() => refreshIOSAppsCard());
   });
 
-  document.getElementById('section-tab-unlock').hidden = false;
   document.getElementById('unlock-card').hidden = false;
   bindOnce('ios-request-time-btn', 'click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
@@ -1097,7 +917,7 @@ async function refreshIOSAppsCard() {
   if (!st.authorized) {
     statusEl.textContent = iosAuthGuidance(st);
     authorizeBtn.hidden = false;
-    unlockStatusEl.textContent = 'Enable Screen Time access in the Blocking tab first.';
+    unlockStatusEl.textContent = 'Allow Screen Time access under Intentions first.';
     requestBtn.hidden = true;
     return;
   }
@@ -1105,7 +925,7 @@ async function refreshIOSAppsCard() {
   const n = st.selectionCount || 0;
   if (n === 0) {
     statusEl.textContent = 'No apps blocked yet.';
-    unlockStatusEl.textContent = 'No apps blocked yet — choose some in the Blocking tab first.';
+    unlockStatusEl.textContent = 'No apps blocked yet. Choose some under Intentions first.';
     requestBtn.hidden = true;
   } else {
     const passNote = st.passEndsAt
@@ -1216,17 +1036,38 @@ async function requestLoosening({ isApp, appLabel, changeType, domain, newValue,
   const later = document.getElementById('loosen-later-btn');
   const now = document.getElementById('loosen-now-btn');
   const cancel = document.getElementById('loosen-cancel-btn');
+  later.textContent = changeType === 'decrease_leave_delay' ? 'Save for later' : 'Save for tomorrow';
+  now.hidden = false;
+  cancel.hidden = false;
   later.onclick = async () => {
     later.disabled = true;
+    now.disabled = true;
+    cancel.disabled = true;
     try {
-      await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+      const result = await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+      if (!result || result.error || !result.scheduled) {
+        document.getElementById('loosen-when').textContent = result?.error || 'Could not save this change. Try again.';
+        return;
+      }
+      const state = await getConfig();
+      await onApproved?.();
+      renderPendingChanges(state);
+      document.getElementById('loosen-title').textContent = changeType === 'decrease_leave_delay'
+        ? 'Saved for later' : 'Saved for tomorrow';
+      document.getElementById('loosen-subtitle').textContent = describePendingChange(result.pending, state.appLabels || {});
+      document.getElementById('loosen-when').textContent = `Starts ${formatPendingWhen(result.pending.effectiveAt)}. Your current rules stay in place until then.`;
+      later.textContent = 'Done';
+      later.onclick = close;
+      now.hidden = true;
+      cancel.hidden = true;
+    } catch (e) {
+      console.warn('Intention: could not save scheduled change', e);
+      document.getElementById('loosen-when').textContent = 'Could not save this change. Try again.';
     } finally {
       later.disabled = false;
+      now.disabled = false;
+      cancel.disabled = false;
     }
-    close();
-    const state = await getConfig();
-    renderPendingChanges(state);
-    await onApproved();
   };
   now.onclick = () => {
     close();
@@ -1240,8 +1081,13 @@ async function requestLoosening({ isApp, appLabel, changeType, domain, newValue,
 // What is waiting for tomorrow, and a way to take it back. Taking one back is
 // a tightening, so it is free and immediate.
 function renderPendingChanges(state) {
-  const card = document.getElementById('pending-card');
-  const list = document.getElementById('pending-list');
+  renderPendingList(state, 'pending-card', 'pending-list');
+  renderPendingList(state, 'intentions-pending-card', 'intentions-pending-list');
+}
+
+function renderPendingList(state, cardId, listId) {
+  const card = document.getElementById(cardId);
+  const list = document.getElementById(listId);
   if (!card || !list) return;
   const pending = (state && state.pendingChanges) || [];
   list.textContent = '';
@@ -1281,7 +1127,11 @@ function describePendingChange(p, labels) {
       const handles = (Array.isArray(p.newValue) ? p.newValue : []).map(h => `@${h}`);
       return `Always allow ${handles.join(', ') || 'an account'} on ${name}`;
     }
-    case 'disable_all': return 'Turn off all blocking';
+    case 'allow_reddit': {
+      const value = p.newValue || {};
+      return `Reddit: ${describeRedditAllowForHuman(value)}`;
+    }
+    case 'disable_all': return 'Clear all blocking rules';
     case 'decrease_leave_delay': return `Cool-off: ${formatLeaveDelay(p.newValue) || 'none'}`;
     default: return 'A change to your rules';
   }
@@ -1290,24 +1140,357 @@ function describePendingChange(p, labels) {
 function formatPendingWhen(effectiveAt) {
   const at = new Date(Number(effectiveAt) || 0);
   const tomorrow = new Date(nextDayStart());
-  if (at.getTime() === tomorrow.getTime()) return 'Tomorrow';
+  if (at.getTime() === tomorrow.getTime()) return 'tomorrow at ' + at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return at.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' +
     at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// The streak line in the header of the blocking tab.
-async function refreshStreak() {
-  const el = document.getElementById('streak-line');
-  if (!el) return;
+// ---- Today ----------------------------------------------------------------
+//
+// One summary read feeds the streak, the week and the per-target rows, so the
+// three can never disagree about a number. Everything user-supplied (domains,
+// app labels) goes in as textContent.
+
+async function refreshToday(state) {
   let summary = null;
   try { summary = await sendBg({ action: 'getStatsSummary' }); } catch (e) { summary = null; }
+  const config = state || await getConfig();
+  renderStreak(summary);
+  renderWeek(summary, config);
+  renderTodayTargets(summary, config);
+}
+
+// Apps can't rely on visibilitychange for an app switch, so the hosts fire
+// intention-app-active; a desktop browser tab gets the ordinary event. Either
+// way, coming back is when Safari may have pushed new minutes.
+let todayRefreshAt = 0;
+function wireTodayRefresh() {
+  const again = async () => {
+    if (document.getElementById('settings-view').hidden) return;
+    if (Date.now() - todayRefreshAt < 5000) return;
+    todayRefreshAt = Date.now();
+    const state = await getConfig();
+    refreshToday(state);
+    renderPendingChanges(state);
+    refreshUsageLog(state);
+    refreshSideNote();
+  };
+  window.addEventListener('intention-app-active', again);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') again();
+  });
+}
+
+function shortDay(key, style = 'short') {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: style });
+}
+
+function renderStreak(summary) {
+  const el = document.getElementById('streak-line');
+  if (!el) return;
   const streak = summary && summary.streak;
   if (!streak) { el.hidden = true; return; }
   const days = Number(streak.days) || 0;
-  document.getElementById('streak-value').textContent = `${days} ${days === 1 ? 'day' : 'days'}`;
-  document.getElementById('streak-grace').textContent = streak.graceLeft > 0
-    ? 'One slip this week is forgiven'
-    : 'Grace used this week';
+  document.getElementById('streak-value').textContent = String(days);
+  document.getElementById('streak-unit').textContent = days === 1 ? 'day kept' : 'days kept';
+
+  const tag = document.getElementById('streak-today');
+  tag.className = `status-tag ${streak.todayKept ? 'ok' : 'warn'}`;
+  tag.textContent = streak.todayKept ? 'Today kept so far' : 'Today needed more';
+
+  const list = document.getElementById('streak-days');
+  list.textContent = '';
+  const week = (summary.week || []);
+  week.forEach((day, i) => {
+    const li = document.createElement('li');
+    const isToday = i === week.length - 1;
+    const state = !day.counted ? 'uncounted' : (day.kept ? 'kept' : 'missed');
+    li.className = `${state}${isToday ? ' today' : ''}`;
+    const mark = document.createElement('span');
+    mark.className = 'day-mark';
+    const label = document.createElement('span');
+    label.textContent = shortDay(day.date, 'narrow');
+    li.setAttribute('aria-label', `${shortDay(day.date, 'long')}: ${
+      state === 'uncounted' ? 'before you started' : state === 'kept' ? (isToday ? 'kept so far' : 'kept') : 'needed more than intended'}`);
+    li.append(mark, label);
+    list.appendChild(li);
+  });
+
+  const missed = week.filter(d => d.counted && !d.kept);
+  const graceEl = document.getElementById('streak-grace');
+  if (streak.graceLeft > 0) {
+    graceEl.textContent = 'One slip in any seven days is forgiven. You haven’t needed it this week.';
+  } else {
+    const last = missed[missed.length - 1];
+    const when = last ? shortDay(last.date, 'long') : 'this week';
+    graceEl.textContent = `Grace used on ${when}. Another slip in the same seven days ends the run.`;
+  }
+  el.hidden = false;
+}
+
+// Every blocked target the page can put a number against: websites
+// everywhere, and packages on Android. iOS app time is one opaque total from
+// Screen Time, so it appears in Recent days rather than here.
+function todayTargets(config) {
+  const labels = config.appLabels || {};
+  const targets = (config.blockedDomains || []).map(t => ({ id: t, label: t, kind: 'Website' }));
+  if (HAS_APP_BLOCKING) {
+    for (const pkg of (config.blockedApps || [])) targets.push({ id: pkg, label: labels[pkg] || pkg, kind: 'App' });
+  }
+  return targets.map(t => ({ ...t, intention: resolveIntention(limitEntryFor(t.id, config)) }));
+}
+
+function intendedMinutesPerDay(targets) {
+  return targets.reduce((sum, t) => sum + (t.intention.mode === 'dailyTime'
+    ? t.intention.dailyMinutes
+    : t.intention.opens * t.intention.minutesEach), 0);
+}
+
+function renderWeek(summary, config) {
+  const figures = document.getElementById('week-figures');
+  const chart = document.getElementById('week-chart');
+  if (!figures || !chart) return;
+  const week = (summary && summary.week) || [];
+  const counted = week.filter(d => d.counted);
+  const total = counted.reduce((sum, d) => sum + d.minutes, 0);
+  const average = counted.length ? Math.round(total / counted.length) : 0;
+  const intended = intendedMinutesPerDay(todayTargets(config));
+
+  figures.textContent = '';
+  for (const [label, value] of [
+    ['Today', `${(summary && summary.minutesToday) || 0} min`],
+    ['Daily average', `${average} min`],
+    ['Intended per day', intended ? `${intended} min` : 'none']
+  ]) {
+    const item = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.className = 'micro-label';
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    item.append(dt, dd);
+    figures.appendChild(item);
+  }
+  drawWeekChart(chart, week, intended);
+}
+
+// Bars, not a line: seven separate days, each its own amount. The dashed rule
+// is the day's intended total — every open of every target used in full — so
+// a bar above it is a day that went past what was meant.
+function drawWeekChart(chart, week, intended) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const node = (name, attrs, text) => {
+    const n = document.createElementNS(NS, name);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  chart.textContent = '';
+  if (!week.length) return;
+  const W = Math.max(260, Math.round(chart.clientWidth || 520));
+  const H = 150;
+  const pad = { l: 34, r: 6, t: 14, b: 22 };
+  const peak = Math.max(10, intended, ...week.map(d => d.minutes));
+  const step = [10, 15, 30, 60, 120, 180, 240].find(s => peak / s <= 3) || Math.ceil(peak / 3 / 60) * 60;
+  const max = step * Math.ceil(peak / step);
+  const y = v => pad.t + (H - pad.t - pad.b) * (1 - v / max);
+  const band = (W - pad.l - pad.r) / week.length;
+  const barW = Math.min(28, band * 0.55);
+
+  const svg = node('svg', {
+    viewBox: `0 0 ${W} ${H}`,
+    role: 'img',
+    'aria-label': 'Minutes per day, last seven days: ' +
+      week.map(d => `${shortDay(d.date, 'long')} ${d.minutes}`).join(', ') +
+      (intended ? `. Intended: ${intended} a day.` : '')
+  });
+  for (let v = 0; v <= max; v += step) {
+    svg.appendChild(node('line', { class: v === 0 ? 'base-line' : 'grid-line', x1: pad.l, x2: W - pad.r, y1: y(v), y2: y(v) }));
+    svg.appendChild(node('text', { class: 'tick', x: pad.l - 8, y: y(v) + 3, 'text-anchor': 'end' }, v));
+  }
+  if (intended > 0) {
+    svg.appendChild(node('line', { class: 'intent-line', x1: pad.l, x2: W - pad.r, y1: y(intended), y2: y(intended) }));
+    svg.appendChild(node('text', { class: 'tick', x: W - pad.r, y: y(intended) - 5, 'text-anchor': 'end' }, `intended ${intended}`));
+  }
+
+  const tip = document.createElement('div');
+  tip.className = 'chart-tip';
+  tip.hidden = true;
+  week.forEach((day, i) => {
+    const isToday = i === week.length - 1;
+    const cx = pad.l + band * i + band / 2;
+    const top = y(day.minutes);
+    const base = y(0);
+    const r = Math.min(4, barW / 2, base - top);
+    const x0 = cx - barW / 2;
+    const x1 = cx + barW / 2;
+    const hit = node('rect', { class: 'hit', x: pad.l + band * i, y: pad.t, width: band, height: H - pad.t - pad.b });
+    svg.appendChild(hit);
+    let bar = null;
+    if (day.minutes > 0) {
+      bar = node('path', {
+        class: `bar${isToday ? ' is-today' : ''}`,
+        d: `M${x0},${base} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x1 - r} Q${x1},${top} ${x1},${top + r} V${base} Z`
+      });
+      svg.appendChild(bar);
+    }
+    if (isToday && day.minutes > 0) {
+      svg.appendChild(node('text', { class: 'tick tick-strong', x: cx, y: top - 5, 'text-anchor': 'middle' }, day.minutes));
+    }
+    svg.appendChild(node('text', { class: 'tick', x: cx, y: H - 6, 'text-anchor': 'middle' }, shortDay(day.date, 'narrow')));
+    hit.addEventListener('mouseenter', () => {
+      bar?.classList.add('is-hover');
+      tip.textContent = `${isToday ? 'Today' : shortDay(day.date, 'long')} · ${day.minutes} min`;
+      tip.style.left = `${(cx / W) * 100}%`;
+      tip.style.top = `${(top / H) * chart.clientHeight - 6}px`;
+      tip.hidden = false;
+    });
+    hit.addEventListener('mouseleave', () => {
+      bar?.classList.remove('is-hover');
+      tip.hidden = true;
+    });
+  });
+  chart.append(svg, tip);
+
+  // Redrawn to the card's real width, once, when that width changes — the
+  // viewBox is in pixels so the ticks stay 10px at every size.
+  if (!chart._observed && typeof ResizeObserver === 'function') {
+    chart._observed = true;
+    chart._width = chart.clientWidth;
+    new ResizeObserver(() => {
+      if (chart.clientWidth === chart._width) return;
+      chart._width = chart.clientWidth;
+      if (chart._args) drawWeekChart(chart, ...chart._args);
+    }).observe(chart);
+  }
+  chart._args = [week, intended];
+}
+
+function renderTodayTargets(summary, config) {
+  const list = document.getElementById('today-targets');
+  const quiet = document.getElementById('today-quiet');
+  if (!list || !quiet) return;
+  const perTarget = (summary && summary.perTargetToday) || {};
+  const targets = todayTargets(config);
+  list.textContent = '';
+
+  if (!targets.length) {
+    quiet.hidden = false;
+    quiet.textContent = 'Nothing on your list yet. Add a website under Intentions.';
+    return;
+  }
+
+  const withStats = targets.map(t => {
+    const stat = perTarget[t.id] || {};
+    const minutes = Number(stat.minutes) || 0;
+    const negotiated = Number(stat.negotiated) || 0;
+    const opensUsed = Math.min(t.intention.opens, Math.max(0, (Number(stat.grants) || 0) - negotiated));
+    return { ...t, minutes, negotiated, opensUsed };
+  });
+  const active = withStats.filter(t => t.minutes > 0 || t.opensUsed > 0 || t.negotiated > 0)
+    .sort((a, b) => b.minutes - a.minutes);
+  const idle = withStats.filter(t => !active.includes(t));
+
+  for (const t of active) {
+    const { opens, minutesEach, mode, dailyMinutes } = t.intention;
+    const allowed = mode === 'dailyTime' ? dailyMinutes : opens * minutesEach;
+    const ratio = allowed > 0 ? t.minutes / allowed : (t.minutes > 0 ? 1 : 0);
+    let tone = 'ok', tagText = 'On track';
+    if (t.negotiated > 0) { tone = 'bad'; tagText = `${t.negotiated} past intention`; }
+    else if (mode !== 'dailyTime' && opens === 0) { tone = 'info'; tagText = 'Blocked'; }
+    else if (ratio >= 1 || (mode !== 'dailyTime' && t.opensUsed >= opens)) { tone = 'warn'; tagText = 'Used up'; }
+    else if (ratio >= 0.8) { tone = 'warn'; tagText = 'Nearly used'; }
+
+    const li = document.createElement('li');
+    li.className = 'today-target';
+
+    const name = document.createElement('div');
+    name.className = 'today-target-name';
+    const strong = document.createElement('strong');
+    strong.textContent = t.label;
+    const kind = document.createElement('span');
+    kind.className = 'micro-label';
+    kind.textContent = t.kind;
+    name.append(strong, kind);
+
+    const meter = document.createElement('div');
+    meter.className = 'today-meter';
+    meter.setAttribute('role', 'img');
+    meter.setAttribute('aria-label', allowed ? `${t.minutes} of ${allowed} minutes` : `${t.minutes} minutes`);
+    const fill = document.createElement('span');
+    fill.className = tone === 'info' ? 'ok' : tone;
+    fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+    meter.appendChild(fill);
+
+    const fig = document.createElement('div');
+    fig.className = 'today-target-fig';
+    const figValue = document.createElement('strong');
+    figValue.textContent = String(t.minutes);
+    fig.append(figValue, document.createTextNode(allowed ? ` / ${allowed} min` : ' min'));
+
+    const foot = document.createElement('div');
+    foot.className = 'today-target-foot';
+    if (mode === 'dailyTime') {
+      const budget = document.createElement('span');
+      budget.textContent = `${Math.max(0, allowed - t.minutes)} min left in today's budget`;
+      foot.appendChild(budget);
+    } else if (opens > 0) {
+      const dots = document.createElement('span');
+      dots.className = 'opens-dots';
+      dots.setAttribute('aria-hidden', 'true');
+      for (let i = 0; i < opens; i++) {
+        const dot = document.createElement('i');
+        if (i < t.opensUsed) dot.className = 'used';
+        dots.appendChild(dot);
+      }
+      const opensText = document.createElement('span');
+      opensText.textContent = `${t.opensUsed} of ${opens} ${opens === 1 ? 'open' : 'opens'} × ${minutesEach} min`;
+      foot.append(dots, opensText);
+    } else {
+      const blocked = document.createElement('span');
+      blocked.textContent = 'Blocked outright';
+      foot.appendChild(blocked);
+    }
+    const tag = document.createElement('span');
+    tag.className = `status-tag ${tone}`;
+    tag.textContent = tagText;
+    foot.appendChild(tag);
+
+    li.append(name, meter, fig, foot);
+    list.appendChild(li);
+  }
+
+  quiet.hidden = !idle.length;
+  if (idle.length) {
+    const names = idle.map(t => t.label);
+    const shown = names.slice(0, 6).join(', ') + (names.length > 6 ? ` and ${names.length - 6} more` : '');
+    quiet.textContent = active.length
+      ? `No time yet today: ${shown}.`
+      : `No time on anything on your list yet today: ${shown}. Nice.`;
+  }
+}
+
+// The apps' sidebar footer: whether Safari is actually running the extension.
+// On the Mac that is the real switch; on iPhone, a heartbeat within the day.
+async function refreshSideNote() {
+  const el = document.getElementById('settings-side-note');
+  if (!el || !HAS_SAFARI_EXTENSION) return;
+  const st = await new Promise(resolve => window.intentionExtension.status(resolve));
+  if (!st) { el.hidden = true; return; }
+  const seen = Number(st.lastSeenAt) || 0;
+  let when = '';
+  if (seen) {
+    const mins = Math.max(0, Math.round((Date.now() - seen) / 60000));
+    when = mins < 1 ? 'just now'
+      : mins < 60 ? `${mins} min ago`
+      : mins < 60 * 24 ? `${Math.round(mins / 60)} h ago`
+      : new Date(seen).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  }
+  el.textContent = st.active
+    ? `Safari extension on.${when ? ` Last heard from Safari ${when}.` : ''}`
+    : 'Safari extension off, so websites aren’t being blocked.';
+  el.classList.toggle('is-off', !st.active);
   el.hidden = false;
 }
 
@@ -1370,7 +1553,7 @@ function renderApps(apps, limits = {}, labels = {}, serviceReasons = {}) {
   const list = document.getElementById('app-list');
   list.innerHTML = '';
   if (!apps.length) {
-    renderEmptyList(list, 'No apps blocked yet. Tap "+ Add app" — it suggests a few.');
+    renderEmptyList(list, 'No apps blocked yet. Tap "+ Add app" and it suggests a few.');
     return;
   }
   const rerender = async () => {
@@ -1395,26 +1578,6 @@ function renderApps(apps, limits = {}, labels = {}, serviceReasons = {}) {
   }
 }
 
-function renderStats(summary) {
-  const el = document.getElementById('stats-display');
-  if (!summary || !summary.minutesToday) {
-    el.innerHTML = '<p class="muted">No time on blocked sites yet today. Nice.</p>';
-    return;
-  }
-  const perSite = Object.entries(summary.perSiteToday || {})
-    .sort((a, b) => b[1] - a[1])
-    .map(([d, m]) => `${d}: ${Math.round(m)}m`)
-    .join(' · ');
-  // perSite carries domain and package names straight out of stored config, so
-  // it goes in as text — the rest of the markup is static.
-  el.innerHTML = `
-    <p><strong>${summary.minutesToday} min</strong> on blocked sites today.</p>
-    <p class="muted" id="stats-per-site"></p>
-    <p class="muted">Past 7 days: <strong>${summary.minutesWeek} min</strong>.</p>
-  `;
-  el.querySelector('#stats-per-site').textContent = perSite;
-}
-
 function formatLogDate(key) {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -1428,44 +1591,136 @@ function formatLogDate(key) {
 
 // entries: [{ date: 'YYYY-MM-DD', domain, minutes, label? }], already sorted
 // by date desc then minutes desc (see getUsageLog in tracking.js and any
-// native app-usage merges added alongside it).
-function renderUsageLog(entries) {
+// native app-usage merges added alongside it). One row per day: where the time
+// went, and the day's total. The three most recent show; the rest wait behind
+// "Show all" so Today stays a glance.
+const USAGE_LOG_COLLAPSED_DAYS = 3;
+let usageLogExpanded = false;
+
+function formatUsageMinutes(minutes) {
+  const rounded = Math.round(minutes || 0);
+  if (rounded < 60) return `${rounded} min`;
+  const hours = Math.floor(rounded / 60);
+  const rest = rounded % 60;
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+}
+
+function usageMark(entry, appIcons) {
+  const mark = document.createElement('span');
+  mark.className = 'usage-mark';
+  mark.setAttribute('aria-hidden', 'true');
+  const appIcon = appIcons && appIcons[entry.domain];
+  if (appIcon && /^data:image\//.test(appIcon)) {
+    const img = document.createElement('img');
+    img.src = appIcon;
+    img.alt = '';
+    mark.appendChild(img);
+    return mark;
+  }
+  const siteKey = APP_ICON_SITE[entry.domain] || entry.domain;
+  const meta = SITE_META[siteKey];
+  if (meta && meta.icon) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', meta.color || 'currentColor');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', meta.icon);
+    svg.appendChild(path);
+    mark.appendChild(svg);
+  } else {
+    mark.textContent = entry.domain === 'ios-apps' ? '▦' : (entry.label || entry.domain).slice(0, 1).toUpperCase();
+  }
+  return mark;
+}
+
+function renderUsageTotals(entries, appIcons) {
+  const list = document.getElementById('usage-target-totals');
+  const totalEl = document.getElementById('usage-total');
+  list.textContent = '';
+  const byTarget = new Map();
+  for (const entry of entries || []) {
+    if (!entry || !Number.isFinite(Number(entry.minutes)) || Number(entry.minutes) <= 0) continue;
+    const current = byTarget.get(entry.domain) || { ...entry, minutes: 0 };
+    current.minutes += Number(entry.minutes);
+    byTarget.set(entry.domain, current);
+  }
+  const targets = [...byTarget.values()].sort((a, b) => b.minutes - a.minutes || String(a.label || a.domain).localeCompare(String(b.label || b.domain)));
+  if (!targets.length) {
+    totalEl.hidden = true;
+    return;
+  }
+  const grandTotal = targets.reduce((sum, target) => sum + target.minutes, 0);
+  totalEl.textContent = `${formatUsageMinutes(grandTotal)} total in the last 30 days`;
+  totalEl.hidden = false;
+  for (const target of targets) {
+    const li = document.createElement('li');
+    li.className = 'usage-target-row';
+    const name = document.createElement('span');
+    name.className = 'usage-target-name';
+    name.append(usageMark(target, appIcons), document.createTextNode(target.label || target.domain));
+    const time = document.createElement('span');
+    time.className = 'usage-target-time';
+    time.textContent = formatUsageMinutes(target.minutes);
+    li.append(name, time);
+    list.appendChild(li);
+  }
+}
+
+function renderUsageLog(entries, appIcons) {
   const list = document.getElementById('usage-log-list');
-  list.innerHTML = '';
+  const more = document.getElementById('usage-log-more');
+  list.textContent = '';
+  renderUsageTotals(entries, appIcons);
   if (!entries || !entries.length) {
     const li = document.createElement('li');
-    li.className = 'muted';
+    li.className = 'muted history-empty';
     li.textContent = 'No usage recorded yet.';
     list.appendChild(li);
+    if (more) more.hidden = true;
     return;
   }
 
-  let lastDate = null;
+  const days = [];
   for (const entry of entries) {
-    if (entry.date !== lastDate) {
-      lastDate = entry.date;
-      const heading = document.createElement('li');
-      heading.className = 'log-date-heading';
-      heading.textContent = formatLogDate(entry.date);
-      list.appendChild(heading);
+    let day = days[days.length - 1];
+    if (!day || day.date !== entry.date) {
+      day = { date: entry.date, items: [], total: 0 };
+      days.push(day);
     }
+    day.items.push(entry);
+    day.total += entry.minutes;
+  }
 
+  days.forEach((day, i) => {
     const li = document.createElement('li');
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'domain-info';
-
-    const span = document.createElement('span');
-    span.textContent = entry.label || entry.domain;
-    span.className = 'domain-name';
-    infoContainer.appendChild(span);
-
-    const minSpan = document.createElement('span');
-    minSpan.className = 'domain-limit-badge';
-    minSpan.textContent = `${entry.minutes} min`;
-    infoContainer.appendChild(minSpan);
-
-    li.appendChild(infoContainer);
+    li.className = 'history-day';
+    if (i >= USAGE_LOG_COLLAPSED_DAYS) li.dataset.extra = '1';
+    const date = document.createElement('span');
+    date.className = 'history-date';
+    date.textContent = formatLogDate(day.date);
+    const items = document.createElement('span');
+    items.className = 'history-items';
+    items.textContent = day.items.map(e => `${e.label || e.domain} ${e.minutes}m`).join(' · ');
+    const total = document.createElement('span');
+    total.className = 'history-total';
+    total.textContent = `${day.total} min`;
+    li.append(date, items, total);
     list.appendChild(li);
+  });
+
+  if (more) {
+    more.hidden = days.length <= USAGE_LOG_COLLAPSED_DAYS;
+    more.dataset.count = String(days.length);
+  }
+  applyUsageLogExpanded();
+}
+
+function applyUsageLogExpanded() {
+  const more = document.getElementById('usage-log-more');
+  document.querySelectorAll('#usage-log-list [data-extra]').forEach(li => { li.hidden = !usageLogExpanded; });
+  if (more) {
+    more.textContent = usageLogExpanded ? 'Show fewer' : `Show all ${more.dataset.count || ''} days`.replace('  ', ' ');
+    more.setAttribute('aria-expanded', String(usageLogExpanded));
   }
 }
 
@@ -1501,6 +1756,12 @@ async function refreshUsageLog(state) {
     }
   }
 
+  let appIcons = {};
+  if (HAS_APP_BLOCKING && window.intentionApps.getInstalledApps) {
+    const installed = await getInstalledApps();
+    appIcons = Object.fromEntries(installed.filter(a => a && a.icon).map(a => [a.packageName, a.icon]));
+  }
+
   if (HAS_IOS_APP_BLOCKING && window.intentionScreenTime.getAppUsageReport) {
     const report = await new Promise(resolve => window.intentionScreenTime.getAppUsageReport(resolve));
     for (const [date, minutes] of Object.entries((report && report.minutesByDate) || {})) {
@@ -1510,7 +1771,7 @@ async function refreshUsageLog(state) {
   }
 
   entries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.minutes - a.minutes));
-  renderUsageLog(entries);
+  renderUsageLog(entries, appIcons);
 }
 
 // Shared by the coach and settings-gate modals below.

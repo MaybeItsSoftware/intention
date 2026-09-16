@@ -796,6 +796,65 @@ describe('no code of any kind', () => {
   });
 });
 
+describe('API-key configuration within the access flow', () => {
+  it('saves a custom model and edits or removes an existing key in the same flow', async () => {
+    const { ctx, container } = loadPaywall({ userAgent: CHROME_UA });
+    const saved = [];
+    let removed = 0;
+    await ctx.renderPaywall(container, {
+      route: 'byok',
+      keyConfig: { provider: 'anthropic', model: 'existing-model', apiKey: 'saved-key' },
+      onSaveKey: async (config) => saved.push(config),
+      onRemoveKey: async () => { removed += 1; }
+    });
+    expect(byId(container, 'int-pw-key-route').tagName).toBe('details');
+    expect(byId(container, 'int-pw-model').value).toBe('existing-model');
+    expect(byId(container, 'int-pw-key').value).toBe('saved-key');
+    byId(container, 'int-pw-model').value = '  custom-model  ';
+    byId(container, 'int-pw-key').value = '  changed-key  ';
+    const save = flatten(container).find(n => n.textContent === 'Save key');
+    await save._handlers.click[0]();
+    expect(saved).toEqual([{ provider: 'anthropic', model: 'custom-model', apiKey: 'changed-key' }]);
+    await byClass(container, 'int-pw-remove-key')[0]._handlers.click[0]();
+    expect(removed).toBe(1);
+    expect(allText(container)).not.toContain('Settings → Advanced');
+  });
+
+  it('uses the selected provider default when no model is given and rejects an empty key', async () => {
+    const { ctx, container } = loadPaywall({ userAgent: CHROME_UA });
+    const saved = [];
+    await ctx.renderPaywall(container, { onSaveKey: async (config) => saved.push(config) });
+    byId(container, 'int-pw-provider').value = 'groq';
+    byId(container, 'int-pw-provider')._handlers.change[0]();
+    byId(container, 'int-pw-key').value = '   ';
+    const save = flatten(container).find(n => n.textContent === 'Save key');
+    await save._handlers.click[0]();
+    expect(saved).toEqual([]);
+    byId(container, 'int-pw-key').value = 'key';
+    await save._handlers.click[0]();
+    expect(saved[0].model).toBe(ctx.PROVIDERS.groq.defaultModel);
+  });
+
+  it('offers Android configuration beneath purchases and has no explanatory paragraphs under the routes', async () => {
+    const { ctx, container } = loadPaywall({ window: bridge(), userAgent: ANDROID_UA });
+    await ctx.renderPaywall(container, {
+      onUseOwnKey: async () => {}, onSaveKey: async () => {}, onRedeemStoreCode: async () => {}
+    });
+    expect(byId(container, 'int-pw-model')).toBeTruthy();
+    expect(byClass(container, 'int-pw-redeem')).toHaveLength(1);
+    expect(allText(container)).not.toContain('Been given a code');
+    expect(allText(container)).not.toContain('Already pay for an AI provider');
+    expect(allText(container)).not.toContain('Point the coach at an account');
+  });
+
+  it('renders no API fields on Apple even if a key callback is supplied', async () => {
+    const { ctx, container } = loadPaywall({ window: bridge(), userAgent: SAFARI_UA });
+    await ctx.renderPaywall(container, { onUseOwnKey: async () => {}, onSaveKey: async () => {}, onRemoveKey: async () => {} });
+    expect(byId(container, 'int-pw-key-route')).toBeNull();
+    expect(byId(container, 'int-pw-model')).toBeNull();
+  });
+});
+
 describe('restoring credit from a previous install', () => {
   const bridged = () => {
     const b = bridge();
@@ -1017,6 +1076,13 @@ describe('a purchase that lands while the recovery check is in flight', () => {
 });
 
 describe('the low-balance line in the AI access card', () => {
+  it('explains insufficient credit without claiming a positive balance is empty', async () => {
+    const { ctx, container } = loadPaywall({ window: bridge(), userAgent: ANDROID_UA });
+    await ctx.renderPaywall(container, { entitlement: ACTIVE, errorCode: 'balance_exhausted' });
+    expect(allText(container)).toContain('Not enough coaching credit to send this message');
+    expect(allText(container)).toContain('1,240 coaching credits');
+    expect(allText(container)).not.toContain('No coaching credit');
+  });
   it('appears at or under the shared threshold and not above it', async () => {
     const low = loadPaywall({ userAgent: CHROME_UA });
     await low.ctx.renderPaywall(low.container, {
@@ -1052,5 +1118,39 @@ describe('the low-balance line in the AI access card', () => {
     await ctx.renderPaywall(container, { entitlement: ACTIVE });
     expect(allText(container)).toContain('1,240 coaching credits');
     expect(allText(container)).not.toMatch(/[£$€]/);
+  });
+});
+
+describe('Coach tab access warning', () => {
+  const page = () => {
+    const status = makeNode('div');
+    const navigator = { userAgent: ANDROID_UA };
+    const ctx = loadSource(['providers.js', 'billing.js', 'options-access.js'], {
+      extraGlobals: {
+        window: { intentionBilling: {}, navigator }, navigator,
+        document: { createElement: makeNode, getElementById: (id) => id === 'coach-access-status' ? status : null }
+      }
+    });
+    return { ctx, status };
+  };
+
+  it('distinguishes no credit, low credit and insufficient credit, then clears the warning after a top-up', () => {
+    const { ctx, status } = page();
+    ctx.refreshCoachAccessStatus({ route: 'locked', balanceCredits: 0 });
+    expect(allText(status)).toContain('No coaching credit');
+    expect(flatten(status).find(n => n.tagName === 'button').textContent).toBe('Top up coaching credit');
+    ctx.refreshCoachAccessStatus({ route: 'hosted', lowCredit: true, balanceCredits: 25 });
+    expect(allText(status)).toContain('Coaching credit is low: 25 credits');
+    ctx.refreshCoachAccessStatus({ route: 'hosted', balanceCredits: 1240 }, 'balance_exhausted');
+    expect(allText(status)).toContain('Not enough coaching credit to send this message');
+    expect(allText(status)).not.toContain('No coaching credit');
+    ctx.refreshCoachAccessStatus({ route: 'hosted', balanceCredits: 2000 });
+    expect(status.hidden).toBe(true);
+  });
+
+  it('shows no credit warning when coaching uses a saved provider key', () => {
+    const { ctx, status } = page();
+    ctx.refreshCoachAccessStatus({ route: 'byok', balanceCredits: 0 });
+    expect(status.hidden).toBe(true);
   });
 });

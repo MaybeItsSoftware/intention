@@ -1,24 +1,12 @@
-Say goodbye to rigid app blockers and easily bypassed screen time limits. Intention is a smart, AI-powered focus gate that places a supportive AI coach between you and the apps that pull you away from your real goals.
+Intention gives you a pause before the apps that pull you away from what matters. Set a rule for each app, explain why you want to open it, and carry that reason with you while you use your time.
 
-For each app you set an intention: how many times a day you mean to open it, and for how long. Within that, opening it is one tap. Once today's opens are used, more time means a brief conversation with your coach, who asks what you are trying to do and decides whether it is worth it.
+Choose the rule that fits each app. You can set a number of visits with minutes for each one, or a maximum amount of time for the whole day. With a daily time budget, you decide how much of the time left to spend on each visit. When you have used your intention, your AI coach can talk through a specific reason and decide whether a short extra pass makes sense.
 
-HOW IT WORKS
-1. Choose your Apps: Add distracting social media, games, or feed-based apps to your blocklist.
-2. Set Your Intention: Choose how many opens a day and how many minutes each — say, 3 opens of 10 minutes.
-3. Mindful Interception: When you open a blocked app, Intention pauses it and shows how many of today's opens are left. One tap uses one.
-4. Earn Extra Minutes: Once the day's opens are used, explain to your coach what you need to do. A specific, time-bounded purpose earns a short pass; aimless scrolling gets a gentle reminder of your goals.
-5. No Easy Way Out: Giving yourself more time in settings waits until tomorrow, unless the coach agrees today. Keep every intention to build a forgiving streak.
+See the time you have spent on your blocked apps and websites, with a breakdown by day and by target. Intention can also show app icons and familiar website marks, so the report is easy to scan. Android app usage needs Usage Access; without it, website time is still available.
 
-KEY FEATURES
-• Bring Your Own Key (BYOK): Set up your own API key to connect to leading AI models: Anthropic (Claude), OpenAI (GPT), Google (Gemini), or Groq. You pay only for what you use, directly to the provider.
-• Smart Access Gatekeeper: The AI coach uses secure tool-calls to grant access and update your profile, ensuring a structured, spoof-proof flow.
-• Goal-Oriented Profile: Your coach builds a profile of who you are, what you're working on, and what habits you want to break. This profile is shaped and updated only through your conversations.
-• Exponential Skepticism & Daily Cap: Earning extra screen time gets progressively harder throughout the day. Once you hit your daily grant limit, the coach offers motivational support, but no more screen time.
-• Mindful & Non-Judgmental: The coach is trained to be supportive, curious, and warm—never lecturing, but always helping you build self-awareness.
-• 100% Private: Your API keys and conversation histories are stored locally on your device. Only direct requests to your chosen AI provider are sent over the network.
+You can make narrow exceptions for Reddit: allow a specific subreddit or a specific post while keeping the rest of Reddit behind your gate. Changes that loosen your rules normally take effect tomorrow, so a moment of distraction does not silently undo a choice you made to protect your time.
+
+The coach learns what you are working on through conversation and uses that context to help you pause, decide, and get back to your goals. Coaching credit is purchased in the app, is used only for AI messages, and does not expire. Your settings and usage history stay on your device.
 
 ACCESSIBILITY SERVICE DISCLOSURE
-Intention uses Android's Accessibility Service API. This permission is required to detect when you launch apps on your blocklist and to overlay the AI coaching interface. 
-• Intention only monitors the package name of the foreground app to check if it is blocked.
-• It does not read, capture, or transmit any on-screen text, keyboard inputs, or personal data.
-• You can revoke this permission at any time in your device settings.
+Intention uses Android's Accessibility Service to identify blocked apps in the foreground and show their gate. To apply website rules in supported browsers, it reads the browser's displayed address bar after navigation; text being edited in the address bar is ignored. If you choose a rule for a specific app section, such as Reels, it checks a fixed set of on-screen interface labels and view IDs to identify that section. It also detects Intention's own App info and Accessibility settings screens to offer a leaving conversation. These checks run on your device. Intention does not store or send the screen content it checks to the AI coach. You can revoke Accessibility permission in Android settings.

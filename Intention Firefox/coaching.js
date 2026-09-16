@@ -290,6 +290,7 @@ async function renderCoachUI() {
 // opens left (one tap, free), spent with a coach to ask (offered, never
 // started unasked — it spends credit), and spent with no credit (the paywall,
 // because the coach is the only way past).
+const intentionVisitDraft = { reason: '', minutes: 10 };
 function renderIntentionUI(intention) {
   const panel = document.getElementById('int-intention');
   const heading = document.getElementById('int-heading');
@@ -302,8 +303,12 @@ function renderIntentionUI(intention) {
   document.getElementById('int-stats-row').style.display = 'none';
 
   const { opens, minutesEach } = intention;
+  const isDailyTime = intention.mode === 'dailyTime';
   const used = Math.min(opens, Math.max(0, Number(intention.opensUsed) || 0));
-  const left = Math.max(0, opens - used);
+  const left = isDailyTime
+    ? Math.max(0, Math.min(Number(intention.minutesLeft) || 0,
+      intention.visitMinutesMax == null ? Infinity : Number(intention.visitMinutesMax) || 0))
+    : Math.max(0, opens - used);
 
   heading.textContent = mode === 'checkin' ? `Time's up on ${displayName}` : displayName;
   panel.hidden = false;
@@ -325,17 +330,25 @@ function renderIntentionUI(intention) {
   };
 
   if (left > 0) {
-    countEl.textContent = mode === 'checkin'
-      ? `${left} of ${opens} ${opens === 1 ? 'open' : 'opens'} left today \u00b7 ${minutesEach} min`
-      : `Open ${used + 1} of ${opens} today \u00b7 ${minutesEach} min`;
+    countEl.textContent = isDailyTime
+      ? `${left} of ${intention.dailyMinutes} minutes left today`
+      : mode === 'checkin'
+        ? `${left} of ${opens} ${opens === 1 ? 'open' : 'opens'} left today \u00b7 ${minutesEach} min`
+        : `Open ${used + 1} of ${opens} today \u00b7 ${minutesEach} min`;
     ledeEl.textContent = mode === 'checkin'
-      ? 'Done, or another open?'
+      ? isDailyTime ? "Done, or use some of today's remaining time?" : 'Done, or another open?'
       : 'You set this intention yourself. Is this one of those times?';
-    const take = button(mode === 'checkin' ? 'Use another open' : `Open for ${minutesEach} minutes`, 'int-solid-btn', async () => {
+    let take;
+    const form = createIntentionVisitForm(actionsEl, intention, intentionVisitDraft, (state) => {
+      if (take) take.disabled = !state.valid;
+    });
+    take = button(isDailyTime ? 'Use this time' : mode === 'checkin' ? 'Use another open' : `Open for ${minutesEach} minutes`, 'int-solid-btn', async () => {
+      const visit = form.read();
+      if (!visit.valid) return;
       take.disabled = true;
       let resp;
       try {
-        resp = await sendTabMessage({ action: 'intentionGrant', domain, isApp, appLabel: isApp ? appLabel : undefined });
+        resp = await sendTabMessage({ action: 'intentionGrant', domain, isApp, appLabel: isApp ? appLabel : undefined, reason: visit.reason, minutes: visit.minutes });
       } catch (e) {
         resp = null;
       }
@@ -347,20 +360,27 @@ function renderIntentionUI(intention) {
         renderIntentionUI(resp.intention);
         return;
       }
-      take.disabled = false;
-      ledeEl.textContent = "Couldn't open a pass \u2014 try again.";
+      take.disabled = !form.read().valid;
+      ledeEl.textContent = "Couldn't open a pass. Please try again.";
     });
+    take.disabled = !form.read().valid;
     return;
   }
 
-  countEl.textContent = opens === 0
+  countEl.textContent = isDailyTime
+    ? intention.visitMinutesMax === 0 && intention.minutesLeft > 0
+      ? 'No time left for a visit today'
+      : `All ${intention.dailyMinutes} minutes used today`
+    : opens === 0
     ? 'Blocked \u00b7 no opens'
     : `All ${opens} ${opens === 1 ? 'open' : 'opens'} used today`;
 
   chrome.runtime.sendMessage({ action: 'getAccess' }, (access) => {
     if (chrome.runtime.lastError) access = null;
     if (access && access.route === 'locked') {
-      ledeEl.textContent = opens === 0
+      ledeEl.textContent = isDailyTime
+        ? "Today's time is used. More time means talking to the coach, which needs coaching credit."
+        : opens === 0
         ? 'You chose not to open this at all. Getting past that means talking to the coach, which needs coaching credit.'
         : "That was today's intention. More time today means talking to the coach, which needs coaching credit.";
       button('Top up', 'int-solid-btn', () => {
@@ -369,7 +389,9 @@ function renderIntentionUI(intention) {
       });
       return;
     }
-    ledeEl.textContent = opens === 0
+    ledeEl.textContent = isDailyTime
+      ? "Today's time is used. If something genuinely needs more, you can make your case to the coach."
+      : opens === 0
       ? 'You chose not to open this at all. If something genuinely needs it, you can make your case to the coach.'
       : "That was today's intention. If something genuinely needs more, you can make your case to the coach.";
     button('Ask the coach', 'int-solid-btn', () => {
@@ -406,7 +428,7 @@ loadUsageHistory(domain, isApp && window.intentionApps && window.intentionApps.g
 // gate up.
 const OPENER_FALLBACK = mode === 'checkin'
   ? `Time check. Your time on ${displayName} is up. Did you get what you came for?`
-  : `Hey. I see you've opened ${displayName}. What's going on — what are you hoping to get out of it?`;
+  : `Hey. I see you've opened ${displayName}. What's going on? What are you hoping to get out of it?`;
 
 // The loop itself is gate-ui.js's, shared with content.js. What is
 // host-specific is here: the transport — this gate is an extension page, so
@@ -520,4 +542,3 @@ closeBtn.addEventListener('click', async () => {
   postTabMessage({ action: 'endSession', domain, reason: 'walked_away' });
   showWalkAwayMoment(leave, domainStats);
 });
-

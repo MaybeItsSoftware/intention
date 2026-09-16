@@ -137,21 +137,29 @@ function showWalkAwayMoment(onDone, stats) {
   document.addEventListener('click', skip, true);
 }
 
-// The five-figure strip above the conversation. Static markup from numbers the
-// background computed — no interpolation of anything a page could have
-// authored, which is why this one may use innerHTML.
+// The five-figure strip above the conversation.
 function renderStatsRow(stats) {
   const statsRow = document.getElementById('int-stats-row');
   if (!statsRow) return;
-  const cell = (value, label) =>
-    `<div class="int-stat"><div class="int-stat-value">${value}</div><div class="int-stat-label">${label}</div></div>`;
-  statsRow.innerHTML = [
-    cell(`${stats.minutesToday || 0}m`, 'Today'),
-    cell(`${stats.minutesWeek || 0}m`, 'Week'),
-    cell(`${stats.minutesYear || 0}m`, 'Year'),
-    cell(`${stats.minutesAllTime || 0}m`, 'All Time'),
-    cell(stats.walkedAwayWeek || 0, 'Walked away (wk)')
-  ].join('');
+  statsRow.textContent = '';
+  for (const [value, label] of [
+    [`${stats.minutesToday || 0}m`, 'Today'],
+    [`${stats.minutesWeek || 0}m`, 'Week'],
+    [`${stats.minutesYear || 0}m`, 'Year'],
+    [`${stats.minutesAllTime || 0}m`, 'All Time'],
+    [stats.walkedAwayWeek || 0, 'Walked away (wk)']
+  ]) {
+    const cell = document.createElement('div');
+    cell.className = 'int-stat';
+    const figure = document.createElement('div');
+    figure.className = 'int-stat-value';
+    figure.textContent = value;
+    const caption = document.createElement('div');
+    caption.className = 'int-stat-label';
+    caption.textContent = label;
+    cell.append(figure, caption);
+    statsRow.appendChild(cell);
+  }
   statsRow.style.display = 'flex';
 }
 
@@ -391,7 +399,7 @@ function renderCreditNote(lowCredit, credits, route) {
   }
   note.classList.toggle('int-credit-note-low', !!lowCredit);
   note.textContent = lowCredit
-    ? `Coaching credit is running low — ${remaining.toLocaleString()} credits left.`
+    ? `Coaching credit is running low: ${remaining.toLocaleString()} credits left.`
     : `${remaining.toLocaleString()} coaching credits left.`;
   note.hidden = false;
 }
@@ -452,6 +460,60 @@ function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
       reject(e);
     }
   });
+}
+
+// The free intention visit still asks what the visit is for. Both the page
+// overlay and the native/redirect gate use this same form before spending an
+// open. A daily time budget also asks how much of today's time to take now.
+function createIntentionVisitForm(container, intention, draft, onChange) {
+  const fields = document.createElement('div');
+  fields.className = 'int-visit-fields';
+  const reasonLabel = document.createElement('label');
+  reasonLabel.className = 'int-visit-label';
+  reasonLabel.textContent = 'What are you here for?';
+  const reasonInput = document.createElement('input');
+  reasonInput.className = 'int-visit-input int-visit-reason';
+  reasonInput.type = 'text';
+  reasonInput.maxLength = 500;
+  reasonInput.placeholder = 'Give a specific reason';
+  reasonInput.value = draft.reason || '';
+  reasonLabel.appendChild(reasonInput);
+  fields.appendChild(reasonLabel);
+
+  let minutesInput = null;
+  if (intention.mode === 'dailyTime') {
+    const maxMinutes = Number(intention.visitMinutesMax) > 0
+      ? Math.min(intention.minutesLeft, intention.visitMinutesMax)
+      : intention.minutesLeft;
+    const minutesLabel = document.createElement('label');
+    minutesLabel.className = 'int-visit-label';
+    minutesLabel.textContent = 'Minutes for this visit';
+    minutesInput = document.createElement('input');
+    minutesInput.className = 'int-visit-input int-visit-minutes';
+    minutesInput.type = 'number';
+    minutesInput.min = '1';
+    minutesInput.max = String(maxMinutes);
+    minutesInput.step = '1';
+    minutesInput.value = String(Math.min(maxMinutes, Math.max(1, Number(draft.minutes) || 10)));
+    minutesLabel.appendChild(minutesInput);
+    fields.appendChild(minutesLabel);
+  }
+
+  const read = () => {
+    const reason = reasonInput.value.trim();
+    const minutes = minutesInput ? Number(minutesInput.value) : intention.minutesEach;
+    const validMinutes = !minutesInput || (Number.isInteger(minutes) && minutes >= 1 && minutes <= Number(minutesInput.max));
+    return { reason, minutes, valid: !!reason && validMinutes };
+  };
+  const changed = () => {
+    draft.reason = reasonInput.value;
+    if (minutesInput) draft.minutes = minutesInput.value;
+    onChange(read());
+  };
+  reasonInput.addEventListener('input', changed);
+  if (minutesInput) minutesInput.addEventListener('input', changed);
+  container.appendChild(fields);
+  return { read, reasonInput, minutesInput };
 }
 
 // The conversation itself: a thinking bubble, a request, and a reply typed
@@ -559,7 +621,7 @@ function createGateConversation(host) {
         fail('[no response: background worker may be offline]');
         return;
       }
-      fail(resp.networkError ? "Can't reach the coach — check your connection." : resp.error,
+      fail(resp.networkError ? "Can't reach the coach. Check your connection." : resp.error,
         resp.errorCode);
       return;
     }

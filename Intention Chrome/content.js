@@ -132,7 +132,7 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
 }
 
 #intention-root .int-msg-user::before {
-  content: "You — ";
+  content: "You: ";
   color: var(--text-muted);
 }
 
@@ -271,6 +271,37 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
   align-items: center;
   gap: 20px;
 }
+
+#intention-root .int-visit-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+#intention-root .int-visit-label {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#intention-root .int-visit-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+#intention-root .int-visit-minutes { max-width: 140px; }
 
 #intention-root .int-solid-btn {
   border: 1px solid var(--ink);
@@ -533,6 +564,15 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
   font-weight: 700;
   letter-spacing: 0.15em;
   text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+#intention-badge-reason {
+  display: block;
+  max-width: 280px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -1583,7 +1623,7 @@ function runWhenBodyExists(callback) {
 // missing is the rest of the wizard.
 function renderSetupNeededUI() {
   renderInterstitial(
-    "This site is blocked, but setup was never finished — so there's no coach here to talk to yet.",
+    "This site is blocked, but setup was never finished, so there's no coach here to talk to yet.",
     "Finish setup",
   );
 }
@@ -1812,8 +1852,8 @@ function renderChatUI({ mode, domain }) {
     : "";
   const subtitle =
     mode === "gate"
-      ? `${partHere ? `${partHere} on ` : ""}${domain} — let's check in before you go through`
-      : `${domain} — your time is up`;
+      ? `${partHere ? `${partHere} on ` : ""}${domain}: let's check in before you go through`
+      : `${domain}: your time is up`;
 
   const root = document.createElement("div");
   root.id = "intention-root";
@@ -1852,7 +1892,7 @@ function renderChatUI({ mode, domain }) {
   // gate up.
   const OPENER_FALLBACK =
     mode === "gate"
-      ? `Hey. I see you've opened ${domain}. What's going on — what are you hoping to get out of it?`
+      ? `Hey. I see you've opened ${domain}. What's going on? What are you hoping to get out of it?`
       : `Time check. Your time on ${domain} is up. Did you get what you came for?`;
 
   // The loop itself is gate-ui.js's, shared with coaching.js. What is
@@ -1979,6 +2019,7 @@ function renderIntentionGateUI({ mode, domain }) {
   const messagesEl = root.querySelector("#int-messages");
   const actionsEl = root.querySelector("#int-gate-actions");
   const noteEl = root.querySelector(".int-note");
+  const visitDraft = { reason: "", minutes: 10 };
 
   targetEl.textContent = mode === "checkin"
     ? `Time's up on ${domain}`
@@ -2019,8 +2060,12 @@ function renderIntentionGateUI({ mode, domain }) {
 
   const paint = (intention) => {
     const { opens, minutesEach } = intention;
+    const isDailyTime = intention.mode === "dailyTime";
     const used = Math.min(opens, Math.max(0, Number(intention.opensUsed) || 0));
-    const left = Math.max(0, opens - used);
+    const left = isDailyTime
+      ? Math.max(0, Math.min(Number(intention.minutesLeft) || 0,
+        intention.visitMinutesMax == null ? Infinity : Number(intention.visitMinutesMax) || 0))
+      : Math.max(0, opens - used);
 
     dotsEl.textContent = "";
     for (let i = 0; i < opens; i++) {
@@ -2032,21 +2077,29 @@ function renderIntentionGateUI({ mode, domain }) {
     messagesEl.textContent = "";
 
     if (left > 0) {
-      countEl.textContent = mode === "checkin"
-        ? `${left} of ${opens} ${opens === 1 ? "open" : "opens"} left today · ${minutesEach} min`
-        : `Open ${used + 1} of ${opens} today · ${minutesEach} min`;
+      countEl.textContent = isDailyTime
+        ? `${left} of ${intention.dailyMinutes} minutes left today`
+        : mode === "checkin"
+          ? `${left} of ${opens} ${opens === 1 ? "open" : "opens"} left today · ${minutesEach} min`
+          : `Open ${used + 1} of ${opens} today · ${minutesEach} min`;
       ledeEl.textContent = mode === "checkin"
-        ? "Done, or another open?"
+        ? isDailyTime ? "Done, or use some of today's remaining time?" : "Done, or another open?"
         : "You set this intention yourself. Is this one of those times?";
-      const take = button(
-        mode === "checkin" ? "Use another open" : `Open for ${minutesEach} minutes`,
+      let take;
+      const form = createIntentionVisitForm(actionsEl, intention, visitDraft, (state) => {
+        if (take) take.disabled = !state.valid;
+      });
+      take = button(
+        isDailyTime ? "Use this time" : mode === "checkin" ? "Use another open" : `Open for ${minutesEach} minutes`,
         "int-solid-btn",
         () => {
+          const visit = form.read();
+          if (!visit.valid) return;
           take.disabled = true;
-          chrome.runtime.sendMessage({ action: "intentionGrant", domain, isApp: false }, (resp) => {
+          chrome.runtime.sendMessage({ action: "intentionGrant", domain, isApp: false, reason: visit.reason, minutes: visit.minutes }, (resp) => {
             if (chrome.runtime.lastError) {
-              take.disabled = false;
-              addMessage(messagesEl, "assistant", "Couldn't open a pass — try again.");
+              take.disabled = !form.read().valid;
+              addMessage(messagesEl, "assistant", "Couldn't open a pass. Please try again.");
               return;
             }
             if (resp && resp.grantedSession) {
@@ -2057,28 +2110,37 @@ function renderIntentionGateUI({ mode, domain }) {
               paint(resp.intention);
               return;
             }
-            take.disabled = false;
-            addMessage(messagesEl, "assistant", "Couldn't open a pass — try again.");
+            take.disabled = !form.read().valid;
+            addMessage(messagesEl, "assistant", "Couldn't open a pass. Please try again.");
           });
         },
       );
+      take.disabled = !form.read().valid;
       button(mode === "checkin" ? "Done" : "Not now", "int-secondary", leave);
       return;
     }
 
-    countEl.textContent = opens === 0
+    countEl.textContent = isDailyTime
+      ? intention.visitMinutesMax === 0 && intention.minutesLeft > 0
+        ? "No time left for a visit today"
+        : `All ${intention.dailyMinutes} minutes used today`
+      : opens === 0
       ? "Blocked · no opens"
       : `All ${opens} ${opens === 1 ? "open" : "opens"} used today`;
 
     if (matchedAccessRoute === "locked") {
-      ledeEl.textContent = opens === 0
+      ledeEl.textContent = isDailyTime
+        ? "Today's time is used. More time means talking to the coach, which needs coaching credit or your own API key."
+        : opens === 0
         ? "You chose not to open this at all. Getting past that means talking to the coach, which needs coaching credit or your own API key."
         : "That was today's intention. More time today means talking to the coach, which needs coaching credit or your own API key.";
       button("Top up", "int-solid-btn", () => {
         chrome.runtime.sendMessage({ action: "openOptions", section: "unlock" });
       });
     } else {
-      ledeEl.textContent = opens === 0
+      ledeEl.textContent = isDailyTime
+        ? "Today's time is used. If something genuinely needs more, you can make your case to the coach."
+        : opens === 0
         ? "You chose not to open this at all. If something genuinely needs it, you can make your case to the coach."
         : "That was today's intention. If something genuinely needs more, you can make your case to the coach.";
       button("Ask the coach", "int-solid-btn", () => renderChatUI({ mode, domain }));
@@ -2105,7 +2167,9 @@ function renderIntentionGateUI({ mode, domain }) {
     chrome.runtime.sendMessage({ action: "getStatsSummary" }, (resp) => {
       if (chrome.runtime.lastError || !resp || !resp.streak) return;
       const days = Number(resp.streak.days) || 0;
-      const left = matchedIntention ? matchedIntention.opens - (matchedIntention.opensUsed || 0) : 0;
+      const left = matchedIntention?.mode === "dailyTime"
+        ? Math.min(matchedIntention.minutesLeft, matchedIntention.visitMinutesMax ?? Infinity)
+        : matchedIntention ? matchedIntention.opens - (matchedIntention.opensUsed || 0) : 0;
       if (days < 2 || left <= 0) return;
       noteEl.textContent = `Day ${days} of keeping your intentions.`;
       noteEl.hidden = false;
@@ -2150,6 +2214,14 @@ function renderStatusBadge(session) {
   timeEl.id = "intention-badge-time";
   badge.appendChild(timeEl);
 
+  const reason = typeof session?.reason === "string" ? session.reason.trim() : "";
+  if (reason) {
+    const reasonEl = document.createElement("span");
+    reasonEl.id = "intention-badge-reason";
+    reasonEl.textContent = `Reason: ${reason}`;
+    badge.appendChild(reasonEl);
+  }
+
   const finishBtn = document.createElement("button");
   finishBtn.id = "intention-badge-finish";
   finishBtn.type = "button";
@@ -2171,13 +2243,11 @@ function renderStatusBadge(session) {
     const boundary = Number(session.intervalMinutes) > 0
       ? ` / ${String(session.intervalMinutes).padStart(2, "0")}:00`
       : "";
-    // On a scoped pass the destination replaces the stated reason: it is the
-    // more specific of the two ("Watching 'Never Gonna Give You Up'" says what
-    // the reason was for), and two quoted strings on one badge is a mess. Both
-    // are page-derived strings and both are set as text, never as markup.
+    // A scoped pass also names its destination; the user's reason appears on
+    // its own line above. Both strings are assigned as text, never as markup.
     const tail = scope
       ? ` · ${scope.verb || "On"} "${scope.label || "this page"}"`
-      : session.reason ? ' · "' + session.reason + '"' : "";
+      : "";
     timeEl.textContent = `⏱ ${timeStr}${boundary}${tail}`;
   }
   update();

@@ -73,7 +73,7 @@ async function attemptCoachOpen() {
     thinking.remove();
     if (resp && resp.locked) {
       await closeCoachModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     addCoachMsg('assistant', COACH_OPENER_FALLBACK);
@@ -112,10 +112,10 @@ async function attemptCoachSend(text, messagesEl) {
     thinking.remove();
     if (resp.locked) {
       await closeCoachModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
+    const message = resp.networkError ? "Can't reach the coach. Check your connection." : resp.error;
     showCoachRetryableError(messagesEl, message, text);
     return;
   }
@@ -259,8 +259,8 @@ const GATE_OPENER_FALLBACKS = {
   // network drops on the way to the coach — and "you want to loosen your
   // rules" would be the only thing ever said about a change that is really
   // "leave the messages open, keep Reels shut".
-  narrow_block_scope: (d) => `You want to leave part of ${d} open — blocked everywhere except the bits you name. Which part, and what is it you need there?`,
-  narrow_app_block_scope: (d) => `You want to leave part of ${d} open — blocked everywhere except the bits you name. Which part, and what is it you need there?`,
+  narrow_block_scope: (d) => `You want to leave part of ${d} open: blocked everywhere except the bits you name. Which part, and what is it you need there?`,
+  narrow_app_block_scope: (d) => `You want to leave part of ${d} open: blocked everywhere except the bits you name. Which part, and what is it you need there?`,
   allow_accounts: (d) => `You want an account on ${d} to always stay open. Whose is it, and what do you go there for?`,
   disable_all: () => `You want to turn off all blocking. That's a big move. Talk to me about what's going on.`,
   // The offline fallback matters more here than anywhere else in this map: it
@@ -269,7 +269,7 @@ const GATE_OPENER_FALLBACKS = {
   // exit. It says the same thing the prompt does — I can't stop you, tell me
   // what happened — because those are the words the product stands behind
   // whether or not the model ever answers.
-  uninstall: () => `You're about to take Intention off this device. I can't stop you and I'm not going to try — but tell me what happened first.`,
+  uninstall: () => `You're about to take Intention off this device. I can't stop you and I'm not going to try. But tell me what happened first.`,
   decrease_leave_delay: () => `You want to shorten the wait you put on removing Intention. You chose that number for a moment like this one. What's changed?`
 };
 
@@ -299,7 +299,7 @@ function applyLeavingGateChrome(changeType, leaveDelayMinutes) {
   }
   const delay = formatLeaveDelay(leaveDelayMinutes);
   exit.textContent = delay
-    ? `Remove it anyway — this ends your ${delay} cool-off`
+    ? `Remove it anyway (this ends your ${delay} cool-off)`
     : 'Remove it anyway';
   exit.disabled = false;
   exit.hidden = false;
@@ -355,7 +355,7 @@ async function attemptGateOpen() {
     // anyway" button below it still works.
     if (resp && resp.locked && changeType !== 'uninstall') {
       await closeGateModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     addGateMsg('assistant', gateOpenerFallback(changeType, domain));
@@ -406,10 +406,10 @@ async function attemptGateSend(text, messagesEl) {
     // over to the paywall, because the exit beside it has to keep working.
     if (resp.locked && gateChange && gateChange.changeType !== 'uninstall') {
       await closeGateModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
-    const message = resp.networkError ? "Can't reach the coach — check your connection." : resp.error;
+    const message = resp.networkError ? "Can't reach the coach. Check your connection." : resp.error;
     showGateRetryableError(messagesEl, message, text);
     return;
   }

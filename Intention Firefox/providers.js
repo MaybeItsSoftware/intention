@@ -265,7 +265,7 @@ async function postCoachReport({ backendUrl, accessToken, reported, prompt, note
   }, 15000);
   if (!res.ok) {
     const err = new Error(res.status === 429
-      ? "That's a lot of reports at once \u2014 give it a minute and try again."
+      ? "That's a lot of reports at once. Give it a minute and try again."
       : `Report failed (${res.status})`);
     err.code = res.status === 429 ? 'rate_limited' : 'backend_error';
     throw err;
@@ -276,7 +276,7 @@ async function postCoachReport({ backendUrl, accessToken, reported, prompt, note
 const HOSTED_ERROR_MESSAGES = {
   entitlement_invalid: 'Your coaching credit could not be verified. Open Settings to restore it.',
   entitlement_expired: 'Your access has expired. Open Settings to restore it.',
-  balance_exhausted: "You're out of coaching credit. Buy more to keep talking to your coach."
+  balance_exhausted: 'Not enough coaching credit to send this message. Top up to continue.'
 };
 
 // Whether an error should send the user back to the paywall rather than just

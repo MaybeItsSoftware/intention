@@ -71,19 +71,42 @@ async function main() {
           }
         }
       }, done)));
-      await page.reload();
-      await page.waitForSelector('#settings-view:not([hidden])');
-      await page.waitForTimeout(300);
-      // localStorage remembers the last section across the two theme passes.
-      await page.click('[data-section-tab="blocking"]');
-      await page.waitForTimeout(150);
-      // Nothing to open any more: the two answers used to sit inside a
-      // collapsed <details> and are now part of the row.
-      await page.screenshot({ path: join(OUT, `settings-blocking-${scheme}.png`) });
+      // A week of history, so Today has a streak with a slip, a chart and
+      // per-target meters in every state. Written straight to storage: it is
+      // what tracking.js would have recorded.
+      await page.evaluate(() => new Promise(done => {
+        const key = (ago) => {
+          const d = new Date();
+          d.setDate(d.getDate() - ago);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+        const day = (ig, rd, negotiated = 0) => ({
+          'instagram.com': { minutes: ig, grants: 3 + negotiated, negotiated, sessions: [] },
+          'reddit.com': { minutes: rd, grants: 2, sessions: [] }
+        });
+        const dailyStats = {
+          [key(6)]: day(20, 30), [key(5)]: day(12, 8), [key(4)]: day(38, 25, 1),
+          [key(3)]: day(18, 14), [key(2)]: day(9, 6), [key(1)]: day(22, 12),
+          [key(0)]: { 'instagram.com': { minutes: 26, grants: 3, sessions: [] }, 'reddit.com': { minutes: 7, grants: 1, sessions: [] } }
+        };
+        chrome.storage.local.set({ dailyStats, setupCompletedAt: Date.now() - 20 * 86400000 }, done);
+      }));
 
-      await page.click('[data-section-tab="settings"]');
-      await page.waitForTimeout(150);
-      await page.screenshot({ path: join(OUT, `settings-settings-${scheme}.png`) });
+      // Wide (the Mac window and a desktop tab), then phone width.
+      for (const [label, width] of [['wide', 1180], ['phone', 390]]) {
+        await page.setViewportSize({ width, height: label === 'phone' ? 1600 : 1000 });
+        await page.reload();
+        await page.waitForSelector('#settings-view:not([hidden])');
+        await page.waitForTimeout(300);
+        // localStorage remembers the last section across passes, so each tab
+        // is clicked rather than assumed.
+        for (const tab of ['today', 'intentions', 'coach', 'settings']) {
+          await page.click(`[data-section-tab="${tab}"]`);
+          await page.waitForTimeout(200);
+          await page.screenshot({ path: join(OUT, `settings-${tab}-${label}-${scheme}.png`), fullPage: true });
+        }
+      }
+      await page.setViewportSize({ width: 1180, height: 1000 });
 
       // ── The coaching page (the native app's full-screen chat).
       await page.goto(`chrome-extension://${id}/coaching.html?domain=instagram.com&mode=gate`);

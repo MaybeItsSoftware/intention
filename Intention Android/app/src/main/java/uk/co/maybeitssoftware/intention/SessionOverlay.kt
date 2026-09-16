@@ -38,12 +38,8 @@ import kotlin.math.roundToInt
 // like the badge does — during a bounded pass the useful number is how much of
 // what you asked for you have spent, not a countdown ticking towards a cliff.
 //
-// Unlike the badge, this is not scoped to the blocked app: it stays up while the
-// pass is live wherever the user goes (bar Intention's own screens). The pass
-// burns wall-clock time whether or not they are looking at the app, so hiding
-// the timer the moment they switch away would hide the truth — and it puts
-// "Finished" within reach at the moment they realise they are done, which is
-// what banks the unused minutes as closed early.
+// The badge belongs to the target currently in front. A native pass pauses
+// when that target leaves the foreground, so the badge disappears with it.
 //
 // Everything here is strictly additive. Without SYSTEM_ALERT_WINDOW there is no
 // window, and the ongoing notification below stands in for it; if that is
@@ -76,9 +72,14 @@ object SessionOverlay {
         val domain: String,
         val reason: String,
         val startTime: Long,
-        val intervalMinutes: Long
+        val intervalMinutes: Long,
+        val pausedDurationMs: Long,
+        val wallExpiresAt: Long
     ) {
-        val expiresAt: Long get() = startTime + intervalMinutes * 60_000L
+        val expiresAt: Long get() {
+            val foregroundExpiry = PassClock.expiresAt(startTime, intervalMinutes, pausedDurationMs)
+            return if (wallExpiresAt > 0L) minOf(foregroundExpiry, wallExpiresAt) else foregroundExpiry
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -108,10 +109,10 @@ object SessionOverlay {
     // thing on screen. `overOwnUi` hides it while Intention's own screens are in
     // front — the coach must never have a timer floating over it, and the
     // settings page has no use for one.
-    fun sync(context: Context, overOwnUi: Boolean = false) {
+    fun sync(context: Context, foregroundTarget: String?) {
         val ctx = context.applicationContext
         appContext = ctx
-        val session = if (overOwnUi) null else liveSession(ctx)
+        val session = liveSession(ctx, foregroundTarget)
         onMain {
             if (session == null) hideInternal(ctx) else showInternal(ctx, session)
         }
@@ -169,7 +170,8 @@ object SessionOverlay {
     // the same SharedPreferences JSON IntentionAccessibilityService reads for
     // its own expiry checks — a WebView round trip through background.js would
     // be asynchronous, and this runs on every foreground change.
-    fun liveSession(context: Context): LiveSession? {
+    fun liveSession(context: Context, foregroundTarget: String?): LiveSession? {
+        if (foregroundTarget == null) return null
         val prefs = context.getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
         val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         val now = System.currentTimeMillis()
@@ -181,14 +183,19 @@ object SessionOverlay {
                 val session = json.optJSONObject(keys.next()) ?: continue
                 if (!session.isNull("endedAt")) continue
                 val domain = session.optString("domain")
-                if (domain.isEmpty() || domain == finishing) continue
+                if (domain != foregroundTarget || domain == finishing) continue
                 val live = LiveSession(
                     domain = domain,
                     reason = session.optString("reason"),
                     startTime = session.optLong("startTime", 0L),
-                    intervalMinutes = session.optLong("intervalMinutes", 0L)
+                    intervalMinutes = session.optLong("intervalMinutes", 0L),
+                    pausedDurationMs = session.optLong("pausedDurationMs", 0L),
+                    wallExpiresAt = session.optLong("wallExpiresAt", 0L)
                 )
-                if (live.startTime <= 0L || now >= live.expiresAt) continue
+                if (session.optLong("pausedAt", 0L) > 0L ||
+                    (session.optLong("wallExpiresAt", 0L) > 0L && now >= session.optLong("wallExpiresAt", 0L)) ||
+                    !PassClock.isLive(live.startTime, live.intervalMinutes,
+                        live.pausedDurationMs, 0L, now)) continue
                 // Two live passes at once is possible (a site and an app), and
                 // the most recently granted is the one they are looking at, so
                 // that is the one that gets the timer.
@@ -442,7 +449,7 @@ object SessionOverlay {
     // granted length. Both stay minute:second even for a grant that runs past
     // an hour, which is what the extension does too.
     private fun elapsedText(session: LiveSession, now: Long): String {
-        val totalSec = ((now - session.startTime) / 1000.0).roundToInt().coerceAtLeast(0)
+        val totalSec = (PassClock.elapsedMs(session.startTime, session.pausedDurationMs, 0L, now) / 1000.0).roundToInt()
         val elapsed = String.format("%02d:%02d", totalSec / 60, totalSec % 60)
         val boundary = if (session.intervalMinutes > 0) {
             String.format(" / %02d:00", session.intervalMinutes)

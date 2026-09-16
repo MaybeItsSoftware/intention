@@ -219,11 +219,33 @@ async function main() {
     record('it starts at the default of three',
       (await page.textContent('#setup-intention-opens')) === '3');
 
+    await page.click('#setup-intention-mode [data-mode="dailyTime"]');
+    await page.locator('#setup-intention-daily input').fill('60');
+    await page.locator('#setup-intention-daily input').dispatchEvent('change');
+    await page.locator('#setup-intention-daily .stepper-btn').last().click();
+    const oneMinuteMore = await page.evaluate(() => setupDomainLimits['instagram.com'].dailyTimeMinutes);
+    record('daily minute plus adjusts by exactly one minute', oneMinuteMore === 61, String(oneMinuteMore));
+    await page.locator('#setup-intention-daily .stepper-btn').first().click();
+    await page.click('#setup-intention-mode [data-mode="dailyTime"]');
+    const timeDraft = await page.evaluate(() => setupDomainLimits['instagram.com']);
+    record('can choose a daily time allowance instead of visit count',
+      timeDraft?.intentionMode === 'dailyTime' && timeDraft?.dailyTimeMinutes === 60,
+      JSON.stringify(timeDraft));
+    record('the daily allowance hides the visit counter',
+      await page.locator('#setup-step-intention .setup-counter').isHidden());
+    await page.click('#setup-intention-mode [data-mode="opens"]');
+    for (let i = 0; i < 3; i++) await page.click('#setup-intention-minus');
+
     await page.click('#setup-intention-plus');
-    await page.click('[data-minutes="15"]');
+    await page.locator('#setup-intention-minutes input').fill('15');
+    await page.locator('#setup-intention-minutes input').dispatchEvent('change');
+    await page.locator('#setup-intention-minutes .stepper-btn').last().click();
+    const visitMinuteMore = await page.evaluate(() => setupDomainLimits['instagram.com'].passMinutes);
+    record('visit minute plus adjusts by exactly one minute', visitMinuteMore === 16, String(visitMinuteMore));
+    await page.locator('#setup-intention-minutes .stepper-btn').first().click();
     await page.waitForTimeout(80);
     const drafted = await page.evaluate(() => setupDomainLimits['instagram.com']);
-    record('plus and a minutes chip land in the draft',
+    record('plus and custom minutes land in the draft',
       drafted?.maxGrants === 4 && drafted?.passMinutes === 15, JSON.stringify(drafted));
     const sum = await page.textContent('#setup-intention-sum');
     record('and the line underneath adds it up as a day', /Up to 60 minutes a day, in four visits/.test(sum), sum);
@@ -275,7 +297,7 @@ async function main() {
     record('tapping a chip presses it',
       (await chip('instagram.com', 'needs', 'dm').getAttribute('aria-pressed')) === 'true');
     record('and rewrites the preview into what the coach will do',
-      (await preview('instagram.com')) === 'Your coach will hear you out for a DM reply — and push back on the feed, Reels and Explore.',
+      (await preview('instagram.com')) === 'Your coach will hear you out for a DM reply, and push back on the feed, Reels and Explore.',
       await preview('instagram.com'));
 
     // The phone case that used to lose the answer: a chip tap that does not

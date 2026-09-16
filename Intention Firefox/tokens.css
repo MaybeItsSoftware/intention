@@ -62,6 +62,8 @@
   --primary-fill: rgba(0, 127, 255, 0.10);
   --primary-fill-soft: rgba(0, 127, 255, 0.06);
   --primary-line: rgba(0, 127, 255, 0.45);
+  /* Past days in a chart; today takes full --primary. */
+  --chart-bar: rgba(0, 127, 255, 0.38);
 
   /* Status is a fixed four-way convention — success / danger / warning / info
      -> emerald / raspberry / amber / azure — as tinted fill + border + text of
@@ -117,6 +119,7 @@
     --primary-fill: rgba(0, 127, 255, 0.18);
     --primary-fill-soft: rgba(0, 127, 255, 0.10);
     --primary-line: rgba(0, 127, 255, 0.55);
+    --chart-bar: rgba(0, 127, 255, 0.45);
 
     --success-text: var(--c-emerald);
     --danger-text: #ff6b85;
@@ -124,4 +127,13 @@
 
     --scrim: rgba(0, 0, 0, 0.6);
   }
+}
+
+/* The Mac app is a window, not a web page: WebKit's rubber-band bounce at the
+   top and bottom of the scroll reads as a browser showing through. The class
+   is set by the app's bridge (ios-bridge.js), so a browser tab keeps its
+   ordinary behaviour and the iPhone app keeps the bounce iOS users expect. */
+html.platform-mac,
+html.platform-mac body {
+  overscroll-behavior: none;
 }

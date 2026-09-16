@@ -176,7 +176,7 @@ describe('composeServiceReason', () => {
     const { legitimateUse } = S.composeServiceReason('instagram.com', {
       needs: ['none'], costs: [], needsNote: '', costsNote: ''
     });
-    expect(legitimateUse).toBe("Nothing — I don't actually need it.");
+    expect(legitimateUse).toBe("Nothing. I don't actually need it.");
   });
 
   it('composes nothing at all from nothing at all, so the key is dropped', () => {

@@ -182,8 +182,12 @@ Refund webhooks are implemented on the backend to automatically claw back coachi
   - `declarativeNetRequest` — redirects the top-level navigation to `coaching.html` when a blocked domain loads, and grants a temporary per-tab allow rule while a coaching session is active.
   - `storage`, `alarms` — local persistence and the grant-countdown timer.
 - **Icons** — already present (`icon16/32/48/128.png` per platform). Chrome Web Store also wants a 128×128 store icon (use `icon128.png`).
-- **Screenshots** — not included in this repo (design assets, not code). Chrome: 1280×800 or 640×400, at least one. Firefox: recommended, no hard size requirement. Apple: per-device-size screenshots via Xcode Organizer/App Store Connect.
-- **Listing copy** — short description, long description, category ("Productivity"). Draft from the [README](README.md) features/how-it-works sections.
+- **Screenshots and graphics** — generated assets and commands are documented in [store-assets/README.md](store-assets/README.md). Apple iPhone, iPad and Mac images, Google Play phone images and feature graphic, and Chrome/Firefox browser images are all checked in. The three App Store purchase review screenshots are generated separately from the live paywall.
+- **Listing copy** — Google Play copy is in `Intention Android/fastlane/metadata/android/en-US/`; Apple, Chrome and Firefox drafts are in `store-assets/listings/`. Category: "Productivity".
+
+### Google Play codes for coaching credit
+
+In Play Console, select Intention → **Monetise with Play → Promo codes → Create promo code**. Choose an in-app/one-time product promotion, then select the active credit product: `intention1pound`, `intention2pound`, or `intention5pound`. Set the dates and code count, enable the promotion, create it, and download its CSV. These codes grant a credit top-up; a paid-app promotion only grants installation. Existing app codes cannot be converted to product codes. See [Google's promotion instructions](https://support.google.com/googleplay/android-developer/answer/6321495).
 
 ## Known lint warnings
 

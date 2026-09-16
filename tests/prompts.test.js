@@ -223,6 +223,14 @@ describe('buildGateSystemPrompt', () => {
     expect(out).toContain('not to open it at all today');
   });
 
+  it('describes a daily time allowance without calling it a zero-open block', () => {
+    const out = P.buildGateSystemPrompt({ ...base, grantsCap: 0, minutesEach: 0, dailyTimeMinutes: 60 });
+    expect(out).toContain('spend at most 60 minutes here per day');
+    expect(out).toContain('Minutes allowed by their daily intention: 60');
+    expect(out).not.toContain('not to open it at all today');
+    expect(out).not.toContain('their intention allows 0');
+  });
+
   // A stored quickCheck field is ignored data now: an entry that still carries
   // one from before the removal must not change a single character of the
   // prompt, in either direction.

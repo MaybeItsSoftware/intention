@@ -538,9 +538,11 @@ const STRICT_PHASE_CLAMP_CAUSE = "the cap on a pass beyond today's intention";
 // a fact about the destination, resolved in background.js. When a page-scoped
 // pass is on the table the sentence has to say so, or the coach reads a flat
 // 10-minute cap and never offers the cheaper option.
-function renderIntentionLine(opens, minutesEach, scopeAvailable) {
+function renderIntentionLine(opens, minutesEach, scopeAvailable, dailyTimeMinutes) {
   const n = Math.max(0, Number(opens) || 0);
-  const intention = n === 0
+  const intention = dailyTimeMinutes != null
+    ? `to spend at most ${Number(dailyTimeMinutes) || 0} minutes here per day, choosing how much of the remaining time to use on each visit`
+    : n === 0
     ? 'not to open it at all today'
     : `to open it at most ${n} time${n === 1 ? '' : 's'} a day, ${Number(minutesEach) || 0} minutes each`;
   return `\n\nTheir intention for this site (set by them, computed for you): ${intention}. That is used up for today \u2014 which is the only reason you are talking. Every minute you grant now is beyond a line they drew in a calmer moment, and they are spending coaching credit to ask for it. Plausible is not enough; only a concrete, bounded, genuinely necessary task is. Say plainly that today's intention is spent, and say it as their own decision rather than your rule. Any pass you do grant is capped at ${STRICT_PHASE_MAX_MINUTES} minutes${scopeAvailable ? ` \u2014 unless it is scoped to a single page, which may run to ${STRICT_PHASE_MAX_MINUTES_SCOPED}, because leaving that page ends it` : ''}, so ask what actually has to happen now and fit the minutes to that. Walking away is always a good outcome here; never make them feel they wasted credit by choosing it.`;
@@ -897,7 +899,7 @@ function renderRemovalBlock({ blockedSites, blockedApps, daysActive, minutesToda
   return lines.join('\n');
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesEach, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   // An app and a web page are mutually exclusive targets; only one block can
   // apply, and the app one wins because there is no page to describe.
@@ -926,7 +928,7 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
   // What they meant to allow themselves here, and that it is spent. See
   // renderIntentionLine.
-  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope);
+  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope, dailyTimeMinutes);
   // The cache-break marker is prefixed HERE, at the head of the usage block,
   // so every compose path — default append and user {{usage}} overrides alike
   // — splits exactly where the volatile content starts, with no change to
@@ -936,7 +938,7 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
 ${renderNowLine()}
 
 Today's usage:
-- Passes on ${domain} today: ${grantsToday} (their intention allows ${grantsCap})
+- Passes on ${domain} today: ${grantsToday}${dailyTimeMinutes == null ? ` (their intention allows ${grantsCap})` : `\n- Minutes allowed by their daily intention: ${dailyTimeMinutes}`}
 - Minutes on ${domain} today: ${minutesTodaySite}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Minutes across all blocked sites this week: ${minutesWeekAll}
@@ -952,6 +954,7 @@ ${reasonsStr === '(none yet today)'
     domain,
     grants_today: grantsToday,
     grants_cap: grantsCap,
+    daily_time_minutes: dailyTimeMinutes == null ? '' : dailyTimeMinutes,
     minutes_today: minutesTodaySite,
     minutes_each: minutesEach,
     reasons_today: reasonsStr,
@@ -962,7 +965,7 @@ ${reasonsStr === '(none yet today)'
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesEach, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   const pageCtxStr = appContext ? renderAppContextBlock(appContext, partContext) : renderPageContextBlock(pageContext);
   const partStr = renderPartBlock({ siteLabel: domain, ...(partContext || {}) });
@@ -983,7 +986,7 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
   const escalationStr = computeEscalationLine(recentDays, grantsCap);
   // A coach check-in only ever follows a pass beyond the intention, so the
   // same line applies — see renderIntentionLine.
-  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope);
+  const phaseStr = renderIntentionLine(grantsCap, minutesEach, !!pageScope, dailyTimeMinutes);
   // Marker prefixed at the head of the usage block, same as the gate prompt —
   // see buildGateSystemPrompt for why it lives here.
   const usage = CACHE_BREAK_MARKER + `You are gently checking in: the user's granted time on ${domain} is up. Their original stated purpose was: "${originalReason || '(unknown)'}".
@@ -991,7 +994,7 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
 ${renderNowLine()}
 
 Today's usage:
-- Passes on ${domain} today: ${grantsToday} (their intention allows ${grantsCap})
+- Passes on ${domain} today: ${grantsToday}${dailyTimeMinutes == null ? ` (their intention allows ${grantsCap})` : `\n- Minutes allowed by their daily intention: ${dailyTimeMinutes}`}
 - Minutes on ${domain} today: ${minutesTodaySite}${weekSiteStr}
 - Minutes across all blocked sites today: ${minutesTodayAll}
 - Reasons they gave for visiting ${domain} today: ${reasonsStr}${sessionsStr}${historyStr}${escalationStr ? `\n\n${escalationStr}` : ''}${phaseStr}${renderTrackRecordGuidance(sessionsStr, historyStr, computeTrustSummary(sessionsToday, recentDays))}${renderWalkAwayLine(walkedAwayToday, walkedAwayWeek)}${renderObservationsBlock(observations)}${pageCtxStr}${partStr}${scopeStr}${endedScopeStr}
@@ -1011,6 +1014,7 @@ Open with: asking warmly whether they finished what they came for. Then:
     domain,
     grants_today: grantsToday,
     grants_cap: grantsCap,
+    daily_time_minutes: dailyTimeMinutes == null ? '' : dailyTimeMinutes,
     minutes_today: minutesTodaySite,
     minutes_each: minutesEach,
     reasons_today: reasonsStr,
@@ -1107,6 +1111,14 @@ Judge the shape of the carve-out, not the act of asking. A part with a definite 
     changeDesc = `ALWAYS ALLOW a specific account on ${domain}. Right now: ${currentValue}. They want: ${newValue} \u2014 so that account's profile and posts open without an intention in front of them, every time, from now on.
 
 Judge the account, not the act of asking. One person or organisation whose posts are a real reason to be on ${domain} \u2014 a course they follow, a family member, a source their work depends on \u2014 is a bounded thing to leave open, and you should say so. An account that posts an endless stream of entertainment is the feed they blocked, under a single name.`;
+  } else if (changeType === 'allow_reddit') {
+    const asSentence = value => typeof value === 'string' && value.trim()
+      ? value.trim().slice(0, 500) : 'no subreddits or posts stay open on Reddit';
+    currentValue = asSentence(currentValue);
+    newValue = asSentence(newValue);
+    changeDesc = `ALWAYS ALLOW specific Reddit subreddits or posts. Right now: ${currentValue}. They want: ${newValue}. These pages would open without an intention in front of them on every visit.
+
+Judge what they are opening. A specific post with a definite answer or a narrow subreddit needed for a concrete purpose can be reasonable. An endless feed of entertainment is the thing they chose to block, even when it has a subreddit name. Ask what they need there before approving.`;
   } else if (changeType === 'disable_all') {
     changeDesc = `DISABLE all blocking \u2014 clearing their entire blocklist so NONE of their chosen sites or apps are blocked anymore.`;
   } else if (changeType === 'decrease_leave_delay') {

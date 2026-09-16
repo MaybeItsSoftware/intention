@@ -153,7 +153,7 @@ async function main() {
       await page.waitForSelector('#settings-view:not([hidden])');
       await page.waitForTimeout(300);
 
-      for (const tab of ['blocking', 'activity', 'coach', 'settings']) {
+      for (const tab of ['today', 'intentions', 'coach', 'settings']) {
         await page.click(`[data-section-tab="${tab}"]`);
         await page.waitForTimeout(200);
         await page.evaluate(() => {

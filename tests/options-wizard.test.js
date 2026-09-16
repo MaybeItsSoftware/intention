@@ -22,11 +22,19 @@ const js = bundleForContext('options');
 const css = read('chrome', 'options.css');
 
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
+// Access forms and other optional UI are constructed by the page's scripts.
+// Their literal IDs are just as real as markup IDs; misspelled lookups still
+// fail this guard rather than being excused by a list of individual names.
+const scriptIds = new Set([
+  ...[...js.matchAll(/\.id\s*=\s*(['"])([^'"]+)\1/g)].map(m => m[2]),
+  ...[...js.matchAll(/setAttribute\(\s*(['"])id\1\s*,\s*(['"])([^'"]+)\2\s*\)/g)].map(m => m[3]),
+  ...[...js.matchAll(/\bid=["']([^"'$]+)["']/g)].map(m => m[1])
+]);
 
 describe('setup wizard markup and script agree', () => {
-  it('every id options.js looks up exists in options.html', () => {
+  it('every literal id looked up exists in markup or is created by a loaded script', () => {
     const missing = [...new Set([...js.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]))]
-      .filter(id => !htmlIds.has(id));
+      .filter(id => !htmlIds.has(id) && !scriptIds.has(id));
     expect(missing).toEqual([]);
   });
 
@@ -107,7 +115,7 @@ describe('the settings grid stays a flat list of sections', () => {
   // section-owned. One that isn't would render on every tab — and, worse,
   // render an empty box plus its gutter on the tabs it has nothing for.
   it('every direct child of the grid belongs to exactly one section', () => {
-    const children = [...grid.matchAll(/^ {8}<(?:section|details|div|ul)\b([^>]*)>/gm)].map(m => m[1]);
+    const children = [...grid.matchAll(/^ {12}<(?:section|details|div|ul)\b([^>]*)>/gm)].map(m => m[1]);
     expect(children.length).toBeGreaterThan(8);
     expect(children.filter(attrs => !/\bdata-section="/.test(attrs))).toEqual([]);
   });
@@ -417,5 +425,77 @@ describe('a note the user is still typing', () => {
 
     expect(area.value).toBe('');
     expect(answers().needsNote).toBe('');
+  });
+});
+
+// The Mac app's onboarding. Someone who set Intention up in Safari first
+// arrives with setupComplete already true, so the wizard alone would never
+// show them anything; they get a three-page welcome instead. Someone setting
+// up in the app gets the wizard, with the login page before the end.
+describe('Mac app onboarding', () => {
+  const load = ({ mac }) => {
+    const document = {
+      addEventListener() {},
+      getElementById: () => makeShimElement('div'),
+      createElement: makeShimElement,
+      createElementNS: (_ns, tag) => makeShimElement(tag),
+      body: makeShimElement('body'),
+      documentElement: { classList: { contains: (c) => mac && c === 'platform-mac' } },
+      get activeElement() { return null; }
+    };
+    const chrome = {
+      runtime: { getURL: (p) => p, lastError: null, sendMessage: (_m, cb) => cb && cb({ ok: true }) },
+      storage: { local: { get: (_k, cb) => cb && cb({}), set: (_o, cb) => cb && cb(), remove: (_k, cb) => cb && cb() } }
+    };
+    const intentionExtension = { status: (cb) => cb({ active: true, platform: 'mac' }), setSetupComplete() {} };
+    return loadSource(filesForContext('options', { except: ['billing.js', 'report.js'] }), {
+      chrome,
+      extraGlobals: {
+        document,
+        window: { matchMedia: () => ({ matches: false }), intentionExtension },
+        navigator: { userAgent: 'Safari/605' },
+        localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        CSS: { escape: (s) => s }
+      }
+    });
+  };
+
+  it('the tour is the Mac welcome, the Safari check and the login switch — nothing that edits the list', () => {
+    const ctx = load({ mac: true });
+    vm.runInContext(`setupMode = 'mac-tour'`, ctx);
+    expect(vm.runInContext('IS_MAC_APP', ctx)).toBe(true);
+    expect(vm.runInContext('computeStepOrder()', ctx))
+      .toEqual(['setup-step-mac-welcome', 'setup-step-safari', 'setup-step-mac-login']);
+  });
+
+  it('the wizard in the Mac app asks about login just before it finishes', () => {
+    const ctx = load({ mac: true });
+    vm.runInContext(`setupBlockedDomains = ['reddit.com']; setupWantsReasons = false;`, ctx);
+    const order = vm.runInContext('computeStepOrder()', ctx);
+    expect(order[1]).toBe('setup-step-safari');
+    expect(order.slice(-3)).toEqual(['setup-step-access', 'setup-step-mac-login', 'setup-step-done']);
+    expect(order).not.toContain('setup-step-mac-welcome');
+  });
+
+  it('the iPhone app has neither Mac page', () => {
+    const ctx = load({ mac: false });
+    vm.runInContext(`setupBlockedDomains = ['reddit.com'];`, ctx);
+    const order = vm.runInContext('computeStepOrder()', ctx);
+    expect(vm.runInContext('IS_MAC_APP', ctx)).toBe(false);
+    expect(order.filter(id => id.startsWith('setup-step-mac'))).toEqual([]);
+  });
+
+  it('the tour never writes a setup draft', () => {
+    const ctx = load({ mac: true });
+    const writes = [];
+    vm.runInContext(`setupMode = 'mac-tour'; setupDraftReady = true;`, ctx);
+    ctx.chrome.storage.local.set = (obj) => writes.push(obj);
+    vm.runInContext('saveSetupDraft()', ctx);
+    expect(writes).toEqual([]);
+    // The same call in the wizard does write, so the empty list above means
+    // something.
+    vm.runInContext(`setupMode = 'full'`, ctx);
+    vm.runInContext('saveSetupDraft()', ctx);
+    expect(writes).toHaveLength(1);
   });
 });

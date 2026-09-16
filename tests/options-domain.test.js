@@ -38,6 +38,49 @@ beforeAll(() => {
 const normalize = (raw) => ctx.normalizeDomainInput(raw);
 const accepts = (raw) => ctx.isBlockableDomain(ctx.normalizeDomainInput(raw));
 
+describe('uninstall flow without settings removal sections', () => {
+  it('keeps the unsupported platform exit functional without a removal card', async () => {
+    const originalSend = ctx.sendBg;
+    const alerts = [];
+    ctx.sendBg = async message => {
+      expect(message.action).toBe('completeRemoval');
+      return { reason: 'unsupported' };
+    };
+    ctx.window.alert = message => alerts.push(message);
+    try {
+      await ctx.finishRemoval();
+      expect(alerts).toEqual(['Remove Intention from your browser’s Extensions settings.']);
+    } finally {
+      ctx.sendBg = originalSend;
+      delete ctx.window.alert;
+    }
+  });
+
+  it('goes straight to removal after coach approval without reading a removed card', async () => {
+    const originalConfig = ctx.getConfig;
+    const originalSend = ctx.sendBg;
+    const originalLoosen = ctx.requestLoosening;
+    const calls = [];
+    let conversation;
+    ctx.getConfig = async () => ({ leaveDelayMinutes: 0 });
+    ctx.requestLoosening = args => { conversation = args; };
+    ctx.sendBg = async message => {
+      calls.push(message.action);
+      return message.action === 'getLeaveState' ? { leaveRequest: null } : { reason: 'declined' };
+    };
+    try {
+      await ctx.openLeaveConversation();
+      expect(conversation.changeType).toBe('uninstall');
+      await conversation.onApproved();
+      expect(calls).toEqual(['getLeaveState', 'completeRemoval']);
+    } finally {
+      ctx.getConfig = originalConfig;
+      ctx.sendBg = originalSend;
+      ctx.requestLoosening = originalLoosen;
+    }
+  });
+});
+
 // The wizard's own state lives in `let`s at the top of options.js, which a vm
 // script keeps in its lexical scope rather than on the context object — so the
 // setup has to be assigned from inside the context too.
@@ -248,13 +291,12 @@ describe('collectServiceReasons', () => {
   // The strongest thing this step can be told, and the one answer that is NOT
   // the absence of chips — so it has to reach storage as a sentence rather
   // than being dropped as empty.
-  it("turns 'nothing — I just want it gone' into a sentence of its own", () => {
+  it("turns 'nothing, I just want it gone' into a sentence of its own", () => {
     const out = JSON.parse(collect({
       domains: ['instagram.com'],
       answers: { 'instagram.com': { needs: ['none'], costs: [] } }
     }));
-    expect(out['instagram.com'].legitimateUse).toBe("Nothing — I don't actually need it.");
+    expect(out['instagram.com'].legitimateUse).toBe("Nothing. I don't actually need it.");
   });
 });
-
 
