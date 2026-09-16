@@ -1,10 +1,10 @@
 # Intention
 
-**Intention** is a browser extension and mobile app that stands between you and the sites and apps that pull you away from what you actually want to do. For each one you set an **intention**: how many times a day you mean to open it, and for how long each time. Within that, opening it is one tap — no conversation, nothing to pay. Once today's opens are used, the only way to more time is to make your case to an AI coach: why are you here, what has to happen now, would walking away serve you better?
+**Intention** is a browser extension and mobile app that stands between you and the sites and apps that pull you away from what you actually want to do. For each one you set an **intention**: visits per day with minutes per visit, or a daily time budget divided between visits as you choose. Each visit starts with a reason, which stays in the floating window. Within your intention there is no conversation and nothing to pay. Once today's intention is used, ask the AI coach for more time: why are you here, what has to happen now, would walking away serve you better?
 
 Loosening your own rules is never refused, only delayed: more opens, or removing a block, starts the next day — or now, if the coach agrees. Tightening is instant. A forgiving streak counts the days you keep every intention, with one slip a week absorbed.
 
-The coach runs on **coaching credit**, a one-time top-up bought through the App Store or Google Play — nothing to configure, no keys to fetch, no recurring charge, and only spent when you ask it for more than you intended. Developers who would rather point it at their own LLM account can do that instead, from Settings → Advanced.
+The mobile coach runs on **coaching credit**, a one-time top-up bought through the App Store or Google Play. Browser builds use your own API key, configured in Settings → AI access → Use your own API key. That key flow is also available as an alternative on Android.
 
 ## Get Intention
 
@@ -28,7 +28,7 @@ The coach runs on **coaching credit**, a one-time top-up bought through the App 
 
 - **AI gatekeeper**: the LLM decides whether to grant access, via a structured `grant_access` tool call — not free-text the page could spoof.
 - **Credit-powered coach**: coaching credit is bought with Apple In-App Purchase / Google Play Billing as a repurchasable top-up and routes through Intention's backend, which holds the provider key.
-- **Optional custom key**: Settings → Advanced → Custom API key points the coach at your own Anthropic, OpenAI, Groq, or Gemini account instead, bypassing the coaching-credit balance.
+- **Custom key**: Settings → AI access → Use your own API key configures your provider, model and key in one place on browser and Android builds.
 - **Context-via-chat guardrail**: the system prompt ("about you") is updated only through a conversation with the coach, using an `update_context` tool. Prevents trivial self-deception.
 - **Time awareness**: the AI sees the current day and time, minutes spent today on this site, this site over the past week, today across all blocked sites, and across the past week.
 - **Track record**: every pass records how it ended — closed early, ran the clock out, asked for more — alongside the reason given for it, and the coach sees the last week of them. "You said ten minutes and closed at four" and "that's the fourth evening running" are things it can actually say.
@@ -98,7 +98,7 @@ Three states, resolved by `resolveAIRoute()` in `background.js` on every coachin
 | State | When | Where calls go |
 |-------|------|----------------|
 | `hosted` | A coaching-credit balance is available | Intention's backend (`server/`), which holds the provider key |
-| `byok` | A custom API key is set in Settings → Advanced | Straight from the device to that provider |
+| `byok` | A custom API key is set under AI access (browser and Android) | Straight from the device to that provider |
 | `locked` | Neither | Nowhere — the paywall replaces the chat, and the site stays blocked |
 
 The purchase itself is always the platform's own: StoreKit 2 on Apple (`Intention Apple/Shared (App)/IntentionStore.swift`), Play Billing on Android (`BillingManager.kt`). Browser builds have no store to buy through and no coaching credit: the coach there runs on the user's own API key.

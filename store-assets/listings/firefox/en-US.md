@@ -6,4 +6,4 @@ Intention gives you a moment to decide before opening a distracting website. Set
 
 When you have used your intention, an AI coach can talk through your purpose and decide whether a short extra pass makes sense. The Today view shows the time you have spent on each blocked site and on recent days, with familiar site marks. You can allow specific subreddits or Reddit posts without allowing the entire site.
 
-Your settings, reasons, and usage history stay on your device. Coaching can use credit or a key you choose in Advanced settings.
+Your settings, reasons, and usage history stay on your device. AI coaching uses your own API key, configured under AI access in Settings.

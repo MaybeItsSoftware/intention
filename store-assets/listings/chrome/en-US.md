@@ -8,4 +8,4 @@ A visit starts with a reason. That reason stays visible in the floating window w
 
 The Today view adds up time on your blocked sites, shows a breakdown by website and recent day, and uses familiar site marks. You can also allow specific subreddits or posts while leaving the rest of Reddit behind the gate.
 
-Your settings, reasons, and usage history are stored locally. AI coaching uses coaching credit or a key you choose in Advanced settings.
+Your settings, reasons, and usage history are stored locally. AI coaching uses your own API key, configured under AI access in Settings.

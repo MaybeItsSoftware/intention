@@ -91,11 +91,11 @@ async function main() {
     }, done)));
     await setupPage.reload();
     await setupPage.waitForSelector('#settings-view:not([hidden])');
-    // Settings opens on Today now; the leaving card lives under Intentions.
-    await setupPage.click('[data-section-tab="intentions"]');
+    // Settings opens on Today; removal controls live under Settings.
+    await setupPage.click('[data-section-tab="settings"]');
 
     const cardVisible = await setupPage.isVisible('#leaving-card');
-    record('the leaving card is on the Intentions tab of a finished setup', cardVisible);
+    record('the leaving card is on the Settings tab of a finished setup', cardVisible);
 
     const exportPresent = await setupPage.isVisible('#export-list-btn');
     record('and offers the blocklist export, so leaving is not punitive', exportPresent);

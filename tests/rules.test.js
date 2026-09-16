@@ -153,13 +153,12 @@ describe('resolveIntention', () => {
     expect(R.resolveIntention({ maxGrants: 2.9 }).opens).toBe(2);
   });
 
-  // Snapping down is the only safe direction for a number that decides how
-  // long someone gets: being wrong must only ever mean less time.
-  it('snaps minutes down onto the ladder, never up', () => {
-    expect(R.resolveIntention({ passMinutes: 12 }).minutesEach).toBe(10);
-    expect(R.resolveIntention({ passMinutes: 29 }).minutesEach).toBe(15);
+  it('keeps individual whole minutes, rounds fractions down and clamps the range', () => {
+    expect(R.resolveIntention({ passMinutes: 12 }).minutesEach).toBe(12);
+    expect(R.resolveIntention({ passMinutes: 29.9 }).minutesEach).toBe(29);
     expect(R.resolveIntention({ passMinutes: 90 }).minutesEach).toBe(30);
-    expect(R.resolveIntention({ passMinutes: 2 }).minutesEach).toBe(5);
+    expect(R.resolveIntention({ passMinutes: 2 }).minutesEach).toBe(2);
+    expect(R.resolveIntention({ passMinutes: 0.5 }).minutesEach).toBe(1);
   });
 
   it('ignores the fields of the retired model', () => {
@@ -196,7 +195,16 @@ describe('daily time intention', () => {
   it('resolves a daily allowance independently of visit count', () => {
     expect(R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: 60 }))
       .toEqual({ mode: 'dailyTime', dailyMinutes: 60, opens: 0, minutesEach: 0 });
-    expect(R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: 77 }).dailyMinutes).toBe(60);
+    expect(R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: 77 }).dailyMinutes).toBe(77);
+  });
+
+  it('supports a one-minute budget, zero as blocked, and the daily upper bound', () => {
+    const daily = minutes => R.resolveIntention({ intentionMode: 'dailyTime', dailyTimeMinutes: minutes }).dailyMinutes;
+    expect(daily(1)).toBe(1);
+    expect(daily(0)).toBe(0);
+    expect(daily(47.8)).toBe(47);
+    expect(daily(999)).toBe(240);
+    expect(daily('invalid')).toBe(30);
   });
 
   it('defers increases and flexible switches that allow at least the old total', () => {
@@ -236,7 +244,7 @@ describe('every context resolves a target the same way', () => {
     { name: 'no entry', entry: undefined },
     { name: 'an intention set on the site', entry: { maxGrants: 2, passMinutes: 15 } },
     { name: 'a hard block', entry: { maxGrants: 0 } },
-    { name: 'an off-ladder minutes value', entry: { maxGrants: 4, passMinutes: 12 } }
+    { name: 'a custom minute duration', entry: { maxGrants: 4, passMinutes: 12 } }
   ];
 
   const DOMAIN = 'instagram.com';

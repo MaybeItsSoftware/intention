@@ -276,7 +276,7 @@ async function postCoachReport({ backendUrl, accessToken, reported, prompt, note
 const HOSTED_ERROR_MESSAGES = {
   entitlement_invalid: 'Your coaching credit could not be verified. Open Settings to restore it.',
   entitlement_expired: 'Your access has expired. Open Settings to restore it.',
-  balance_exhausted: "You're out of coaching credit. Buy more to keep talking to your coach."
+  balance_exhausted: 'Not enough coaching credit to send this message. Top up to continue.'
 };
 
 // Whether an error should send the user back to the paywall rather than just

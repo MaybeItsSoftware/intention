@@ -185,6 +185,10 @@ Refund webhooks are implemented on the backend to automatically claw back coachi
 - **Screenshots and graphics** — generated assets and commands are documented in [store-assets/README.md](store-assets/README.md). Apple iPhone, iPad and Mac images, Google Play phone images and feature graphic, and Chrome/Firefox browser images are all checked in. The three App Store purchase review screenshots are generated separately from the live paywall.
 - **Listing copy** — Google Play copy is in `Intention Android/fastlane/metadata/android/en-US/`; Apple, Chrome and Firefox drafts are in `store-assets/listings/`. Category: "Productivity".
 
+### Google Play codes for coaching credit
+
+In Play Console, select Intention → **Monetise with Play → Promo codes → Create promo code**. Choose an in-app/one-time product promotion, then select the active credit product: `intention1pound`, `intention2pound`, or `intention5pound`. Set the dates and code count, enable the promotion, create it, and download its CSV. These codes grant a credit top-up; a paid-app promotion only grants installation. Existing app codes cannot be converted to product codes. See [Google's promotion instructions](https://support.google.com/googleplay/android-developer/answer/6321495).
+
 ## Known lint warnings
 
 `web-ext lint` currently reports `UNSAFE_VAR_ASSIGNMENT` warnings (innerHTML usage in `content.js`, `coaching.js`, `options.js`). These are warnings, not errors — they don't block AMO submission — but are worth revisiting separately if you want a cleaner lint pass.

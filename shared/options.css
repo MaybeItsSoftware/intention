@@ -408,18 +408,14 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   text-align: center;
 }
 
-/* ---- The intention (buildIntentionField) ---------------------------------
-
-   Two numbers, both on short fixed ranges, so neither is a text box: a stepper
-   for opens a day and a row of chips for minutes each. Hairlines and the
-   6px control radius, like every other control on the row. */
+/* The allowance choice sits above its numbers and its plain-language total. */
 .intention-field {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px 28px;
-  align-items: flex-end;
+  display: grid;
+  gap: 14px;
+  width: 100%;
 }
-
+.intention-controls { display: flex; flex-wrap: wrap; gap: 14px 24px; }
+.intention-controls > [hidden] { display: none; }
 .intention-opens {
   display: inline-flex;
   align-items: stretch;
@@ -427,62 +423,58 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   border-radius: var(--radius-control);
   overflow: hidden;
 }
-
+.intention-stepper[hidden] { display: none; }
 .stepper-btn {
   min-width: 40px;
-  min-height: 36px;
+  min-height: 40px;
   border: none;
   background: transparent;
   color: var(--ink);
-  font-size: 18px;
   font-family: inherit;
+  font-size: 18px;
   cursor: pointer;
 }
-
 .stepper-btn:hover:not(:disabled) { background: var(--hover); }
 .stepper-btn:disabled { color: var(--text-dim); cursor: default; }
-
-.stepper-value {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 9em;
-  padding: 0 10px;
+.intention-stepper .stepper-input {
+  width: 3.5em;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
   border-left: 1px solid var(--border-input);
   border-right: 1px solid var(--border-input);
-  font-size: 14px;
+  border-radius: 0;
+  text-align: center;
+  background: transparent;
   color: var(--ink);
+  font: inherit;
+  appearance: textfield;
+  -moz-appearance: textfield;
 }
-
-.intention-minutes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
+.stepper-input::-webkit-inner-spin-button, .stepper-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.stepper-unit { display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: var(--text-muted); border-left: 1px solid var(--border-input); }
+.intention-summary { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.intention-minutes { display: flex; flex-wrap: wrap; gap: 6px; }
 .intention-minutes .chip {
-  min-height: 36px;
-  padding: 6px 12px;
+  min-height: 40px;
+  padding: 8px 12px;
   border: 1px solid var(--border-input);
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
-  font-size: 14px;
-  font-family: inherit;
+  font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
-
 .intention-minutes .chip:hover:not(:disabled) { background: var(--hover); }
-.intention-minutes .chip.selected {
-  border-color: var(--ink);
-  color: var(--ink);
-  background: var(--well);
-}
-.intention-minutes .chip:disabled { opacity: 0.5; cursor: default; }
-
+.intention-minutes .chip.selected { border-color: var(--ink); color: var(--ink); background: var(--well); }
 @media (pointer: coarse) {
   .stepper-btn, .intention-minutes .chip { min-height: 44px; }
   .stepper-btn { min-width: 44px; }
+  .intention-stepper .stepper-input { font-size: 16px; }
+}
+@media (max-width: 420px) {
+  .intention-modes { display: grid; grid-template-columns: 1fr; }
 }
 
 /* Parts and purpose, folded under one hairline disclosure. */
@@ -491,14 +483,27 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
 }
 
 .row-more > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 14px;
   cursor: pointer;
   list-style: none;
 }
 
 .row-more > summary::-webkit-details-marker { display: none; }
-.row-more > summary::after { content: ' +'; }
-.row-more[open] > summary::after { content: ' \2212'; }
+.row-more > summary::after {
+  content: '\203A';
+  position: static;
+  height: auto;
+  min-width: 0;
+  transform: none;
+  flex-shrink: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+.row-more[open] > summary::after { transform: rotate(90deg); }
 
 /* ---- Streak, pending changes, the loosening dialog ------------------------ */
 .pending-list {
@@ -560,6 +565,17 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
    outer corners as .row-mode-btn already does. */
 .row-scope-toggle {
   flex-wrap: wrap;
+}
+
+.row-parts-field > .row-field-control {
+  align-items: flex-start;
+}
+
+.row-parts-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .row-parts-helper {
@@ -639,6 +655,15 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   margin: 2px 0 0;
   padding: 6px 12px;
   font-size: 13px;
+}
+
+.row-parts-list > .row-parts-add { margin: 0; }
+
+@media (max-width: 480px) {
+  .row-scope-toggle { flex-direction: column; align-items: stretch; }
+  .row-parts-field > .row-field-control > .row-scope-toggle { flex: 1; }
+  .row-scope-toggle > .row-scope-btn { min-height: 44px; text-align: left; }
+  .row-parts-list > .row-parts-add { min-height: 44px; }
 }
 
 /* Always-allowed accounts reuse the parts band wholesale — helper, chips, the
@@ -896,7 +921,7 @@ blockquote {
   background: var(--danger-fill);
 }
 
-#coach-modal, #gate-modal, #loosen-modal, #add-site-modal, #add-app-modal, #paywall-modal {
+#coach-modal, #gate-modal, #loosen-modal, .add-modal, #paywall-modal {
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -916,6 +941,14 @@ blockquote {
    suggestions scroll inside it. Without that, "Show N more" grew the box past
    the bottom of a phone screen with no way back to the Add button. */
 .add-modal-box { width: min(420px, 100%); }
+
+/* The dynamically-created parts picker has no fixed id. Its class must
+   receive the same overlay positioning as the other add dialogs. */
+.part-picker-modal .add-modal-box { width: min(420px, 100%); overflow-y: auto; }
+.part-picker-modal .coach-header { gap: 12px; flex-shrink: 0; }
+.part-picker-modal .coach-header h2 { font-size: 20px; }
+.part-picker-modal .coach-header button { flex-shrink: 0; }
+.part-picker-input-group input { flex: 1; min-width: 0; }
 
 /* A hairline separates the chips from the form above them — the same device
    the rest of the page uses for structure, rather than a card inside a card.
@@ -1408,34 +1441,7 @@ html:has(#setup-view:not([hidden])) .container {
 .setup-mode-chip.selected { border-color: var(--ink); background: var(--hover); font-weight: 700; }
 #setup-intention-daily-wrap { margin: 0 0 16px; }
 #setup-intention-daily-wrap .setup-field-label { margin: 0 0 10px; }
-#setup-intention-daily { margin-bottom: 14px; }
-
-.setup-minute-chip {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  min-height: 64px;
-  padding: 10px 4px;
-  border: 1px solid var(--border-input);
-  border-radius: var(--radius-control);
-  background: var(--raised);
-  color: var(--text-muted);
-  font-family: inherit;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.setup-minute-chip strong { font-size: 22px; color: var(--ink); }
-.setup-minute-chip span { font-size: 12px; }
-.setup-minute-chip:hover { background: var(--hover); }
-.setup-minute-chip.selected {
-  border-color: var(--ink);
-  background: var(--well);
-  color: var(--ink);
-  outline: 1px solid var(--ink);
-  outline-offset: -2px;
-}
+#setup-intention-daily, #setup-intention-minutes { display: flex; justify-content: center; margin-bottom: 14px; }
 
 .setup-sum {
   margin: 22px 0 0;
@@ -1622,6 +1628,8 @@ ul.setup-picked:empty { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .setup-switch-track, .setup-switch-knob { transition-duration: 1ms; }
 }
+
+
 
 .setup-check {
   margin: 14px 0 0;
@@ -2643,11 +2651,10 @@ button.history-more:hover { background: none; color: var(--ink); }
   .setup-tick { width: 44px; height: 44px; margin-bottom: 12px; font-size: 22px; }
 
   .setup-counter { margin: 8px 0 12px; padding: 10px 0; }
+  #setup-step-intention .setup-counter { padding: 6px 0; }
   .setup-counter-btn { width: 48px; height: 48px; font-size: 24px; }
   .setup-counter-value { font-size: 48px; }
   .setup-dots { margin-bottom: 16px; }
-  .setup-minute-chip { min-height: 52px; padding: 6px 4px; }
-  .setup-minute-chip strong { font-size: 19px; }
   .setup-sum { margin-top: 12px; font-size: 14px; }
   .setup-link { margin-top: 8px; }
 
@@ -2718,4 +2725,49 @@ button.history-more:hover { background: none; color: var(--ink); }
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+.int-pw-key-route { display: block; }
+
+.int-pw-key-route > summary {
+  cursor: pointer;
+  font-size: 16px;
+  padding: 5px 0;
+}
+
+.int-pw-key-fields {
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+}
+
+.int-pw-key-fields input,
+.int-pw-key-fields select { width: 100%; }
+
+#int-pw-model {
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: var(--well);
+  border: 1px solid var(--border-input);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+#int-pw-model:focus { border-color: var(--primary); }
+#int-pw-model::placeholder { color: var(--text-dim); }
+
+.coach-access-status {
+  border: 1px solid var(--warning-line);
+  border-radius: var(--radius-control);
+  background: var(--warning-fill);
+  color: var(--warning-text);
+  padding: 14px;
+  margin: 0 0 18px;
+}
+
+.coach-access-status p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.6;
 }

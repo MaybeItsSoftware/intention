@@ -39,8 +39,8 @@ const BILLING_MODE = detectBillingMode();
 // Whether a user-supplied provider key may be offered as a starting option —
 // the first thing a new user is asked to do. Nowhere a store reviews the build
 // may it be that, so on 'store'/'managed' the purchase route leads. Where a key
-// may exist at all it then lives in Settings -> Advanced; on Apple that section
-// isn't rendered and the route isn't honoured (see below).
+// may exist, its configuration lives in the API-key flow in Settings. Apple
+// renders no key flow and does not honour the route (see below).
 const STORE_MODES = ['store', 'managed'];
 const BYOK_IS_PRIMARY = !STORE_MODES.includes(BILLING_MODE);
 
@@ -51,7 +51,7 @@ const BYOK_IS_PRIMARY = !STORE_MODES.includes(BILLING_MODE);
 //   Apple  — no, and stronger than no. 3.1.1 reads unlocking app functionality
 //            against anything bought outside IAP, and a key bought on a
 //            provider's website is exactly that: Apple rejected the build that
-//            merely left it unadvertised in Settings -> Advanced. So on Apple
+//            merely left it unadvertised in a developer disclosure. So on Apple
 //            the field is absent and resolveAIRoute() ignores a stored key —
 //            this flag governs the paywall, not whether BYOK exists.
 //   Google — yes. Play's Payments policy governs digital goods *you* sell; a
@@ -478,8 +478,8 @@ function cleanProductDesc(title, desc) {
 // through to the purchase buttons (as "add more"), it just leads with a
 // balance line instead of a lede.
 async function renderPaywall(container, opts = {}) {
-  const { entitlement, onPurchase, onRestore, onRedeemStoreCode, onUseOwnKey, onSaveKey,
-    onRecoverFromDevice, accountRestored, route, compact, keyDefaults } = opts;
+  const { entitlement, onPurchase, onRestore, onRedeemStoreCode, onUseOwnKey, onSaveKey, onRemoveKey,
+    onRecoverFromDevice, accountRestored, route, compact, keyDefaults, keyConfig, errorCode } = opts;
   container.innerHTML = '';
   container.className = 'int-paywall' + (compact ? ' int-paywall-compact' : '');
 
@@ -518,6 +518,10 @@ async function renderPaywall(container, opts = {}) {
   };
 
   const active = entitlement && entitlementIsActive(entitlement);
+
+  if (errorCode === 'balance_exhausted') {
+    container.appendChild(el('p', 'int-pw-low', 'Not enough coaching credit to send this message. Top up to continue.'));
+  }
 
   if (active) {
     const status = el('div', 'int-pw-status');
@@ -600,21 +604,14 @@ async function renderPaywall(container, opts = {}) {
       redeemBtn = el('button', 'secondary int-pw-redeem', 'Redeem a code');
       redeemBtn.type = 'button';
       container.appendChild(redeemBtn);
-      container.appendChild(el('p', 'int-pw-sub',
-        'Been given a code for Intention? Redeem it here and the credit lands in your balance.'));
     }
 
     // Android only — onUseOwnKey is null on Apple, so nothing renders there and
     // that build is byte-identical to before. Deliberately below the purchase
     // buttons and worded as a route rather than an offer: Play has no rule
     // against it, but it is still the sideroad, not the road.
-    if (onUseOwnKey && !compact) {
-      const keyBtn = el('button', 'secondary int-pw-byok', 'Use my own API key instead');
-      keyBtn.type = 'button';
-      keyBtn.addEventListener('click', () => onUseOwnKey());
-      container.appendChild(keyBtn);
-      container.appendChild(el('p', 'int-pw-sub',
-        'Already pay for an AI provider? Point the coach at that account instead and skip the credit.'));
+    if (BYOK_IS_OFFERED && onUseOwnKey && !compact) {
+      container.appendChild(buildKeyRoute({ el, busy, setError, onSaveKey, onRemoveKey, onUseOwnKey, keyDefaults, keyConfig, route }));
     }
 
     // Android's Auto Backup only restores at install time, and only after the
@@ -721,7 +718,7 @@ async function renderPaywall(container, opts = {}) {
 
   // 'byok' — Chrome / Firefox. Already-linked credit has nothing further to
   // show here; there's no purchase path in a browser extension either way.
-  if (active) {
+  if (active && route !== 'byok') {
     container.appendChild(noticeEl);
     container.appendChild(errorEl);
     return;
@@ -732,31 +729,25 @@ async function renderPaywall(container, opts = {}) {
   if (route === 'byok') {
     const status = el('div', 'int-pw-status');
     status.appendChild(el('strong', null, 'Your own API key is in use'));
-    status.appendChild(el('p', 'int-pw-sub',
-      'Coach requests go straight from this device to your provider. Change or remove the key in Settings → Advanced.'));
     container.appendChild(status);
-    container.appendChild(noticeEl);
-    container.appendChild(errorEl);
-    return;
   }
 
   // A browser can't run a purchase and takes no code, so a provider key is
   // the only route there is — finishable in place rather than buried behind
   // an "advanced" disclosure.
   const routes = el('div', 'int-pw-routes');
-  routes.appendChild(buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults }));
+  routes.appendChild(buildKeyRoute({ el, busy, setError, onSaveKey, onRemoveKey, onUseOwnKey, keyDefaults, keyConfig, route }));
   container.appendChild(routes);
   container.appendChild(noticeEl);
   container.appendChild(errorEl);
 }
 
 // The one browser route: bring your own provider key. Finishable in place — the fields live
-// here rather than behind a jump into Settings -> Advanced.
-function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults = null }) {
-  const card = el('div', 'int-pw-route');
-  card.appendChild(el('strong', null, 'Use your own API key'));
-  card.appendChild(el('p', 'int-pw-sub',
-    'Point the coach at an account you already have. Nothing to buy here: you pay your provider directly, and usually very little.'));
+// here, together with changing the model and removing a saved key.
+function buildKeyRoute({ el, busy, setError, onSaveKey, onRemoveKey, onUseOwnKey, keyDefaults = null, keyConfig = null, route }) {
+  const card = el('details', 'int-pw-route int-pw-key-route');
+  card.id = 'int-pw-key-route';
+  card.appendChild(el('summary', null, 'Use your own API key'));
 
   // Without a save callback there is nowhere to put the key, so fall back to
   // the old behaviour of handing the user to the settings field.
@@ -788,24 +779,47 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
   keyInput.id = 'int-pw-key';
   keyInput.placeholder = 'Paste your key';
 
+  const modelLabel = el('label', null, 'Model');
+  modelLabel.setAttribute('for', 'int-pw-model');
+  const modelInput = el('input');
+  modelInput.type = 'text';
+  modelInput.id = 'int-pw-model';
+  const syncModel = () => {
+    const cfg = PROVIDERS[provSel.value];
+    modelInput.placeholder = cfg?.modelPlaceholder || cfg?.defaultModel || '';
+  };
+
   const saveBtn = el('button', 'primary', 'Save key');
   saveBtn.type = 'button';
 
-  // Development convenience only. The caller reads env.txt (a gitignored file
-  // that ships in no release build) and hands the values down; production
-  // finds no file, passes nothing, and this is a no-op. It lives here rather
-  // than in the caller because these two controls are built by this function
-  // and have no existence outside it -- the settings page's own key fields are
-  // different elements entirely, which is exactly why they were prefilled and
-  // this pair silently was not.
-  if (keyDefaults) {
-    if (keyDefaults.provider && PROVIDERS[keyDefaults.provider] && !PROVIDERS[keyDefaults.provider].hosted) {
-      provSel.value = keyDefaults.provider;
+  const initial = keyConfig?.apiKey ? keyConfig : keyDefaults;
+  provSel.value = 'anthropic';
+  if (initial) {
+    if (initial.provider && PROVIDERS[initial.provider] && !PROVIDERS[initial.provider].hosted) {
+      provSel.value = initial.provider;
     }
-    if (keyDefaults.apiKey) keyInput.value = keyDefaults.apiKey;
+    if (initial.apiKey) keyInput.value = initial.apiKey;
+    modelInput.value = initial.model || '';
   }
+  syncModel();
+  provSel.addEventListener('change', () => { modelInput.value = ''; syncModel(); });
 
-  card.append(provLabel, provSel, keyLabel, keyInput, saveBtn);
+  const fields = el('div', 'int-pw-key-fields');
+  fields.append(provLabel, provSel, modelLabel, modelInput, keyLabel, keyInput, saveBtn);
+  card.appendChild(fields);
+
+  if (onRemoveKey && (route === 'byok' || keyConfig?.apiKey)) {
+    const removeBtn = el('button', 'secondary int-pw-remove-key', 'Remove key');
+    removeBtn.type = 'button';
+    removeBtn.addEventListener('click', async () => {
+      setError('');
+      busy(removeBtn, true, 'Removing…');
+      try { await onRemoveKey(); }
+      catch (e) { setError(String(e.message || e)); }
+      finally { busy(removeBtn, false); }
+    });
+    fields.appendChild(removeBtn);
+  }
 
   saveBtn.addEventListener('click', async () => {
     const apiKey = keyInput.value.trim();
@@ -817,7 +831,7 @@ function buildKeyRoute({ el, busy, setError, onSaveKey, onUseOwnKey, keyDefaults
     busy(saveBtn, true, 'Saving…');
     try {
       const provider = provSel.value;
-      await onSaveKey({ provider, apiKey, model: PROVIDERS[provider].defaultModel });
+      await onSaveKey({ provider, apiKey, model: modelInput.value.trim() || PROVIDERS[provider].defaultModel });
     } catch (e) {
       setError(String(e.message || e));
     } finally {

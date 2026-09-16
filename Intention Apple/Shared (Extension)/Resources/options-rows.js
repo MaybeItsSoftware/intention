@@ -7,11 +7,8 @@
 // coach allows it today (requestLoosening in options.js). That shared rule is
 // why they are built here together.
 //
-// Hierarchy comes from surface and position: every field names itself with
-// the 10px micro-label rather than with a bigger font, and the controls all
-// sit at one size. There is no mode to choose. What used to be a Coach/Simple
-// toggle, a hard-or-pass select, an absolute daily max and a lenient-window
-// timeline is now two numbers.
+// Every allowance names its mode, shows only the relevant numbers, and says
+// what the chosen rule allows. Number controls work by typing or single taps.
 
 function microLabel(text) {
   const el = document.createElement('span');
@@ -111,124 +108,116 @@ function buildInfoAffordance(labelText, text) {
   return { btn, note };
 }
 
-// The intention: opens per day as a stepper, minutes each as a row of chips.
-// `onChange(next)` receives a whole `{ maxGrants, passMinutes }` and decides
-// what a change means — the settings rows save or defer it, the wizard writes
-// it to its draft — so only the markup is shared.
-//
-// A stepper and chips rather than two number boxes: both values live on a
-// short fixed range, a tap is a far better control than a keyboard on a phone,
-// and neither can be typed into a value the rules would then have to snap.
-function buildIntentionField(entry, ariaName, onChange) {
-  const current = resolveIntention(entry);
-  const field = document.createElement('div');
-  field.className = 'intention-field';
-
-  const modeWrap = document.createElement('div');
-  modeWrap.className = 'intention-minutes';
-  for (const [mode, title] of [['opens', 'Visits per day'], ['dailyTime', 'Time per day']]) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip';
-    chip.textContent = title;
-    chip.classList.toggle('selected', (current.mode || 'opens') === mode);
-    chip.setAttribute('aria-pressed', String((current.mode || 'opens') === mode));
-    chip.addEventListener('click', () => {
-      if ((current.mode || 'opens') === mode) return;
-      return onChange(mode === 'dailyTime'
-        ? { intentionMode: 'dailyTime', dailyTimeMinutes: current.opens * current.minutesEach || 30 }
-        : { intentionMode: 'opens', maxGrants: Math.min(MAX_OPENS, Math.max(1, Math.ceil(current.dailyMinutes / 10))), passMinutes: 10 });
-    });
-    modeWrap.appendChild(chip);
-  }
-
-  if (current.mode === 'dailyTime') {
-    const dailyWrap = document.createElement('div');
-    dailyWrap.className = 'intention-minutes';
-    dailyWrap.setAttribute('role', 'radiogroup');
-    dailyWrap.setAttribute('aria-label', `Daily time limit for ${ariaName}`);
-    for (const minutes of DAILY_TIME_CHOICES) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip';
-      chip.textContent = `${minutes} min`;
-      chip.setAttribute('role', 'radio');
-      chip.classList.toggle('selected', minutes === current.dailyMinutes);
-      chip.setAttribute('aria-checked', String(minutes === current.dailyMinutes));
-      chip.addEventListener('click', () => {
-        if (minutes !== current.dailyMinutes) return onChange({ intentionMode: 'dailyTime', dailyTimeMinutes: minutes });
-      });
-      dailyWrap.appendChild(chip);
-    }
-    field.append(
-      buildRowField(microLabel('Allowance'), modeWrap),
-      buildRowField(microLabel('Maximum for the day'), dailyWrap)
-    );
-    return field;
-  }
-
-  const opensWrap = document.createElement('div');
-  opensWrap.className = 'intention-opens';
+// Whole-number control shared by settings and setup. The caller owns saving;
+// the displayed value stays at the active rule until the caller repaints it.
+function buildIntentionStepper({ value, min, max, label, unit = '', onChange }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'intention-opens intention-stepper';
   const minus = document.createElement('button');
   minus.type = 'button';
   minus.className = 'stepper-btn';
   minus.textContent = '\u2212';
-  minus.setAttribute('aria-label', `Fewer opens a day for ${ariaName}`);
-  const value = document.createElement('span');
-  value.className = 'stepper-value';
-  value.setAttribute('aria-live', 'polite');
+  minus.setAttribute('aria-label', `Decrease ${label}`);
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.className = 'stepper-input';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = '1';
+  input.inputMode = 'numeric';
+  input.setAttribute('aria-label', label);
   const plus = document.createElement('button');
   plus.type = 'button';
   plus.className = 'stepper-btn';
   plus.textContent = '+';
-  plus.setAttribute('aria-label', `More opens a day for ${ariaName}`);
-  opensWrap.append(minus, value, plus);
-
-  const chips = document.createElement('div');
-  chips.className = 'intention-minutes';
-  chips.setAttribute('role', 'radiogroup');
-  chips.setAttribute('aria-label', `Minutes each time for ${ariaName}`);
-  const chipEls = PASS_MINUTE_CHOICES.map(minutes => {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip';
-    chip.textContent = `${minutes} min`;
-    chip.setAttribute('role', 'radio');
-    chip.addEventListener('click', () => {
-      if (minutes === current.minutesEach) return undefined;
-      return onChange({ maxGrants: current.opens, passMinutes: minutes });
-    });
-    chips.appendChild(chip);
-    return { chip, minutes };
-  });
-
+  plus.setAttribute('aria-label', `Increase ${label}`);
+  let current = value;
   const paint = () => {
-    value.textContent = current.opens === 0 ? 'Blocked' : `${current.opens} ${current.opens === 1 ? 'open' : 'opens'} a day`;
-    minus.disabled = current.opens <= 0;
-    plus.disabled = current.opens >= MAX_OPENS;
-    for (const { chip, minutes } of chipEls) {
-      const on = minutes === current.minutesEach;
-      chip.classList.toggle('selected', on);
-      chip.setAttribute('aria-checked', String(on));
-      chip.disabled = current.opens === 0;
-    }
+    input.value = String(current);
+    minus.disabled = current <= min;
+    plus.disabled = current >= max;
   };
-  minus.addEventListener('click', () => onChange({ maxGrants: current.opens - 1, passMinutes: current.minutesEach }));
-  plus.addEventListener('click', () => onChange({ maxGrants: current.opens + 1, passMinutes: current.minutesEach }));
-  paint();
-
-  field.append(
-    buildRowField(microLabel('Allowance'), modeWrap),
-    buildRowField(microLabel('Opens'), opensWrap),
-    buildRowField(microLabel('Each time'), chips)
-  );
-  // Lets a caller that writes to a draft repaint without rebuilding the row.
-  field.setIntention = (next) => {
-    const r = resolveIntention(next);
-    current.opens = r.opens;
-    current.minutesEach = r.minutesEach;
+  const change = (raw) => {
+    const next = Number(raw);
     paint();
+    if (!Number.isFinite(next)) return;
+    const bounded = Math.max(min, Math.min(max, Math.floor(next)));
+    if (bounded !== current) return onChange(bounded);
   };
+  minus.addEventListener('click', () => change(current - 1));
+  plus.addEventListener('click', () => change(current + 1));
+  input.addEventListener('change', () => {
+    if (input.value.trim() === '') return paint();
+    return change(input.value);
+  });
+  wrap.append(minus, input, plus);
+  if (unit) {
+    const suffix = document.createElement('span');
+    suffix.className = 'stepper-unit';
+    suffix.textContent = unit;
+    wrap.appendChild(suffix);
+  }
+  wrap.setValue = (next) => { current = next; paint(); };
+  paint();
+  return wrap;
+}
+
+// Choose one daily allowance, then adjust the numbers for that choice.
+function buildIntentionField(entry, ariaName, onChange) {
+  const current = resolveIntention(entry);
+  const field = document.createElement('div');
+  field.className = 'intention-field';
+  const modes = document.createElement('div');
+  modes.className = 'intention-minutes intention-modes';
+  modes.setAttribute('role', 'group');
+  modes.setAttribute('aria-label', `Allowance type for ${ariaName}`);
+  for (const [mode, title] of [['opens', 'Set visits per day'], ['dailyTime', 'Set total minutes per day']]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chip';
+    button.textContent = title;
+    button.classList.toggle('selected', (current.mode || 'opens') === mode);
+    button.setAttribute('aria-pressed', String((current.mode || 'opens') === mode));
+    button.addEventListener('click', () => {
+      if ((current.mode || 'opens') === mode) return;
+      return onChange(mode === 'dailyTime'
+        ? { intentionMode: 'dailyTime', dailyTimeMinutes: Math.min(MAX_DAILY_MINUTES, current.opens * current.minutesEach || 30) }
+        : { intentionMode: 'opens', maxGrants: Math.min(MAX_OPENS, Math.max(1, Math.ceil(current.dailyMinutes / 10))), passMinutes: 10 });
+    });
+    modes.appendChild(button);
+  }
+  const controls = document.createElement('div');
+  controls.className = 'intention-controls';
+  const note = document.createElement('p');
+  note.className = 'intention-summary';
+  field.append(buildRowField(microLabel('Daily allowance'), modes), controls, note);
+  if (current.mode === 'dailyTime') {
+    const daily = buildIntentionStepper({ value: current.dailyMinutes, min: 0, max: MAX_DAILY_MINUTES,
+      label: `Daily minutes for ${ariaName}`, unit: 'min / day',
+      onChange: minutes => onChange({ intentionMode: 'dailyTime', dailyTimeMinutes: minutes }) });
+    controls.appendChild(buildRowField(microLabel('Total minutes per day'), daily));
+    note.textContent = current.dailyMinutes === 0 ? 'Blocked outright.'
+      : 'Choose how many of your remaining minutes to use on each visit. A reason is required.';
+    field.setIntention = next => daily.setValue(resolveIntention(next).dailyMinutes);
+    return field;
+  }
+  const opens = buildIntentionStepper({ value: current.opens, min: 0, max: MAX_OPENS,
+    label: `Visits per day for ${ariaName}`, unit: 'visits / day',
+    onChange: value => onChange({ maxGrants: value, passMinutes: current.minutesEach }) });
+  const minutes = buildIntentionStepper({ value: current.minutesEach, min: 1, max: MAX_PASS_MINUTES,
+    label: `Minutes per visit for ${ariaName}`, unit: 'min / visit',
+    onChange: value => onChange({ maxGrants: current.opens, passMinutes: value }) });
+  const minutesField = buildRowField(microLabel('Minutes per visit'), minutes);
+  controls.append(buildRowField(microLabel('Visits per day'), opens), minutesField);
+  const paint = () => {
+    opens.setValue(current.opens);
+    minutes.setValue(current.minutesEach);
+    minutesField.hidden = current.opens === 0;
+    note.textContent = current.opens === 0 ? 'Blocked outright. Set visits to 1 or more to allow visits.'
+      : `Up to ${current.opens * current.minutesEach} minutes per day. A reason is required for each visit.`;
+  };
+  field.setIntention = next => { Object.assign(current, resolveIntention(next)); paint(); };
+  paint();
   return field;
 }
 
@@ -408,9 +397,9 @@ function buildRowReasonFields(target, label, kind, serviceReasons, allBlocked) {
 // honest third option.
 
 const PARTS_SCOPE_CHOICES = [
-  { value: 'all', text: 'All of it' },
-  { value: 'only', text: 'Only some parts' },
-  { value: 'except', text: 'All except' }
+  { value: 'all', text: 'Block everything' },
+  { value: 'only', text: 'Block selected parts' },
+  { value: 'except', text: 'Allow selected parts' }
 ];
 
 // Looked up by name rather than branched on, deliberately. What a scope value
@@ -595,7 +584,7 @@ function partIdFromParamInput(optionId, raw, serviceKey) {
 // rule the user already had.
 function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
   const modal = document.createElement('div');
-  modal.className = 'add-modal';
+  modal.className = 'add-modal part-picker-modal';
 
   const box = document.createElement('div');
   box.className = 'coach-box add-modal-box';
@@ -605,7 +594,9 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
   const header = document.createElement('div');
   header.className = 'coach-header';
   const title = document.createElement('h2');
+  title.id = `part-picker-title-${++rowInfoSeq}`;
   title.textContent = `Which part of ${label}?`;
+  box.setAttribute('aria-labelledby', title.id);
   box.appendChild(header);
   const closeBtn = document.createElement('button');
   closeBtn.type = 'button';
@@ -613,8 +604,13 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
   closeBtn.textContent = 'Close';
   header.append(title, closeBtn);
 
-  const close = () => modal.remove();
+  const previousFocus = document.activeElement;
+  const close = () => {
+    modal.remove();
+    if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+  };
   closeBtn.addEventListener('click', close);
+  modal.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
   // The scrim closes it; a click inside must not. Same behaviour as the other
   // add dialogs on this page.
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
@@ -793,6 +789,7 @@ function openPartPicker({ serviceKey, label, existing, onPick, only = null }) {
 
   modal.appendChild(box);
   document.body.appendChild(modal);
+  closeBtn.focus?.();
   return modal;
 }
 
@@ -810,7 +807,7 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
   if (!availability.available) {
     const field = document.createElement('div');
     field.className = 'row-field row-parts-field';
-    field.appendChild(microLabel(`Parts of the ${noun}`));
+    field.appendChild(microLabel(`What to block in this ${noun}`));
     const note = document.createElement('p');
     note.className = 'row-info-note row-parts-unavailable';
     note.textContent = availability.note;
@@ -833,7 +830,7 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
   const field = document.createElement('div');
   field.className = 'row-field row-parts-field';
 
-  const caption = microLabel(`Parts of the ${noun}`);
+  const caption = microLabel(`What to block in this ${noun}`);
   field.appendChild(caption);
 
   const control = document.createElement('div');
@@ -872,9 +869,13 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
   const addBtn = document.createElement('button');
   addBtn.type = 'button';
   addBtn.className = 'secondary row-parts-add';
-  addBtn.textContent = isApp ? '+ Add a section' : '+ Add a part';
+  addBtn.textContent = isApp ? 'Choose a section' : 'Choose a part';
+  addBtn.setAttribute('aria-label', isApp ? `Choose a section of ${label}` : `Choose a part of ${label}`);
 
-  field.append(helper, degradeNote, chips, addBtn, infoNote);
+  const list = document.createElement('div');
+  list.className = 'row-parts-list';
+  list.append(chips, addBtn);
+  field.append(helper, list, degradeNote, infoNote);
 
   const scopeButtons = PARTS_SCOPE_CHOICES.map(choice => {
     const btn = document.createElement('button');
@@ -898,6 +899,7 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
     const copy = scopeCopy[draftScope];
     helper.hidden = !copy;
     addBtn.hidden = !copy;
+    list.hidden = !copy;
     chips.hidden = !copy;
     const degrade = isApp ? PARTS_APP_DEGRADE[draftScope] : null;
     degradeNote.hidden = !degrade;
@@ -988,13 +990,15 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
     });
   }
 
-  function chooseScope(value) {
+  async function chooseScope(value) {
     if (value === draftScope) return undefined;
-    return commit(value, parts);
+    const needsPart = !!scopeCopy[value] && parts.length === 0;
+    await commit(value, parts);
+    if (needsPart) showPicker();
   }
 
-  addBtn.addEventListener('click', () => {
-    openPartPicker({
+  function showPicker() {
+    return openPartPicker({
       serviceKey,
       label,
       existing: parts,
@@ -1006,7 +1010,8 @@ function buildRowPartsField(target, label, limitInfo, kind, rerender) {
         return commit(draftScope, parts.concat([partId]));
       }
     });
-  });
+  }
+  addBtn.addEventListener('click', showPicker);
 
   paint();
   return field;
@@ -1277,8 +1282,8 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
   summary.className = 'micro-label';
   const hasAccounts = !kind.isApp && accountsSupportedFor(target);
   const hasReddit = !kind.isApp && redditSupportedFor(target);
-  summary.textContent = hasAccounts ? 'Parts, accounts and purpose'
-    : hasReddit ? 'Parts, Reddit allowlist and purpose' : 'Parts and purpose';
+  summary.textContent = kind.isApp ? 'App rules and reasons'
+    : hasReddit ? 'Reddit rules and reasons' : 'Website rules and reasons';
   more.appendChild(summary);
   // Which parts of the target are blocked. A part rule decides whether the
   // block applies at all, so it binds whatever the intention says.

@@ -80,7 +80,6 @@ function allBlockedTargets() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-  populateProviderDropdowns();
   bindOnce('boot-retry-btn', 'click', () => window.location.reload());
   // The last line of defence against a blank screen: if no view has put
   // anything up by now, say so and offer the one thing that can help.
@@ -225,21 +224,6 @@ async function wireLoginSwitch(btnId, subId, approveId) {
 
 // Only the bring-your-own-key providers are listed: the hosted provider isn't
 // something the user picks, it's what a coaching-credit balance routes to.
-function populateProviderDropdowns() {
-  for (const id of ['provider-select-2']) {
-    const sel = document.getElementById(id);
-    if (!sel) continue;
-    sel.innerHTML = '';
-    for (const [key, cfg] of Object.entries(PROVIDERS)) {
-      if (cfg.hosted) continue;
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = cfg.label;
-      sel.appendChild(opt);
-    }
-  }
-}
-
 const HAS_APP_BLOCKING = !!window.intentionApps;
 // iOS app blocking goes through the native Screen Time bridge instead of a
 // package list — the FamilyActivitySelection is opaque, so the web layer only
@@ -345,7 +329,11 @@ function applyDeepLinkSection() {
     ? document.getElementById('unlock-card')
     : document.querySelector(`#settings-view [data-section="${section}"]`);
   target?.scrollIntoView({ block: 'start' });
-  if (section === 'settings') document.getElementById('api-key-input-2')?.focus();
+  if (section === 'settings') {
+    const keyFlow = document.getElementById('int-pw-key-route');
+    if (keyFlow) keyFlow.open = true;
+    document.getElementById('int-pw-key')?.focus();
+  }
 }
 
 // The header credit chip: the balance, on every tab, on every settings open.
@@ -628,100 +616,6 @@ function bindOnce(id, event, handler) {
   document.getElementById(id)?.addEventListener(event, handler);
 }
 
-// The custom-key override, on the builds that may have one.
-//
-// Where a store sells credit this really is a developer override and is
-// described as one. On Chrome and Firefox it is one of the two ordinary ways
-// to turn the coach on — offered as such in the AI access card — so calling it
-// "developer mode" down here would only make people think they'd taken a
-// wrong turn. Same fields either way; this is where you change or clear one.
-//
-// On Apple there is no such build. The card is removed from the DOM rather
-// than hidden, so there is nothing a reviewer can open — or a user can find
-// — that enables the coach outside In-App Purchase (guideline 3.1.1; see
-// IS_APPLE_BUILD in providers.js, and resolveAIRoute() in background.js for
-// the routing half, which is what actually makes a stored key inert).
-function wireCustomKeySection(state) {
-  if (IS_APPLE_BUILD) {
-    document.getElementById('advanced-card')?.remove();
-    return;
-  }
-
-  document.getElementById('custom-key-summary-note').textContent =
-    BYOK_IS_PRIMARY ? '(change or remove)' : '(optional developer mode)';
-  document.getElementById('custom-key-blurb').textContent = BYOK_IS_PRIMARY
-    ? 'The key you set up under AI access, plus the model to use with it. Clearing it here turns the coach off until you add another.'
-    : 'For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.';
-
-  const provSel = document.getElementById('provider-select-2');
-  const modelInput = document.getElementById('model-input-2');
-  const keyInput = document.getElementById('api-key-input-2');
-  provSel.value = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : 'anthropic';
-  modelInput.value = state.model || '';
-  keyInput.value = state.apiKey || '';
-
-  const syncPlaceholder = () => {
-    const p = PROVIDERS[provSel.value];
-    modelInput.placeholder = p ? p.modelPlaceholder : '';
-  };
-
-  // DEFAULT_PROVIDER was read by nothing at all: env.txt advertised it, the
-  // parser returned it, and no line in the codebase ever looked at the key.
-  // So a file that said `groq` still opened on Anthropic with an empty box,
-  // and the GROQ_API_KEY sitting right underneath was never reachable without
-  // first changing the dropdown by hand. Honoured once, on first load only,
-  // and only when there is no stored provider of the user's own -- applying it
-  // from the change handler too would silently undo every manual selection.
-  let envProviderApplied = false;
-
-  const syncEnvSettings = (parsedEnv) => {
-    if (!envProviderApplied) {
-      envProviderApplied = true;
-      const stored = state.provider && state.provider !== HOSTED_PROVIDER ? state.provider : '';
-      const wanted = String(parsedEnv.DEFAULT_PROVIDER || '').trim().toLowerCase();
-      if (!stored && wanted && PROVIDERS[wanted] && !PROVIDERS[wanted].hosted) {
-        provSel.value = wanted;
-        syncPlaceholder();
-      }
-    }
-
-    const provider = provSel.value;
-    const providerKey = `${provider.toUpperCase()}_API_KEY`;
-    const modelKey = `${provider.toUpperCase()}_MODEL`;
-
-    if (!keyInput.value && (parsedEnv[providerKey] || parsedEnv.API_KEY)) {
-      keyInput.value = parsedEnv[providerKey] || parsedEnv.API_KEY;
-    }
-    if (!modelInput.value && (parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL)) {
-      modelInput.value = parsedEnv[modelKey] || parsedEnv.DEFAULT_MODEL;
-    }
-  };
-
-  provSel.addEventListener('change', () => {
-    syncPlaceholder();
-    loadEnv().then(syncEnvSettings);
-  });
-  syncPlaceholder();
-  loadEnv().then(syncEnvSettings);
-
-  bindOnce('save-provider-btn', 'click', async () => {
-    const provider = provSel.value;
-    const model = modelInput.value.trim() || PROVIDERS[provider].defaultModel;
-    const apiKey = keyInput.value.trim();
-    await sendBg({ action: 'saveSettings', config: { provider, model, apiKey } });
-    setStatus('provider-status', apiKey ? 'Saved. Custom key is now in use.' : 'Saved.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
-
-  // Clearing the override drops straight back to the hosted/credit route.
-  bindOnce('clear-provider-btn', 'click', async () => {
-    keyInput.value = '';
-    await sendBg({ action: 'saveSettings', config: { provider: '', model: '', apiKey: '' } });
-    setStatus('provider-status', 'Custom key cleared.', 'success');
-    await refreshAccessUI('access-paywall');
-  });
-}
-
 async function showSettingsView(state) {
   document.getElementById('setup-view').hidden = true;
   document.getElementById('settings-view').hidden = false;
@@ -813,9 +707,6 @@ async function showSettingsView(state) {
     document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  // ---- Advanced: custom API key ----
-  wireCustomKeySection(state);
-
   initSettingsTabs();
   initSectionTabs();
 
@@ -853,8 +744,8 @@ async function showSettingsView(state) {
     requestLoosening({
       changeType: 'disable_all',
       domain: null,
-      title: 'Turn off all blocking?',
-      subtitle: 'This turns off blocking for every site and app on your list.',
+      title: 'Clear all blocking rules?',
+      subtitle: 'This removes every website and app from your blocked lists. Intention stays installed.',
       onApproved: async () => {
         const state = await getConfig();
         renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
@@ -1107,7 +998,7 @@ async function openLeaveConversation() {
         await finishRemoval();
         return;
       }
-      setSettingsSection('intentions');
+      setSettingsSection('settings');
       document.getElementById('leaving-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   });
@@ -1132,7 +1023,7 @@ async function finishRemoval() {
 // never removes anything on its own.
 function applyLeaveDeepLink() {
   if (new URLSearchParams(window.location.search).get('leave') !== '1') return;
-  setSettingsSection('intentions');
+  setSettingsSection('settings');
   document.getElementById('leaving-card')?.scrollIntoView({ block: 'start' });
   openLeaveConversation();
 }
@@ -1393,17 +1284,38 @@ async function requestLoosening({ isApp, appLabel, changeType, domain, newValue,
   const later = document.getElementById('loosen-later-btn');
   const now = document.getElementById('loosen-now-btn');
   const cancel = document.getElementById('loosen-cancel-btn');
+  later.textContent = changeType === 'decrease_leave_delay' ? 'Save for later' : 'Save for tomorrow';
+  now.hidden = false;
+  cancel.hidden = false;
   later.onclick = async () => {
     later.disabled = true;
+    now.disabled = true;
+    cancel.disabled = true;
     try {
-      await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+      const result = await sendBg({ action: 'applySettingChange', changeType, domain, newValue });
+      if (!result || result.error || !result.scheduled) {
+        document.getElementById('loosen-when').textContent = result?.error || 'Could not save this change. Try again.';
+        return;
+      }
+      const state = await getConfig();
+      await onApproved?.();
+      renderPendingChanges(state);
+      document.getElementById('loosen-title').textContent = changeType === 'decrease_leave_delay'
+        ? 'Saved for later' : 'Saved for tomorrow';
+      document.getElementById('loosen-subtitle').textContent = describePendingChange(result.pending, state.appLabels || {});
+      document.getElementById('loosen-when').textContent = `Starts ${formatPendingWhen(result.pending.effectiveAt)}. Your current rules stay in place until then.`;
+      later.textContent = 'Done';
+      later.onclick = close;
+      now.hidden = true;
+      cancel.hidden = true;
+    } catch (e) {
+      console.warn('Intention: could not save scheduled change', e);
+      document.getElementById('loosen-when').textContent = 'Could not save this change. Try again.';
     } finally {
       later.disabled = false;
+      now.disabled = false;
+      cancel.disabled = false;
     }
-    close();
-    const state = await getConfig();
-    renderPendingChanges(state);
-    await onApproved();
   };
   now.onclick = () => {
     close();
@@ -1417,8 +1329,13 @@ async function requestLoosening({ isApp, appLabel, changeType, domain, newValue,
 // What is waiting for tomorrow, and a way to take it back. Taking one back is
 // a tightening, so it is free and immediate.
 function renderPendingChanges(state) {
-  const card = document.getElementById('pending-card');
-  const list = document.getElementById('pending-list');
+  renderPendingList(state, 'pending-card', 'pending-list');
+  renderPendingList(state, 'intentions-pending-card', 'intentions-pending-list');
+}
+
+function renderPendingList(state, cardId, listId) {
+  const card = document.getElementById(cardId);
+  const list = document.getElementById(listId);
   if (!card || !list) return;
   const pending = (state && state.pendingChanges) || [];
   list.textContent = '';
@@ -1462,7 +1379,7 @@ function describePendingChange(p, labels) {
       const value = p.newValue || {};
       return `Reddit: ${describeRedditAllowForHuman(value)}`;
     }
-    case 'disable_all': return 'Turn off all blocking';
+    case 'disable_all': return 'Clear all blocking rules';
     case 'decrease_leave_delay': return `Cool-off: ${formatLeaveDelay(p.newValue) || 'none'}`;
     default: return 'A change to your rules';
   }
@@ -1471,7 +1388,7 @@ function describePendingChange(p, labels) {
 function formatPendingWhen(effectiveAt) {
   const at = new Date(Number(effectiveAt) || 0);
   const tomorrow = new Date(nextDayStart());
-  if (at.getTime() === tomorrow.getTime()) return 'Tomorrow';
+  if (at.getTime() === tomorrow.getTime()) return 'tomorrow at ' + at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return at.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' +
     at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

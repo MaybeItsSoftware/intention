@@ -1,6 +1,6 @@
 {
   "name": "intention-extension",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "private": true,
   "description": "Dev, test, and deployment tooling for the Intention browser extension (Chrome / Firefox / Apple variants). Not a runtime dependency of the extension itself — see .agents/AGENTS.md.",
   "type": "module",
@@ -11,7 +11,7 @@
     "test:watch": "vitest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test:smoke": "node tests/smoke/gate.smoke.mjs && node tests/smoke/wizard.smoke.mjs && node tests/smoke/overlay.smoke.mjs && node tests/smoke/leaving.smoke.mjs && node tests/smoke/contrast.smoke.mjs",
+    "test:smoke": "node tests/smoke/gate.smoke.mjs && node tests/smoke/wizard.smoke.mjs && node tests/smoke/overlay.smoke.mjs && node tests/smoke/leaving.smoke.mjs && node tests/smoke/parts.smoke.mjs && node tests/smoke/contrast.smoke.mjs",
     "test:smoke:headed": "node tests/smoke/gate.smoke.mjs --headed --print-prompt",
     "test:smoke:wizard": "node tests/smoke/wizard.smoke.mjs",
     "test:smoke:wizard:headed": "node tests/smoke/wizard.smoke.mjs --headed",

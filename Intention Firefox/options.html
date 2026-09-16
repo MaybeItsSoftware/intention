@@ -106,12 +106,12 @@
         </div>
         <div class="setup-dots" id="setup-intention-dots" aria-hidden="true"></div>
         <div id="setup-intention-minutes-wrap">
-          <p class="micro-label setup-sub">For how long each time?</p>
-          <div class="setup-minutes" id="setup-intention-minutes" role="radiogroup" aria-label="Minutes each time"></div>
+          <p class="micro-label setup-sub">Minutes per visit</p>
+          <div class="setup-minutes" id="setup-intention-minutes" role="group" aria-label="Minutes per visit"></div>
         </div>
         <div id="setup-intention-daily-wrap" hidden>
-          <p class="setup-field-label">Maximum time for the day</p>
-          <div class="setup-minutes" id="setup-intention-daily" role="radiogroup" aria-label="Maximum minutes for the day"></div>
+          <p class="setup-field-label">Total minutes per day</p>
+          <div class="setup-minutes" id="setup-intention-daily" role="group" aria-label="Total minutes per day"></div>
         </div>
         <p class="setup-sum" id="setup-intention-sum" aria-live="polite"></p>
         <button type="button" id="setup-intention-same-btn" class="setup-link" hidden></button>
@@ -292,6 +292,7 @@
               <blockquote id="context-display"></blockquote>
               <textarea id="context-edit-input" rows="4" placeholder="What are you working on, and what tends to distract you? This becomes your coach's context." hidden></textarea>
               <button id="save-context-btn" class="secondary" style="width: 100%;" hidden>Save context</button>
+              <div id="coach-access-status" class="coach-access-status" role="status" hidden></div>
               <button id="open-coach-btn" class="secondary" style="width: 100%;">Talk with your coach</button>
             </section>
 
@@ -308,9 +309,15 @@
               <button type="button" id="tab-websites-btn" class="tab-btn" data-tab="websites">Websites</button>
             </div>
 
+            <section class="card" id="intentions-pending-card" data-section="intentions" hidden>
+              <h2>Saved for tomorrow</h2>
+              <p class="subtitle">These changes are saved. Your current rules stay in place until the time shown.</p>
+              <ul id="intentions-pending-list" class="pending-list"></ul>
+            </section>
+
             <section class="card" id="websites-card" data-section="intentions">
               <h2>Blocked sites</h2>
-              <p class="subtitle">Each site has an intention: how many times a day you open it, and for how long. Fewer is instant; more starts tomorrow.</p>
+              <p class="subtitle">Choose visits per day or a daily time budget for each site. Less time saves now; more time is saved for tomorrow.</p>
               <button type="button" id="open-add-site-btn" class="primary add-row-btn">+ Add website</button>
               <ul id="domain-list"></ul>
             </section>
@@ -339,24 +346,19 @@
               </div>
             </section>
 
-            <section class="card danger-card" id="danger-card" data-section="intentions">
-              <h2>Turn everything off</h2>
-              <p class="subtitle">Stops Intention blocking anything at all: every website and every app on your lists, in one go. Your lists are kept, so you can turn it back on later.</p>
-              <button id="disable-all-btn" class="secondary" style="width: 100%;">Turn off all blocking</button>
+            <section class="card danger-card" id="danger-card" data-section="settings">
+              <h2>Clear your blocked list</h2>
+              <p class="subtitle">Stop blocking every website and app without uninstalling Intention. This removes them from your lists; save a copy below if you want to restore them later.</p>
+              <button id="disable-all-btn" class="secondary" style="width: 100%;">Clear all blocking rules</button>
               <div id="disable-all-status" class="status"></div>
             </section>
 
-            <!-- Leaving Intention. Sits below "Turn everything off" because that is
-                 the order the two decisions come in: almost everyone who thinks
-                 they want this wants that instead, and putting it second means
-                 they read the cheaper option first.
-
-                 Everything inside is built by options.js with createElement /
+            <!-- Everything inside is built by options.js with createElement /
                  textContent — the delay choices, the pending-request line, the
                  Apple instructions. The markup here is the frame only. -->
-            <section class="card leaving-card" id="leaving-card" data-section="intentions">
-              <h2>Leaving Intention</h2>
-              <p class="subtitle">Removing Intention is always possible. No app can really stop you, and this one isn’t going to pretend otherwise. What it can do is make sure the decision gets made by whoever is reading this now, rather than by whoever is holding the phone at 11pm.</p>
+            <section class="card leaving-card" id="leaving-card" data-section="settings">
+              <h2>Remove Intention</h2>
+              <p class="subtitle">An optional conversation and cool-off to help you think through leaving. You can always uninstall directly from your device’s settings, without waiting or buying credit.</p>
 
               <p class="micro-label">Cool-off before removal</p>
               <div id="leave-delay-choices" class="leave-choices" role="group" aria-label="Cool-off before removal"></div>
@@ -399,33 +401,6 @@
               <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
               <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
             </section>
-
-            <details class="card advanced-card" data-section="settings" id="advanced-card">
-              <summary>Advanced <span class="muted">(developer options)</span></summary>
-              <div class="advanced-card-body">
-                <details id="custom-key-details">
-                  <summary>Custom API key <span class="muted" id="custom-key-summary-note">(optional developer mode)</span></summary>
-                  <div class="advanced-card-body">
-                    <p class="subtitle" id="custom-key-blurb">For advanced users and developers. If configured, custom keys will bypass the coaching-credit balance.</p>
-                    <label for="provider-select-2">Provider</label>
-                    <div class="input-group">
-                      <select id="provider-select-2"></select>
-                    </div>
-                    <label for="model-input-2">Model</label>
-                    <div class="input-group">
-                      <input type="text" id="model-input-2">
-                    </div>
-                    <label for="api-key-input-2">API key</label>
-                    <div class="input-group">
-                      <input type="password" id="api-key-input-2">
-                    </div>
-                    <button id="save-provider-btn" class="secondary" style="margin-top: 10px; width: 100%;">Save</button>
-                    <button id="clear-provider-btn" class="secondary" style="margin-top: 8px; width: 100%;">Clear custom key</button>
-                    <div id="provider-status" class="status"></div>
-                  </div>
-                </details>
-              </div>
-            </details>
 
             <details class="card advanced-card" data-section="coach">
               <summary>Coach instructions <span class="muted">(advanced)</span></summary>
@@ -481,7 +456,7 @@
       <div class="coach-box loosen-box" role="dialog" aria-modal="true" aria-labelledby="loosen-title">
         <h2 id="loosen-title"></h2>
         <p class="subtitle" id="loosen-subtitle"></p>
-        <p class="loosen-when" id="loosen-when"></p>
+        <p class="loosen-when" id="loosen-when" role="status" aria-live="polite"></p>
         <div class="loosen-actions">
           <button type="button" id="loosen-later-btn" class="primary">Save for tomorrow</button>
           <button type="button" id="loosen-now-btn" class="secondary">Ask the coach for it now</button>

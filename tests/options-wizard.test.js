@@ -22,11 +22,19 @@ const js = bundleForContext('options');
 const css = read('chrome', 'options.css');
 
 const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
+// Access forms and other optional UI are constructed by the page's scripts.
+// Their literal IDs are just as real as markup IDs; misspelled lookups still
+// fail this guard rather than being excused by a list of individual names.
+const scriptIds = new Set([
+  ...[...js.matchAll(/\.id\s*=\s*(['"])([^'"]+)\1/g)].map(m => m[2]),
+  ...[...js.matchAll(/setAttribute\(\s*(['"])id\1\s*,\s*(['"])([^'"]+)\2\s*\)/g)].map(m => m[3]),
+  ...[...js.matchAll(/\bid=["']([^"'$]+)["']/g)].map(m => m[1])
+]);
 
 describe('setup wizard markup and script agree', () => {
-  it('every id options.js looks up exists in options.html', () => {
+  it('every literal id looked up exists in markup or is created by a loaded script', () => {
     const missing = [...new Set([...js.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]))]
-      .filter(id => !htmlIds.has(id));
+      .filter(id => !htmlIds.has(id) && !scriptIds.has(id));
     expect(missing).toEqual([]);
   });
 

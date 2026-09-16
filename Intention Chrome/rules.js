@@ -18,11 +18,11 @@
 // INTENTIONS — how often, and for how long, the user means to open a target
 // ===========================================================================
 //
-// Every blocked site or app carries one intention: "open it at most N times a
-// day, M minutes each time". Inside that, a visit is one tap and costs nothing
-// — no conversation, no credit. Past it, the only way to more time today is to
-// negotiate with the coach. There is no mode to choose and no second cap: the
-// intention IS the day's allowance, and `opens: 0` is what a hard block is.
+// Each blocked site or app has either a fixed number of visits with a duration
+// per visit, or a total daily time budget allocated when each visit starts.
+// Within the allowance a reason is required, but no coach conversation or
+// credit is needed. More time today requires agreement from the coach. Zero
+// visits or a zero-minute daily budget means the target is blocked outright.
 //
 // Stored on the per-target limits entry under the field names the grant
 // bookkeeping has always used — `maxGrants` is opens, `passMinutes` is minutes
@@ -31,11 +31,10 @@
 // What a target with no entry, or an unreadable one, resolves to.
 const INTENTION_DEFAULTS = { maxGrants: 3, passMinutes: 10 };
 
-// A fixed set rather than a free number, for the same reason the leave delay
-// is a ladder: this is a commitment, and four rungs are enough to mean
-// something without inviting "call it eleven".
-const PASS_MINUTE_CHOICES = [5, 10, 15, 30];
-const DAILY_TIME_CHOICES = [15, 30, 45, 60, 90, 120, 180, 240];
+// Minute controls accept whole minutes. Keep the existing upper limits while
+// allowing the user to choose any duration inside them.
+const MAX_PASS_MINUTES = 30;
+const MAX_DAILY_MINUTES = 240;
 
 // Opens per day never goes past this. Beyond ten a day the intention has
 // stopped describing an intention.
@@ -55,24 +54,14 @@ function limitEntryFor(target, stored) {
   return domainLimits[target] || appLimits[target] || null;
 }
 
-// The intention for one target, as `{ opens, minutesEach }`.
-//
-// Unreadable values fall back to the defaults rather than to zero, because
-// zero opens is a real answer (blocked outright) and a corrupt field must not
-// silently become one. Out-of-range values are clamped into range: an opens
-// count above MAX_OPENS reads as MAX_OPENS, and a minutes value off the ladder
-// snaps DOWN to the rung below it — the same direction normalizeLeaveDelay
-// snaps, for the same reason: being wrong must only ever mean less time.
+// Resolve stored counts and durations into bounded whole numbers. Invalid
+// values fall back to the defaults; fractions round down to avoid adding time.
 function resolveIntention(entry) {
   if (entry && entry.intentionMode === 'dailyTime') {
     const raw = Number(entry.dailyTimeMinutes);
-    let dailyMinutes = DAILY_TIME_CHOICES[1];
-    if (Number.isFinite(raw) && raw >= 0) {
-      dailyMinutes = raw < DAILY_TIME_CHOICES[0] ? 0 : DAILY_TIME_CHOICES[0];
-      for (const choice of DAILY_TIME_CHOICES) {
-        if (choice <= raw) dailyMinutes = choice;
-      }
-    }
+    const dailyMinutes = Number.isFinite(raw) && raw >= 0
+      ? Math.min(MAX_DAILY_MINUTES, Math.floor(raw))
+      : 30;
     return { mode: 'dailyTime', dailyMinutes, opens: 0, minutesEach: 0 };
   }
   const rawOpens = entry ? Number(entry.maxGrants) : NaN;
@@ -80,13 +69,9 @@ function resolveIntention(entry) {
     ? Math.max(0, Math.min(MAX_OPENS, Math.floor(rawOpens)))
     : INTENTION_DEFAULTS.maxGrants;
   const rawMinutes = entry ? Number(entry.passMinutes) : NaN;
-  let minutesEach = INTENTION_DEFAULTS.passMinutes;
-  if (Number.isFinite(rawMinutes) && rawMinutes > 0) {
-    minutesEach = PASS_MINUTE_CHOICES[0];
-    for (const choice of PASS_MINUTE_CHOICES) {
-      if (choice <= rawMinutes) minutesEach = choice;
-    }
-  }
+  const minutesEach = Number.isFinite(rawMinutes) && rawMinutes > 0
+    ? Math.max(1, Math.min(MAX_PASS_MINUTES, Math.floor(rawMinutes)))
+    : INTENTION_DEFAULTS.passMinutes;
   return { opens, minutesEach };
 }
 

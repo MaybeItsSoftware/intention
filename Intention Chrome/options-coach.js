@@ -73,7 +73,7 @@ async function attemptCoachOpen() {
     thinking.remove();
     if (resp && resp.locked) {
       await closeCoachModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     addCoachMsg('assistant', COACH_OPENER_FALLBACK);
@@ -112,7 +112,7 @@ async function attemptCoachSend(text, messagesEl) {
     thinking.remove();
     if (resp.locked) {
       await closeCoachModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     const message = resp.networkError ? "Can't reach the coach. Check your connection." : resp.error;
@@ -355,7 +355,7 @@ async function attemptGateOpen() {
     // anyway" button below it still works.
     if (resp && resp.locked && changeType !== 'uninstall') {
       await closeGateModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     addGateMsg('assistant', gateOpenerFallback(changeType, domain));
@@ -406,7 +406,7 @@ async function attemptGateSend(text, messagesEl) {
     // over to the paywall, because the exit beside it has to keep working.
     if (resp.locked && gateChange && gateChange.changeType !== 'uninstall') {
       await closeGateModal();
-      await openPaywallModal();
+      await openPaywallModal(resp.errorCode);
       return;
     }
     const message = resp.networkError ? "Can't reach the coach. Check your connection." : resp.error;

@@ -433,13 +433,13 @@ function migrateLegacyServiceReasons(reasons) {
 
 // ---- Page: an intention --------------------------------------------------
 //
-// "How many times a day do you want to open Instagram?" A big number with a
-// minus and a plus, one dot per open, then how long each one lasts. The line
-// underneath says what that adds up to, so the choice is felt as a day rather
-// than as two settings.
+// Choose a daily allowance type, then set either visits and minutes per visit,
+// or a total minute budget. The summary explains what those numbers allow.
 
 // The target the intention page is currently showing.
 let setupIntentionTarget = null;
+let setupDailyMinutesControl = null;
+let setupVisitMinutesControl = null;
 
 function isSetupApp(target) {
   return setupBlockedApps.includes(target);
@@ -466,7 +466,7 @@ function setupLimitsFor(target) {
 const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
 function intentionSumLine({ mode, dailyMinutes, opens, minutesEach }) {
-  if (mode === 'dailyTime') return `Up to ${dailyMinutes} minutes a day. Choose how much of the remaining time to spend on each visit.`;
+  if (mode === 'dailyTime') return dailyMinutes === 0 ? 'Blocked outright.' : `Up to ${dailyMinutes} minutes a day. Choose how much of the remaining time to spend on each visit. A reason is required.`;
   if (opens === 0) return "Blocked outright. If something ever needs it, that's a conversation with the coach.";
   const total = opens * minutesEach;
   const visits = opens === 1 ? 'one visit' : `${NUMBER_WORDS[opens] || opens} visits`;
@@ -479,6 +479,7 @@ function wireIntentionStep() {
     const limits = setupLimitsFor(setupIntentionTarget);
     const now = resolveIntention(limits[setupIntentionTarget]);
     const next = fn(now);
+    if (next === now) return;
     limits[setupIntentionTarget] = {
       ...(limits[setupIntentionTarget] || {}),
       intentionMode: next.mode === 'dailyTime' ? 'dailyTime' : 'opens',
@@ -496,48 +497,32 @@ function wireIntentionStep() {
 
   const modes = document.getElementById('setup-intention-mode');
   modes.textContent = '';
-  for (const [mode, title] of [['opens', 'Visits per day'], ['dailyTime', 'Time per day']]) {
+  for (const [mode, title] of [['opens', 'Set visits per day'], ['dailyTime', 'Set total minutes per day']]) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'setup-mode-chip';
     chip.dataset.mode = mode;
     chip.setAttribute('role', 'radio');
     chip.textContent = title;
-    chip.addEventListener('click', () => change(i => mode === 'dailyTime'
-      ? { mode, dailyMinutes: i.opens * i.minutesEach || 30, opens: i.opens, minutesEach: i.minutesEach }
+    chip.addEventListener('click', () => change(i => (i.mode || 'opens') === mode ? i : mode === 'dailyTime'
+      ? { mode, dailyMinutes: Math.min(MAX_DAILY_MINUTES, i.opens * i.minutesEach || 30), opens: i.opens, minutesEach: i.minutesEach }
       : { mode, opens: Math.min(MAX_OPENS, Math.max(1, Math.ceil(i.dailyMinutes / 10))), minutesEach: 10 }));
     modes.appendChild(chip);
   }
 
   const daily = document.getElementById('setup-intention-daily');
   daily.textContent = '';
-  for (const minutes of DAILY_TIME_CHOICES) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'setup-minute-chip';
-    chip.dataset.minutes = String(minutes);
-    chip.setAttribute('role', 'radio');
-    chip.textContent = `${minutes} min`;
-    chip.addEventListener('click', () => change(i => ({ ...i, dailyMinutes: minutes })));
-    daily.appendChild(chip);
-  }
+  setupDailyMinutesControl = buildIntentionStepper({ value: 30, min: 0, max: MAX_DAILY_MINUTES,
+    label: 'Total minutes per day', unit: 'min / day',
+    onChange: minutes => change(i => ({ ...i, dailyMinutes: minutes })) });
+  daily.appendChild(setupDailyMinutesControl);
 
-  const chips = document.getElementById('setup-intention-minutes');
-  chips.textContent = '';
-  for (const minutes of PASS_MINUTE_CHOICES) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'setup-minute-chip';
-    chip.dataset.minutes = String(minutes);
-    chip.setAttribute('role', 'radio');
-    const n = document.createElement('strong');
-    n.textContent = String(minutes);
-    const unit = document.createElement('span');
-    unit.textContent = 'min';
-    chip.append(n, unit);
-    chip.addEventListener('click', () => change(i => ({ ...i, minutesEach: minutes })));
-    chips.appendChild(chip);
-  }
+  const minutes = document.getElementById('setup-intention-minutes');
+  minutes.textContent = '';
+  setupVisitMinutesControl = buildIntentionStepper({ value: 10, min: 1, max: MAX_PASS_MINUTES,
+    label: 'Minutes per visit', unit: 'min / visit',
+    onChange: value => change(i => ({ ...i, minutesEach: value })) });
+  minutes.appendChild(setupVisitMinutesControl);
 
   // Copies this page's answer onto every target still to come, and moves past
   // them. For the person with seven sites who wants the same rule for all.
@@ -576,11 +561,7 @@ function renderIntentionStep(target, { bump = false } = {}) {
   document.querySelector('#setup-step-intention .setup-counter').hidden = intention.mode === 'dailyTime';
   document.getElementById('setup-intention-dots').hidden = intention.mode === 'dailyTime';
   document.getElementById('setup-intention-daily-wrap').hidden = intention.mode !== 'dailyTime';
-  for (const chip of document.querySelectorAll('#setup-intention-daily .setup-minute-chip')) {
-    const on = Number(chip.dataset.minutes) === intention.dailyMinutes;
-    chip.classList.toggle('selected', on);
-    chip.setAttribute('aria-checked', String(on));
-  }
+  if (setupDailyMinutesControl) setupDailyMinutesControl.setValue(intention.dailyMinutes || 0);
 
   const value = document.getElementById('setup-intention-opens');
   value.textContent = String(intention.opens);
@@ -606,11 +587,7 @@ function renderIntentionStep(target, { bump = false } = {}) {
 
   const minutesWrap = document.getElementById('setup-intention-minutes-wrap');
   minutesWrap.hidden = intention.mode === 'dailyTime' || intention.opens === 0;
-  for (const chip of document.querySelectorAll('#setup-intention-minutes .setup-minute-chip')) {
-    const on = Number(chip.dataset.minutes) === intention.minutesEach;
-    chip.classList.toggle('selected', on);
-    chip.setAttribute('aria-checked', String(on));
-  }
+  if (setupVisitMinutesControl) setupVisitMinutesControl.setValue(intention.minutesEach || 10);
   document.getElementById('setup-intention-sum').textContent = intentionSumLine(intention);
 
   const targets = intentionTargets();
