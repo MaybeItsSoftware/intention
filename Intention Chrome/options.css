@@ -821,90 +821,6 @@ blockquote {
 /* Failures used to render in the same muted grey as "Saving…" */
 .status.error { color: var(--danger-text); }
 
-/* Reversing a rule wholesale is not the same kind of action as editing one, so
-   it doesn't sit in the same card as the list it empties. */
-.danger-card { border-color: var(--danger-line); }
-.danger-card h2 { color: var(--danger-text); }
-
-/* ---- Leaving Intention -------------------------------------------------- */
-
-/* Deliberately NOT .danger-card. Leaving is not a destructive act to be warned
-   away from with a raspberry hairline — it is a decision the product says out
-   loud it cannot stop, and dressing it as danger would be the same guilt-trip
-   the copy inside refuses to make. An ordinary card, with the exit spelled out
-   plainly. */
-.leaving-card .micro-label { margin-top: 18px; }
-
-/* Full width, and NOT in a well. .row-info-note's default recessed surface is
-   --well, and muted text on --well measures 4.4:1 — under AA. On a row that
-   is a short label nobody has to read; here it is two paragraphs explaining
-   how leaving works, which is the last text in this product that may be hard
-   to read. On the card's raised surface the same muted ink clears it, and the
-   hairline still does the separating. tests/smoke/contrast.smoke.mjs is what
-   caught this and is what will catch it again. */
-.leaving-card .row-info-note {
-  max-width: none;
-  background: transparent;
-}
-
-/* The cool-off ladder. Pills, because these are four mutually exclusive
-   choices and .pill.selected is already how this page paints "this one". */
-.leave-choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 6px 0 0;
-}
-
-/* Weight, not colour, carries the two lines apart. The detail line underneath
-   would be the natural place for muted ink, but a pill's fill is --well and
-   muted-on-well is 4.4:1 — so the hierarchy is expressed the way the house
-   style prefers anyway: same ink, different weight and size. */
-.leave-choice {
-  text-align: left;
-  font-weight: 700;
-}
-
-/* The second line on each pill — "Ask now, remove tomorrow" — which is what
-   makes the ladder a set of consequences rather than a set of numbers. */
-.leave-choice-detail {
-  display: block;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--ink);
-  margin-top: 2px;
-}
-
-/* A request in flight: asked for, waiting out its cool-off. Amber rather than
-   raspberry — this is pending, not wrong. */
-.leave-pending {
-  margin: 12px 0 0;
-  padding: 10px 12px;
-  border: 1px solid var(--warning-line);
-  border-radius: var(--radius-control);
-  background: var(--warning-fill);
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-/* Once the cool-off has run out the same block is an open door, not a wait. */
-.leave-pending.leave-ready {
-  border-color: var(--success-line);
-  background: var(--success-fill);
-}
-
-.leave-pending-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.leave-pending-actions button { flex: 1 1 auto; }
-
-#leave-remove-row { margin-top: 18px; }
-
 /* The exit inside the leaving conversation. Full width and hard against the
    bottom of the modal, below the input rather than beside the Cancel button:
    it is not a variant of "close this", it is the other thing you can do here.
@@ -2114,8 +2030,6 @@ ul.setup-picked:empty { display: none; }
   .settings-main #observations-card { grid-column: span 5; }
   .settings-main #ai-access-card { grid-column: span 7; }
   .settings-main #privacy-card { grid-column: span 5; }
-  .settings-main #danger-card { grid-column: span 5; }
-  .settings-main #leaving-card { grid-column: span 7; }
 }
 
 /* ---- Today ---------------------------------------------------------------- */

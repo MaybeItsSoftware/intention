@@ -729,302 +729,54 @@ async function showSettingsView(state) {
     document.getElementById('paywall-modal').hidden = true;
   });
 
-  // Disabling all blocking is the biggest loosening of all — gate it.
-  bindOnce('disable-all-btn', 'click', async () => {
-    const cfg = await getConfig();
-    const iosStatus = HAS_IOS_APP_BLOCKING ? await iosScreenTimeStatus() : null;
-    const iosHasApps = !!(iosStatus && iosStatus.selectionCount > 0);
-    if (!(cfg.blockedDomains || []).length && !(cfg.blockedApps || []).length && !iosHasApps) {
-      // Used to write into #prompt-status, which lives inside the collapsed
-      // "Coach instructions" disclosure in a different section — so on mobile
-      // this said nothing at all.
-      setStatus('disable-all-status', 'Nothing is blocked right now.', '');
-      return;
-    }
-    requestLoosening({
-      changeType: 'disable_all',
-      domain: null,
-      title: 'Clear all blocking rules?',
-      subtitle: 'This removes every website and app from your blocked lists. Intention stays installed.',
-      onApproved: async () => {
-        const state = await getConfig();
-        renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
-        if (HAS_APP_BLOCKING) {
-          renderApps(state.blockedApps || [], state.appLimits || {}, state.appLabels || {}, state.serviceReasons || {});
-        }
-        if (HAS_IOS_APP_BLOCKING) {
-          window.intentionScreenTime.clear(() => refreshIOSAppsCard());
-        }
-      }
-    });
-  });
-
-  await refreshLeavingCard();
-  wireLeavingCard();
-  applyLeaveDeepLink();
-}
-
-// ---- Leaving Intention ----------------------------------------------------
-//
-// The settings half of WP9. The other halves are background.js (the tab
-// interposition, the stand-down, applySettingChange's 'uninstall' branch) and
-// options-coach.js (the always-live exit inside the conversation).
-//
-// The one rule this file must not break: nothing here may ever hide, disable
-// or delay a way out. The cool-off is something the user chose; the exit
-// beside it works during the cool-off, and says so.
-
-// The ladder, in the words the card uses. LEAVE_DELAY_CHOICES in rules.js is
-// the list; this is only how each rung reads, and the second line is what
-// turns a number into a consequence.
-const LEAVE_DELAY_LABELS = {
-  0: { label: 'No delay', detail: 'Talk to your coach, then remove it there and then.' },
-  60: { label: '1 hour', detail: 'Ask now, remove in an hour.' },
-  1440: { label: '24 hours', detail: 'Ask now, remove tomorrow.' },
-  4320: { label: '3 days', detail: 'The longest commitment on offer.' }
-};
-
-// "in 21 hours" / "3 hours ago" — coarse on purpose. A live-ticking countdown
-// to being allowed to leave would be a thing to sit and watch, which is the
-// opposite of what a cool-off is for.
-function formatLeaveSpan(ms) {
-  const minutes = Math.max(0, Math.round(ms / 60000));
-  if (minutes < 1) return 'less than a minute';
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
-  const days = Math.round(hours / 24);
-  return `${days} day${days === 1 ? '' : 's'}`;
-}
-
-// Everything on the card that depends on stored state. Called on open, and
-// again after every action that could have moved it.
-async function refreshLeavingCard() {
-  const card = document.getElementById('leaving-card');
-  if (!card) return;
-  const leave = await sendBg({ action: 'getLeaveState' });
-  if (!leave || leave.error) return;
-  leavingState = leave;
-
-  renderLeaveChoices(leave);
-  renderLeavePending(leave);
-  renderLeaveRemoveRow(leave);
-}
-
-// Held so the click handlers, which are bound once, can read the state the
-// last render painted from rather than re-fetching it on every tap.
-let leavingState = null;
-
-function renderLeaveChoices(leave) {
-  const box = document.getElementById('leave-delay-choices');
-  box.textContent = '';
-  for (const minutes of LEAVE_DELAY_CHOICES) {
-    const copy = LEAVE_DELAY_LABELS[minutes];
-    if (!copy) continue;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pill leave-choice' + (minutes === leave.leaveDelayMinutes ? ' selected' : '');
-    btn.dataset.minutes = String(minutes);
-    btn.setAttribute('aria-pressed', String(minutes === leave.leaveDelayMinutes));
-    btn.appendChild(document.createTextNode(copy.label));
-    const detail = document.createElement('span');
-    detail.className = 'leave-choice-detail';
-    detail.textContent = copy.detail;
-    btn.appendChild(detail);
-    box.appendChild(btn);
-  }
-}
-
-function renderLeavePending(leave) {
-  const box = document.getElementById('leave-pending');
-  box.textContent = '';
-  box.className = 'leave-pending';
-  if (!leave.leaveRequest) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  const now = Date.now();
-  const line = document.createElement('p');
-  line.style.margin = '0';
-  if (leave.ready) {
-    box.classList.add('leave-ready');
-    line.textContent = `Your cool-off is up. Removing Intention is one tap away whenever you want it.`;
-  } else {
-    const asked = formatLeaveSpan(now - (leave.leaveRequest.requestedAt || now));
-    const left = formatLeaveSpan(leave.leaveRequest.availableAt - now);
-    line.textContent = `You asked to remove Intention ${asked} ago. It'll be ready in ${left}.`;
-  }
-  box.appendChild(line);
-
-  const actions = document.createElement('div');
-  actions.className = 'leave-pending-actions';
-  // Live during the wait, not only after it. A cool-off you cannot end is a
-  // lock, and this is not a lock — the copy on the button says exactly what
-  // pressing it costs so that nobody has to find out by pressing it.
-  const now_btn = document.createElement('button');
-  now_btn.type = 'button';
-  now_btn.className = 'secondary';
-  now_btn.id = 'leave-now-anyway-btn';
-  now_btn.textContent = leave.ready ? 'Remove Intention' : 'Remove it now anyway';
-  actions.appendChild(now_btn);
-
-  const cancel = document.createElement('button');
-  cancel.type = 'button';
-  cancel.className = 'secondary';
-  cancel.id = 'leave-cancel-btn';
-  cancel.textContent = 'Changed your mind? Cancel the request';
-  actions.appendChild(cancel);
-  box.appendChild(actions);
-}
-
-// The button that starts the conversation — or, on Apple builds, the paragraph
-// that replaces it.
-function renderLeaveRemoveRow(leave) {
-  const row = document.getElementById('leave-remove-row');
-  row.textContent = '';
-
-  // On Apple builds `chrome.management.uninstallSelf()` would remove the
-  // SAFARI EXTENSION and leave the Intention app exactly where it was —
-  // technically a removal, not the one the button promises. There is no API
-  // that removes a Mac app or an iOS app from inside it, so the honest answer
-  // is directions rather than a button that does the wrong thing.
-  if (IS_APPLE_BUILD || !leave.canSelfUninstall) {
-    const note = document.createElement('p');
-    note.className = 'row-info-note';
-    note.id = 'leave-apple-note';
-    note.textContent = IS_APPLE_BUILD
-      ? 'On iPhone and iPad, remove Intention the way you remove any app: touch and hold its icon, then Remove App. On a Mac, drag Intention out of your Applications folder. Turning the Safari extension off in Safari’s settings stops the website blocking without removing anything.'
-      : 'Remove Intention the way you remove any app on this device, from your system settings.';
-    row.appendChild(note);
-    return;
-  }
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.id = 'leave-now-btn';
-  btn.className = 'secondary';
-  btn.style.width = '100%';
-  btn.textContent = 'Remove Intention';
-  row.appendChild(btn);
-}
-
-// One delegated listener per container, bound once, because every control
-// inside them is repainted on each refresh.
-function wireLeavingCard() {
-  bindOnce('leave-delay-choices', 'click', async (e) => {
-    const btn = e.target.closest ? e.target.closest('.leave-choice') : null;
-    if (!btn) return;
-    const next = normalizeLeaveDelay(btn.dataset.minutes);
-    const current = leavingState ? leavingState.leaveDelayMinutes : 0;
-    if (next === current) return;
-
-    // Lengthening is a tightening: it saves for free, exactly as lowering an
-    // intention does. Shortening is a loosening of a rule they set calmly, so
-    // it waits — out the current cool-off and the night — unless the coach
-    // allows it sooner, the same trade every other control on this page makes. background.js's saveSettings enforces the same direction, so
-    // this branch is the UI half of a rule, not the rule itself.
-    if (next > current) {
-      await sendBg({ action: 'saveSettings', config: { leaveDelayMinutes: next } });
-      await refreshLeavingCard();
-      setStatus('leaving-status', next === 0 ? 'Cool-off turned off.' : 'Saved.', 'success');
-      return;
-    }
-
-    requestLoosening({
-      changeType: 'decrease_leave_delay',
-      domain: null,
-      currentValue: current,
-      newValue: next,
-      title: 'Shorten the wait?',
-      subtitle: 'You chose this wait when you were thinking clearly. A shorter one starts once the current wait would have run out.',
-      onApproved: async () => {
-        await refreshLeavingCard();
-        setStatus('leaving-status', 'Cool-off shortened.', 'success');
-      }
-    });
-  });
-
   bindOnce('export-list-btn', 'click', exportBlocklistFile);
   bindOnce('import-list-btn', 'click', () => document.getElementById('import-list-input')?.click());
   bindOnce('import-list-input', 'change', importBlocklistFile);
-
-  bindOnce('leave-remove-row', 'click', (e) => {
-    if (!e.target.closest || !e.target.closest('#leave-now-btn')) return;
-    openLeaveConversation();
-  });
-
-  bindOnce('leave-pending', 'click', async (e) => {
-    if (!e.target.closest) return;
-    if (e.target.closest('#leave-now-anyway-btn')) {
-      await finishRemoval();
-      return;
-    }
-    if (e.target.closest('#leave-cancel-btn')) {
-      // Cancelling is a tightening — it puts the wait back in front of the
-      // exit — so it costs nothing and is saved directly. The stand-down still
-      // gets written, because this was an outcome of the leaving conversation
-      // like any other and the interposition must not reopen it on the way
-      // back to whatever they were doing.
-      await sendBg({ action: 'saveSettings', config: { leaveRequest: null } });
-      await sendBg({ action: 'beginLeave', reason: 'cancelled' });
-      await refreshLeavingCard();
-      setStatus('leaving-status', 'Request cancelled. Nothing has changed.', 'success');
-    }
-  });
+  applyLeaveDeepLink();
 }
 
-// Open the leaving conversation. Shared by the card's own button and by the
-// ?leave=1 deep link the background's tab interposition opens.
+// The native/browser uninstall deep link and the coach's always-live exit
+// work independently of Settings cards.
 async function openLeaveConversation() {
   const cfg = await getConfig();
   requestLoosening({
     changeType: 'uninstall',
     domain: null,
-    // The cool-off, carried through so the exit button inside the modal can
-    // name what pressing it costs ("this ends your 24 hours"). The coach reads
-    // the same number out of storage rather than from here — a value the page
-    // supplies is a value the page could get wrong.
     currentValue: cfg.leaveDelayMinutes || 0,
     title: 'Before you remove Intention',
     subtitle: 'Tell your coach what’s going on. You can go ahead and remove it whichever way this conversation goes. The button below stays live the whole time.',
     onApproved: async () => {
       const leave = await sendBg({ action: 'getLeaveState' });
-      await refreshLeavingCard();
-      // No cool-off set: the coach agreeing IS the clearance, so go straight
-      // to the browser's own removal dialog rather than making the user find
-      // a second button for a decision they have just finished making.
-      if (leave && !leave.leaveRequest) {
+      if (leave && (!leave.leaveRequest || leave.ready)) {
         await finishRemoval();
         return;
       }
-      setSettingsSection('settings');
-      document.getElementById('leaving-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (leave && leave.leaveRequest) {
+        const available = new Date(leave.leaveRequest.availableAt).toLocaleString();
+        window.alert(`Your cool-off ends ${available}. You can still uninstall at any time. ${removalDirections()}`);
+      }
     }
   });
 }
 
-// The exit itself, from every button that offers one.
-async function finishRemoval() {
-  const result = await sendBg({ action: 'completeRemoval' });
-  // If it worked we are already gone and nothing below runs. The two cases
-  // that reach here are the user declining the browser's confirmation dialog,
-  // and a platform with no self-uninstall at all.
-  if (result && result.reason === 'unsupported') {
-    setStatus('leaving-status', 'Remove Intention from your device’s own settings. See the note above.', '');
-    return;
+function removalDirections() {
+  if (IS_APPLE_BUILD) {
+    return 'On iPhone or iPad, touch and hold Intention, then choose Remove App. On Mac, move Intention from Applications to the Bin.';
   }
-  await refreshLeavingCard();
-  setStatus('leaving-status', 'Nothing removed. Intention is still here whenever you want it gone.', '');
+  if (HAS_APP_BLOCKING) return 'Open Settings → Apps → Intention → Uninstall.';
+  return 'Remove Intention from your browser’s Extensions settings.';
 }
 
-// A tab opened at options.html?leave=1 — by the background when the user lands
-// on chrome://extensions, or by a native host. It opens the conversation; it
-// never removes anything on its own.
+async function finishRemoval() {
+  const result = await sendBg({ action: 'completeRemoval' });
+  if (result && result.reason === 'unsupported') {
+    window.alert(removalDirections());
+  }
+}
+
+// Opening the link starts a conversation; it never uninstalls on its own.
 function applyLeaveDeepLink() {
   if (new URLSearchParams(window.location.search).get('leave') !== '1') return;
-  setSettingsSection('settings');
-  document.getElementById('leaving-card')?.scrollIntoView({ block: 'start' });
   openLeaveConversation();
 }
 
@@ -1089,9 +841,9 @@ async function importBlocklistFile(event) {
     const result = await sendBg({ action: 'saveSettings', config });
     if (result?.error) throw new Error(result.error);
     await renderCurrentView();
-    setStatus('leaving-status', 'List restored. API keys, credit and history were left on this device.', 'success');
+    setStatus('backup-status', 'List restored. API keys, credit and history were left on this device.', 'success');
   } catch (e) {
-    setStatus('leaving-status', String(e.message || e), 'error');
+    setStatus('backup-status', String(e.message || e), 'error');
   } finally {
     // Selecting the same file later must raise another change event.
     input.value = '';
@@ -1113,7 +865,7 @@ async function exportBlocklistFile() {
   // Revoked on a turn of the event loop rather than immediately: Safari has
   // not always started the download by the time click() returns.
   setTimeout(() => URL.revokeObjectURL(url), 10000);
-  setStatus('leaving-status', 'Saved. Keep it somewhere you’ll find it.', 'success');
+  setStatus('backup-status', 'Saved. Keep it somewhere you’ll find it.', 'success');
 }
 
 // ---- iOS Screen Time apps card ----

@@ -346,34 +346,14 @@
               </div>
             </section>
 
-            <section class="card danger-card" id="danger-card" data-section="settings">
-              <h2>Clear your blocked list</h2>
-              <p class="subtitle">Stop blocking every website and app without uninstalling Intention. This removes them from your lists; save a copy below if you want to restore them later.</p>
-              <button id="disable-all-btn" class="secondary" style="width: 100%;">Clear all blocking rules</button>
-              <div id="disable-all-status" class="status"></div>
-            </section>
-
-            <!-- Everything inside is built by options.js with createElement /
-                 textContent — the delay choices, the pending-request line, the
-                 Apple instructions. The markup here is the frame only. -->
-            <section class="card leaving-card" id="leaving-card" data-section="settings">
-              <h2>Remove Intention</h2>
-              <p class="subtitle">An optional conversation and cool-off to help you think through leaving. You can always uninstall directly from your device’s settings, without waiting or buying credit.</p>
-
-              <p class="micro-label">Cool-off before removal</p>
-              <div id="leave-delay-choices" class="leave-choices" role="group" aria-label="Cool-off before removal"></div>
-              <p class="row-info-note" id="leave-delay-note">Making the delay longer saves straight away. Shortening it means convincing your coach, same as any other rule you set for yourself.</p>
-
-              <div id="leave-pending" class="leave-pending" hidden></div>
-
-              <p class="micro-label">Take your list with you</p>
-              <p class="row-info-note">A small file holding your blocked sites and apps, your limits, your answers and your coach’s context. You can restore it later on this device or another one. It does not contain your API key, coaching credit or usage history.</p>
+            <section class="card backup-card" id="backup-card" data-section="settings">
+              <h2>Back up your list</h2>
+              <p class="subtitle">Save your blocked sites and apps, limits, answers and coach context. Restore them later on this device or another one. Backups do not contain your API key, coaching credit or usage history.</p>
               <button type="button" id="export-list-btn" class="secondary" style="width: 100%;">Save a copy of your list</button>
               <button type="button" id="import-list-btn" class="secondary" style="width: 100%; margin-top: 8px;">Restore a copy of your list</button>
               <input type="file" id="import-list-input" accept="application/json,.json" hidden>
 
-              <div id="leave-remove-row"></div>
-              <div id="leaving-status" class="status"></div>
+              <div id="backup-status" class="status" role="status" aria-live="polite"></div>
             </section>
 
             <section class="card" data-section="settings" id="ai-access-card">

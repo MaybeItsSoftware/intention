@@ -8,7 +8,7 @@
 // URLs, `declarativeNetRequest` cannot match a page that is not a network
 // request, and content scripts cannot be injected into WebUI. If the probe at
 // the top of main() comes back empty, the honest response is to DROP the
-// interposition and ship `setUninstallURL` plus the settings card alone —
+// interposition and ship `setUninstallURL` alone —
 // not to ship a listener that silently never fires.
 //
 // Everything after the probe is about the promises the feature makes:
@@ -91,37 +91,12 @@ async function main() {
     }, done)));
     await setupPage.reload();
     await setupPage.waitForSelector('#settings-view:not([hidden])');
-    // Settings opens on Today; removal controls live under Settings.
     await setupPage.click('[data-section-tab="settings"]');
-
-    const cardVisible = await setupPage.isVisible('#leaving-card');
-    record('the leaving card is on the Settings tab of a finished setup', cardVisible);
-
-    const exportPresent = await setupPage.isVisible('#export-list-btn');
-    record('and offers the blocklist export, so leaving is not punitive', exportPresent);
-
-    // ── The cool-off ladder paints what is stored, and — the property that
-    // matters most on this card — a pending request always carries a live way
-    // out. A cool-off you cannot end is a lock, and this is not a lock.
-    await setupPage.evaluate(() => new Promise(done => chrome.storage.local.set({
-      leaveDelayMinutes: 1440,
-      leaveRequest: { requestedAt: Date.now() - 3600_000, availableAt: Date.now() + 82_800_000, delayMinutes: 1440 }
-    }, done)));
-    await setupPage.reload();
-    await setupPage.waitForSelector('#leave-pending:not([hidden])', { timeout: 10000 }).catch(() => {});
-
-    const selected = await setupPage.locator('#leave-delay-choices .leave-choice.selected').getAttribute('data-minutes').catch(() => null);
-    record('the ladder paints the stored cool-off as the selected rung', selected === '1440', String(selected));
-
-    const pendingText = (await setupPage.textContent('#leave-pending')) || '';
-    record('a pending request says when it was made and when it is up',
-      /You asked to remove Intention .* ago\. It'll be ready in /.test(pendingText), pendingText.slice(0, 160));
-
-    const anyway = setupPage.locator('#leave-now-anyway-btn');
-    record('and carries a live way out DURING the cool-off',
-      (await anyway.count()) === 1 && await anyway.isEnabled(),
-      `count ${await anyway.count()}`);
-    record('and a way to change your mind', await setupPage.locator('#leave-cancel-btn').isEnabled());
+    record('Settings has no Remove Intention section', await setupPage.locator('#leaving-card').count() === 0);
+    record('Settings has no Clear blocked list section', await setupPage.locator('#danger-card').count() === 0);
+    record('backup and restore remain available in their own Settings card',
+      await setupPage.isVisible('#backup-card') && await setupPage.isVisible('#export-list-btn') && await setupPage.isVisible('#import-list-btn'));
+    record('backup status has its own live region', await setupPage.locator('#backup-status[role="status"]').count() === 1);
 
     // Back to the state the interposition half needs: no request outstanding,
     // because a live one deliberately suppresses it (they already asked).
@@ -171,7 +146,7 @@ async function main() {
     if (!sawExtensionsUrl) {
       console.log('\n\x1b[31mThe browser interposition cannot work on this engine.\x1b[0m');
       console.log('Drop the tabs.onUpdated listener from shared/background.js and degrade WP9');
-      console.log('to setUninstallURL + the settings leaving card. Do not ship it unproven.\n');
+      console.log('to setUninstallURL. Do not ship it unproven.\n');
     }
 
     // ── (a) A tab, within five seconds, at options.html?leave=1.
