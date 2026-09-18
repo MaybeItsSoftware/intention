@@ -677,3 +677,36 @@ function createGateConversation(host) {
 
   return { send, attemptSend, attemptOpen, wireComposer };
 }
+
+// Both gate hosts use bundled service marks; a native host can replace the
+// fallback with the installed app's icon without exposing bridge APIs here.
+function renderTargetHeading(element, { domain, label, loadAppIcon }) {
+  element.textContent = '';
+  const mark = document.createElement('span');
+  mark.className = 'int-target-icon';
+  mark.setAttribute('aria-hidden', 'true');
+  const meta = serviceIconFor(domain);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', meta.color || 'currentColor');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', meta.icon);
+  svg.appendChild(path);
+  mark.appendChild(svg);
+  element.appendChild(mark);
+  const name = document.createElement('span');
+  name.textContent = label;
+  element.appendChild(name);
+  if (loadAppIcon) {
+    loadAppIcon(domain, (icon) => {
+      if (mark.parentNode !== element || !/^data:image\//.test(icon || '')) return;
+      const image = document.createElement('img');
+      image.alt = '';
+      image.onload = () => {
+        mark.textContent = '';
+        mark.appendChild(image);
+      };
+      image.src = icon;
+    });
+  }
+}

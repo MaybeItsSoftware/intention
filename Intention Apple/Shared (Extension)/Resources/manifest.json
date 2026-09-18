@@ -34,6 +34,7 @@
         "page_context.js",
         "report.js",
         "rules.js",
+        "sites.js",
         "gate-ui.js",
         "content.js"
       ],

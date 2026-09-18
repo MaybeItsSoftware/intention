@@ -310,7 +310,15 @@ function renderIntentionUI(intention) {
       intention.visitMinutesMax == null ? Infinity : Number(intention.visitMinutesMax) || 0))
     : Math.max(0, opens - used);
 
-  heading.textContent = mode === 'checkin' ? `Time's up on ${displayName}` : displayName;
+  renderTargetHeading(heading, {
+    domain,
+    label: mode === 'checkin' ? `Time's up on ${displayName}` : displayName,
+    loadAppIcon: isApp && window.intentionApps?.getInstalledApps
+      ? (packageName, done) => window.intentionApps.getInstalledApps(apps => {
+          done((apps || []).find(app => app.packageName === packageName)?.icon);
+        })
+      : null,
+  });
   panel.hidden = false;
   dotsEl.textContent = '';
   for (let i = 0; i < opens; i++) {

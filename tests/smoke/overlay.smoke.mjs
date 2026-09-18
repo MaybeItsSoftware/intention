@@ -148,6 +148,75 @@ async function main() {
       await page.close();
     }
 
+    // The running popup is a sibling of the gate, often its only remaining
+    // node. It must own its palette and keep the finish action intact on phones.
+    for (const scheme of ['light', 'dark']) {
+      const page = await browser.newPage({ colorScheme: scheme, viewport: { width: 320, height: 640 } });
+      await page.setContent(HOSTILE_PAGE);
+      await page.addStyleTag({ content: OVERLAY_CSS });
+      const seen = await page.evaluate(() => {
+        document.getElementById('intention-root').remove();
+        document.body.style.wordBreak = 'break-all';
+        const badge = document.createElement('div');
+        badge.id = 'intention-badge';
+        badge.innerHTML = '<span id="intention-badge-time">⏱ 03:12 / 10:00 · Watching a very long video title</span><span id="intention-badge-reason">Reason: ' + 'longreason'.repeat(30) + '</span><button id="intention-badge-finish">Finished</button>';
+        document.body.appendChild(badge);
+        const button = badge.querySelector('button');
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        const bounds = badge.getBoundingClientRect();
+        return {
+          background: getComputedStyle(badge).backgroundColor,
+          textLines: range.getClientRects().length,
+          fits: bounds.left >= 0 && bounds.right <= innerWidth && badge.scrollWidth <= badge.clientWidth,
+        };
+      });
+      record(`[${scheme}] the popup owns an opaque themed background`,
+        seen.background === (scheme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(37, 35, 47)'), JSON.stringify(seen));
+      record(`[${scheme}] Finished stays on one line on a narrow phone`, seen.textLines === 1, JSON.stringify(seen));
+      record(`[${scheme}] long popup text fits the phone`, seen.fits, JSON.stringify(seen));
+      await page.close();
+    }
+
+    for (const scheme of ['light', 'dark']) {
+      const page = await browser.newPage({ colorScheme: scheme });
+      await page.setContent(HOSTILE_PAGE);
+      await page.addStyleTag({ content: OVERLAY_CSS });
+      await page.addScriptTag({ path: join(REPO_ROOT, 'shared', 'sites.js') });
+      await page.addScriptTag({ path: join(REPO_ROOT, 'shared', 'gate-ui.js') });
+      const seen = await page.evaluate(() => {
+        const target = document.createElement('p');
+        target.className = 'int-target';
+        document.getElementById('intention-root').appendChild(target);
+        renderTargetHeading(target, { domain: 'm.youtube.com', label: 'm.youtube.com' });
+        const svg = target.querySelector('svg');
+        const icon = svg.getBoundingClientRect();
+        const name = target.lastElementChild.getBoundingClientRect();
+        return {
+          brand: svg.querySelector('path').getAttribute('d') === serviceIconFor('youtube.com').icon,
+          beforeName: icon.width === 28 && icon.right <= name.left,
+          label: target.textContent,
+        };
+      });
+      record(`[${scheme}] the website brand appears before the gate name`,
+        seen.brand && seen.beforeName && seen.label === 'm.youtube.com', JSON.stringify(seen));
+      await page.evaluate(() => {
+        const target = document.querySelector('.int-target');
+        renderTargetHeading(target, {
+          domain: 'com.example.app', label: 'Example app',
+          loadAppIcon: (_package, done) => done('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='),
+        });
+      });
+      await page.waitForFunction(() => document.querySelector('.int-target-icon img')?.naturalWidth > 0);
+      record(`[${scheme}] a native app icon replaces the fallback before the name`,
+        await page.evaluate(() => {
+          const target = document.querySelector('.int-target');
+          return target.firstElementChild.querySelector('img') !== null
+            && target.querySelector('svg') === null && target.textContent === 'Example app';
+        }));
+      await page.close();
+    }
+
     // The two themes must actually differ, or the media query silently isn't
     // applying and every check above passes on one hardcoded palette.
     const read = async (scheme) => {

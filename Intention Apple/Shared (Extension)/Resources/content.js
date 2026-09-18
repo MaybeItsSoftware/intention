@@ -5,7 +5,7 @@ console.log(
   window.location.href,
 );
 
-const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rather than :root.
+const OVERLAY_CSS = `/* The gate and status badge's own tokens, declared on their roots rather than :root.
    Two reasons, both load-bearing:
      - This stylesheet is injected into arbitrary third-party pages. Tokens on
        :root would restyle the host site.
@@ -16,7 +16,8 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
    (No backticks in this file, ever — it is pasted verbatim into a JS template
    literal in content.js, and one would end the string.)
    These are the same roles as shared/tokens.css. Keep the two in step. */
-#intention-root {
+#intention-root,
+#intention-badge {
   --paper: #faf8f4;
   --raised: #ffffff;
   --hover: #f1eff1;
@@ -42,7 +43,8 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
 }
 
 @media (prefers-color-scheme: dark) {
-  #intention-root {
+  #intention-root,
+  #intention-badge {
     --paper: #1c1a23;
     --raised: #25232f;
     --hover: #2d2b38;
@@ -538,6 +540,9 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
   position: fixed;
   top: 14px;
   right: 14px;
+  box-sizing: border-box;
+  max-width: calc(100vw - 28px);
+  overflow-wrap: anywhere;
   z-index: 2147483647;
   background: var(--raised);
   color: var(--ink);
@@ -578,6 +583,9 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
 
 #intention-badge-finish {
   all: unset;
+  display: inline-block;
+  white-space: nowrap;
+  overflow-wrap: normal;
   margin-left: 10px;
   padding: 2px 8px;
   font-size: 11px;
@@ -596,6 +604,20 @@ const OVERLAY_CSS = `/* The gate's own tokens, declared ON #intention-root rathe
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+#intention-root .int-target-icon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  margin-right: 10px;
+  vertical-align: -3px;
+}
+#intention-root .int-target-icon svg, #intention-root .int-target-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 `;
 
@@ -2021,9 +2043,12 @@ function renderIntentionGateUI({ mode, domain }) {
   const noteEl = root.querySelector(".int-note");
   const visitDraft = { reason: "", minutes: 10 };
 
-  targetEl.textContent = mode === "checkin"
-    ? `Time's up on ${domain}`
-    : `${partHere ? `${partHere} on ` : ""}${domain}`;
+  renderTargetHeading(targetEl, {
+    domain,
+    label: mode === "checkin"
+      ? `Time's up on ${domain}`
+      : `${partHere ? `${partHere} on ` : ""}${domain}`,
+  });
 
   loadStatsRow(domain, (stats) => { domainStats = stats; });
   // The last seven days on this site, under the actions. A browser has no

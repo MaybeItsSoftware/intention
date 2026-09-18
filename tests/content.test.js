@@ -62,6 +62,7 @@ function makeElement(tag = 'div') {
     addEventListener(type, fn) { (node._on[type] = node._on[type] || []).push(fn); },
     removeEventListener() {},
     _attrs: {},
+    setAttribute(name, value) { node._attrs[name] = String(value); },
     getAttribute(name) { return node._attrs[name] ?? null; },
     querySelector: () => makeElement(),
     contains: () => true,
@@ -81,6 +82,7 @@ function makeDom(href = 'https://www.instagram.com/explore/', { title = '', meta
   const body = makeElement('body');
   const document = {
     documentElement,
+    createElementNS: (_namespace, tag) => makeElement(tag),
     body,
     title,
     visibilityState: 'visible',

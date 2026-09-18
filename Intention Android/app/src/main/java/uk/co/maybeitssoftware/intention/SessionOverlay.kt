@@ -343,7 +343,12 @@ object SessionOverlay {
                 maxWidth = dp(context, 140f)
                 setPadding(dp(context, 6f), 0, 0, 0)
             }
-            row.addView(purpose)
+            // The reason gives up space before the finish action does.
+            row.addView(purpose, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ))
         }
 
         // Micro-label styling (10sp, bold, uppercase, wide tracking) sized to a
@@ -352,6 +357,7 @@ object SessionOverlay {
         // touch stream, and a delegate there would never be consulted.
         val finish = TextView(context).apply {
             text = "FINISHED"
+            setSingleLine(true)
             setTextColor(Color.parseColor(COLOR_TEXT))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -360,6 +366,10 @@ object SessionOverlay {
             minHeight = dp(context, 44f)
             minWidth = dp(context, 44f)
             setPadding(dp(context, 12f), 0, dp(context, 12f), 0)
+            // Reserve the full label, including tracking and padding, even
+            // when a long reason would otherwise consume the available width.
+            minWidth = maxOf(minWidth,
+                kotlin.math.ceil(paint.measureText(text.toString())).toInt() + paddingLeft + paddingRight)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 setColor(Color.parseColor(COLOR_SUBTLE))

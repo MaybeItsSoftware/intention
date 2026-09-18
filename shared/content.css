@@ -1,4 +1,4 @@
-/* The gate's own tokens, declared ON #intention-root rather than :root.
+/* The gate and status badge's own tokens, declared on their roots rather than :root.
    Two reasons, both load-bearing:
      - This stylesheet is injected into arbitrary third-party pages. Tokens on
        :root would restyle the host site.
@@ -9,7 +9,8 @@
    (No backticks in this file, ever — it is pasted verbatim into a JS template
    literal in content.js, and one would end the string.)
    These are the same roles as shared/tokens.css. Keep the two in step. */
-#intention-root {
+#intention-root,
+#intention-badge {
   --paper: #faf8f4;
   --raised: #ffffff;
   --hover: #f1eff1;
@@ -35,7 +36,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  #intention-root {
+  #intention-root,
+  #intention-badge {
     --paper: #1c1a23;
     --raised: #25232f;
     --hover: #2d2b38;
@@ -531,6 +533,9 @@
   position: fixed;
   top: 14px;
   right: 14px;
+  box-sizing: border-box;
+  max-width: calc(100vw - 28px);
+  overflow-wrap: anywhere;
   z-index: 2147483647;
   background: var(--raised);
   color: var(--ink);
@@ -571,6 +576,9 @@
 
 #intention-badge-finish {
   all: unset;
+  display: inline-block;
+  white-space: nowrap;
+  overflow-wrap: normal;
   margin-left: 10px;
   padding: 2px 8px;
   font-size: 11px;
@@ -589,4 +597,18 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+#intention-root .int-target-icon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  margin-right: 10px;
+  vertical-align: -3px;
+}
+#intention-root .int-target-icon svg, #intention-root .int-target-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }

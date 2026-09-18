@@ -54,6 +54,20 @@
       color: var(--ink);
     }
 
+    .int-target-icon {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      margin-right: 10px;
+      vertical-align: -3px;
+    }
+    .int-target-icon svg, .int-target-icon img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
     /* Third copy of the overlay's credit line (content.css and content.js's
        OVERLAY_CSS literal are the other two). Unprefixed here because this
        page has no #intention-root to scope to.
@@ -485,6 +499,7 @@
   <script src="providers.js"></script>
   <script src="billing.js"></script>
   <script src="report.js"></script>
+  <script src="sites.js"></script>
   <script src="gate-ui.js"></script>
   <script src="coaching.js"></script>
 </body>
