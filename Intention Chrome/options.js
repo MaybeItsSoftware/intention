@@ -1412,7 +1412,7 @@ function renderTodayTargets(summary, config) {
     const kind = document.createElement('span');
     kind.className = 'micro-label';
     kind.textContent = t.kind;
-    name.append(strong, kind);
+    name.append(usageMark({ domain: t.id, label: t.label }), strong, kind);
 
     const meter = document.createElement('div');
     meter.className = 'today-meter';
@@ -1618,7 +1618,7 @@ function usageMark(entry, appIcons) {
     return mark;
   }
   const siteKey = APP_ICON_SITE[entry.domain] || entry.domain;
-  const meta = SITE_META[siteKey];
+  const meta = entry.domain === 'ios-apps' ? null : serviceIconFor(siteKey);
   if (meta && meta.icon) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');

@@ -888,12 +888,11 @@ function buildServiceNote(group, field, label, placeholder, repaint) {
 
 
 // The brand glyph from the suggestion chips, reused so the service is
-// recognisable at a glance. Falls back to its initial where the catalogue has
-// no mark — a hand-typed domain, or an app we don't know.
+// recognisable at a glance. Custom sites use a bundled globe.
 function applyServiceMark(el, group) {
   el.textContent = '';
   el.removeAttribute('style');
-  const meta = SITE_META[group.key];
+  const meta = serviceIconFor(group.key);
   if (meta && meta.icon) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '0 0 24 24');

@@ -119,6 +119,22 @@ function serviceKeyFor(target) {
   return APP_ICON_SITE[key] || key;
 }
 
+// Resolve marks independently of rule keys: a subdomain can share its site's
+// branding while retaining its own limits and answers. All marks are bundled,
+// so rendering a user's blocklist never contacts a favicon service or the site.
+function serviceIconFor(target) {
+  const key = serviceKeyFor(target).toLowerCase();
+  const known = Object.keys(SITE_META)
+    .filter(site => key === site || key.endsWith(`.${site}`))
+    .sort((a, b) => b.length - a.length)
+    .map(site => SITE_META[site])
+    .find(meta => meta.icon);
+  return known || {
+    color: null,
+    icon: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2c1 0 2.3 2.2 2.8 5H9.2C9.7 6.2 11 4 12 4zM4.6 9a8 8 0 0 1 4.2-4.3A16 16 0 0 0 7.2 9H4.6zm14.8 0h-2.6a16 16 0 0 0-1.6-4.3A8 8 0 0 1 19.4 9zM4.1 11h2.8a20 20 0 0 0 0 2H4.1a8 8 0 0 1 0-2zm4.8 0h6.2a18 18 0 0 1 0 2H8.9a18 18 0 0 1 0-2zm8.2 0h2.8a8 8 0 0 1 0 2h-2.8a20 20 0 0 0 0-2zM4.6 15h2.6a16 16 0 0 0 1.6 4.3A8 8 0 0 1 4.6 15zm4.6 0h5.6c-.5 2.8-1.8 5-2.8 5s-2.3-2.2-2.8-5zm7.6 0h2.6a8 8 0 0 1-4.2 4.3 16 16 0 0 0 1.6-4.3z'
+  };
+}
+
 // A human name for a service key. SITE_META covers the catalogue; a hand-typed
 // domain is its own best label; an app outside the catalogue falls back to the
 // label the native bridge reported for it.
