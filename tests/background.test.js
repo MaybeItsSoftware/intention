@@ -83,6 +83,60 @@ describe('sessionKeyFor', () => {
   });
 });
 
+describe('site passes across browser tabs', () => {
+  const session = () => ({ domain: 'instagram.com', reason: 'reply to DMs',
+    intervalMinutes: 10, startTime: Date.now() - 2 * 60000 });
+  const setup = (pass = session()) => loadBackground({ seed: {
+    ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'],
+    activeSessions: { 'tab:1:instagram.com': pass }
+  } });
+
+  it('returns the original clock and reminder to a new tab on the same site', async () => {
+    const { ctx, chrome } = setup();
+    const match = await ctx.checkPageMatch('www.instagram.com', 2, null, 'https://www.instagram.com/');
+    expect(match.session.reason).toBe('reply to DMs');
+    expect(match.session.startTime).toBe(chrome.storage._store.activeSessions['tab:1:instagram.com'].startTime);
+    expect(Object.keys(chrome.storage._store.activeSessions)).toEqual(['tab:1:instagram.com']);
+    expect(ctx.readSession(chrome.storage._store.activeSessions, 2, 'youtube.com')).toBe(null);
+  });
+
+  it('does not share a page pass with a new tab', () => {
+    const { ctx, chrome } = setup({ ...session(), scope: { kind: 'page', url: 'https://www.instagram.com/p/one/' } });
+    expect(ctx.readSession(chrome.storage._store.activeSessions, 2, 'instagram.com')).toBe(null);
+  });
+
+  it('interrupts every tab on the site at expiry and refuses a further tab', async () => {
+    const { ctx, chrome, listeners } = setup({ ...session(), startTime: Date.now() - 10 * 60000 });
+    chrome.tabs._queryResults.push({ id: 2, url: 'https://www.instagram.com/' },
+      { id: 3, url: 'https://instagram.com/reels/' }, { id: 4, url: 'https://youtube.com/' });
+    await listeners.alarm({ name: 'checkin-tab:1:instagram.com' });
+    expect(chrome.tabs._messages.filter(m => m.message.action === 'showCheckin').map(m => m.id)).toEqual([1, 2, 3]);
+    expect((await ctx.checkPageMatch('instagram.com', 5)).session).toBe(null);
+    expect((await ctx.getStatsForDomain('instagram.com')).minutesToday).toBe(10);
+  });
+
+  it('keeps the same clock when its original tab closes, then retires the last tab', async () => {
+    const { ctx, chrome, listeners } = setup();
+    const startTime = chrome.storage._store.activeSessions['tab:1:instagram.com'].startTime;
+    chrome.tabs._queryResults.push({ id: 2, url: 'https://instagram.com/' });
+    await listeners.tabRemoved(1);
+    expect(chrome.storage._store.activeSessions['tab:2:instagram.com'].startTime).toBe(startTime);
+    expect(chrome.storage._store.activeSessions['tab:1:instagram.com']).toBeUndefined();
+    chrome.tabs._queryResults.length = 0;
+    await listeners.tabRemoved(2);
+    expect(chrome.storage._store.activeSessions).toEqual({});
+    expect((await ctx.getStatsForDomain('instagram.com')).minutesToday).toBeCloseTo(2, 1);
+  });
+
+  it('finishing from a new tab ends the shared pass everywhere', async () => {
+    const { ctx, chrome } = setup();
+    chrome.tabs._queryResults.push({ id: 2, url: 'https://instagram.com/' });
+    await ctx.endSession({ tabId: 2, domain: 'instagram.com', reason: 'fulfilled' });
+    expect(chrome.storage._store.activeSessions).toEqual({});
+    expect(chrome.tabs._messages.map(m => m.id)).toEqual([1, 2]);
+  });
+});
+
 describe('Reddit subreddit and post allowances', () => {
   const seed = () => ({ ...CONFIGURED, setupComplete: true, blockedDomains: ['reddit.com'],
     domainLimits: { ...CONFIGURED.domainLimits, 'reddit.com': {
@@ -1525,7 +1579,8 @@ describe('tab id sent by an extension page', () => {
       seed: {
         ...CONFIGURED,
         activeSessions: {
-          '99': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+          '99': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10,
+            scope: { kind: 'page', url: 'https://instagram.com/p/one/' } }
         }
       }
     });

@@ -477,6 +477,12 @@ function readSession(activeSessions, tabId, domain, { live = true } = {}) {
   if (tabId != null) {
     const legacy = activeSessions[String(tabId)];
     if (legacy && legacy.domain === domain) candidates.push(legacy);
+    // Site passes share one clock across tabs. Page passes still belong to
+    // their original tab, so opening another page cannot widen the grant.
+    candidates.push(...Object.entries(activeSessions)
+      .filter(([key, session]) => tabIdFromSessionKey(key) != null &&
+        session.domain === domain && !session.scope)
+      .map(([, session]) => session));
   }
   for (const session of candidates) {
     if (!session) continue;
@@ -484,6 +490,31 @@ function readSession(activeSessions, tabId, domain, { live = true } = {}) {
     if (resolved) return resolved;
   }
   return null;
+}
+
+async function tabsForSiteSession(session, ownerTabId) {
+  const ids = new Set(ownerTabId == null ? [] : [ownerTabId]);
+  if (session && !session.scope) {
+    try {
+      for (const tab of await chrome.tabs.query({})) {
+        try {
+          if (hostMatchesDomain(new URL(tab.url).hostname, session.domain)) ids.add(tab.id);
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+  return [...ids];
+}
+
+async function interruptSessionTabs(session, ownerTabId) {
+  let shown = false;
+  for (const id of await tabsForSiteSession(session, ownerTabId)) {
+    try {
+      const reply = await chrome.tabs.sendMessage(id, { action: 'showCheckin', domain: session?.domain });
+      shown = !!reply?.shown || shown;
+    } catch (e) {}
+  }
+  return shown;
 }
 
 // A session that has been banked by the check-in alarm is kept around on the
@@ -891,6 +922,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       return;
     }
     await bankExpiredSession(sessionKey);
+    // A website pass granted without a tab id (Safari's standalone coach)
+    // still has browser tabs to interrupt; native app targets match none.
+    if (nativeSession && !nativeSession.scope) await interruptSessionTabs(nativeSession, null);
     return;
   }
 
@@ -918,13 +952,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // two blocked sites at once and the page has to know which one expired.
   const { activeSessions: sessionsNow = {} } = await getStorage(['activeSessions']);
   const expiring = sessionsNow[sessionKey];
-  let shown = false;
-  try {
-    const reply = await chrome.tabs.sendMessage(tabId, { action: 'showCheckin', domain: expiring?.domain });
-    shown = !!(reply && reply.shown);
-  } catch (e) {
-    shown = false;
-  }
+  const shown = await interruptSessionTabs(expiring, tabId);
   if (!shown) {
     // Nothing on screen will ever end this pass, so bank it before dropping
     // it. Deleting without banking silently lost every minute of a pass whose
@@ -3471,7 +3499,10 @@ async function settleTabRule(tabId) {
 }
 
 async function endSession({ tabId, domain, reason }) {
-  const sessionKey = sessionKeyFor(tabId, domain);
+  const { activeSessions = {} } = await getStorage(['activeSessions']);
+  const session = readSession(activeSessions, tabId, domain, { live: false });
+  const sessionKey = (session && Object.keys(activeSessions).find(key => activeSessions[key] === session)) ||
+    sessionKeyFor(tabId, domain);
   if (!sessionKey) return { ok: true };
 
   if (reason === 'walked_away') {
@@ -3494,13 +3525,15 @@ async function endSession({ tabId, domain, reason }) {
   // gets to say "you asked for that one video and closed it" instead of
   // flattening it into another closed_early.
   await retireSessionKey(sessionKey, reason === 'left_page' ? 'left_page' : 'ended');
-  await settleTabRule(tabId);
+  const ownerTabId = tabIdFromSessionKey(sessionKey);
+  await settleTabRule(ownerTabId);
   // The pass is over: this domain needs its redirect rule back. (For a scoped
   // pass on an engine where allowOutranksRedirect() holds, it never went away
   // — see domainsNeedingRedirect — so this is the no-op the idempotence check
   // in applyBlockingRules exists for. Where it does not hold, a scoped pass
   // dropped the redirect like any other and this is what restores it.)
   await syncBlockingRules();
+  if (session && !session.scope) await interruptSessionTabs(session, ownerTabId);
 
   // Deliberately not for 'left_page': they are still on a page of this site,
   // and the drift screen that sent this is about to put the gate up in front
@@ -3520,6 +3553,23 @@ async function endAllSessionsForTab(tabId, reason) {
   const { activeSessions = {} } = await getStorage(['activeSessions']);
   const keys = sessionKeysForTab(activeSessions, tabId);
   for (const key of keys) {
+    const session = activeSession(activeSessions[key]);
+    // Hand the clock to a surviving tab without granting or banking time.
+    // This also lets closing the last tab retire the pass normally.
+    const successor = session && !session.scope
+      ? (await tabsForSiteSession(session, tabId)).find(id => id !== tabId) : null;
+    if (successor != null) {
+      const nextKey = sessionKeyFor(successor, session.domain);
+      if (!activeSessions[nextKey]) {
+        await mutateStorage('activeSessions', (sessions) => {
+          sessions[nextKey] = sessions[key];
+          delete sessions[key];
+        });
+        chrome.alarms.clear(`checkin-${key}`);
+        chrome.alarms.create(`checkin-${nextKey}`, { when: sessionExpiryTime(session) });
+        continue;
+      }
+    }
     await retireSessionKey(key, reason === 'closed' ? 'tab_closed' : 'ended');
   }
   removeSessionRule(tabId);
