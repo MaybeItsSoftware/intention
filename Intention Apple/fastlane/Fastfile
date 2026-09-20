@@ -110,20 +110,25 @@ def write_export_options(path, bundle_ids)
   File.write(path, options.to_plist)
 end
 
+# deliver takes the folder that CONTAINS the per-locale directories, not the
+# locale directory itself — hand it the latter and it finds no images, reports
+# "Successfully uploaded all screenshots" and changes nothing.
+#
 # Screenshots are generated into "Intention Apple/appstore/screenshots" by
 # scripts/store-assets/generate.mjs, laid out by device. deliver wants one flat
 # folder per locale and works out the device from each image's resolution, so
 # stage a copy rather than duplicating the PNGs in the repo under a second
 # layout. Names only control the order they appear in on the listing.
 def stage_screenshots(*dirs)
-  staged = File.join(ROOT, "..", "build", "appstore-screenshots", dirs.join("-"), "en-GB")
+  staged = File.join(ROOT, "..", "build", "appstore-screenshots", dirs.join("-"))
+  locale = File.join(staged, "en-GB")
   FileUtils.rm_rf(staged)
-  FileUtils.mkdir_p(staged)
+  FileUtils.mkdir_p(locale)
   dirs.each do |dir|
     source = File.join(ROOT, "appstore", "screenshots", dir)
     UI.user_error!("No screenshots in #{source} — run `node scripts/store-assets/generate.mjs`") unless Dir.exist?(source)
     Dir.glob(File.join(source, "*.png")).sort.each do |shot|
-      FileUtils.cp(shot, File.join(staged, "#{dir}-#{File.basename(shot)}"))
+      FileUtils.cp(shot, File.join(locale, "#{dir}-#{File.basename(shot)}"))
     end
   end
   staged
@@ -144,8 +149,15 @@ def deliver_metadata(platform, metadata_dir, screenshots)
     app_identifier:                    "uk.co.maybeitssoftware.intention",
     platform:                          platform,
     app_version:                       marketing_version,
-    metadata_path:                     File.join(__dir__, "metadata", metadata_dir),
+    metadata_path:                     File.join(ROOT, "fastlane", "metadata", metadata_dir),
     screenshots_path:                  screenshots,
+    # Deletes the set before uploading, which matters beyond tidiness. deliver
+    # verifies an upload against localization objects it fetched BEFORE sending,
+    # so the images it just pushed all look missing and it re-sends them against
+    # that same stale list — where its duplicate check cannot see them either.
+    # Starting from empty makes the counts agree, so no second pass fires.
+    # (sync_screenshots is the intended fix for this but is still beta, and
+    # crashes here with "still failures of processing screenshots".)
     overwrite_screenshots:             true,
     submit_for_review:                 false,
     skip_binary_upload:                true,
