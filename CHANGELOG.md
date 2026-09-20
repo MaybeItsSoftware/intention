@@ -5,6 +5,24 @@
 * restore blocking screen icons and popup styling ([2c8bccc](https://github.com/MaybeItsSoftware/intention/commit/2c8bccc66ffaaff84b0c21565e3e8c775db73388))
 * share website pass time across browser tabs ([e669af7](https://github.com/MaybeItsSoftware/intention/commit/e669af7f0ebb6e59c0f4987397529932475a5b62))
 
+## [0.24.3](https://github.com/MaybeItsSoftware/intention/compare/v0.24.2...v0.24.3) (2026-09-18)
+
+### Bug Fixes
+
+* include site icons and prepare Android internal build 66 ([298fa44](https://github.com/MaybeItsSoftware/intention/commit/298fa44dc86e59c27f1cde2d86bbabfaf998a91e))
+
+## [0.24.2](https://github.com/MaybeItsSoftware/intention/compare/v0.24.1...v0.24.2) (2026-09-16)
+
+### Bug Fixes
+
+* **settings:** remove redundant exit sections ([aa57008](https://github.com/MaybeItsSoftware/intention/commit/aa57008a53da025f582387ab095654b89ec86f28))
+
+## [0.24.1](https://github.com/MaybeItsSoftware/intention/compare/v0.24.0...v0.24.1) (2026-09-16)
+
+### Bug Fixes
+
+* clarify settings controls and scheduled changes ([18ed956](https://github.com/MaybeItsSoftware/intention/commit/18ed956d0fe67887a1ef9f3b09900fb8c9169edc))
+
 ## [0.24.0](https://github.com/MaybeItsSoftware/intention/compare/v0.23.1...v0.24.0) (2026-09-15)
 
 ### Features
@@ -26,24 +44,6 @@
 
 * **setup:** fit every setup page to the screen and fill Android edge to edge ([e5e3382](https://github.com/MaybeItsSoftware/intention/commit/e5e33823326f1faf48d5941f926d057f2e6cd9fb))
 * **sync:** stop the settings page throwing on load ([726006b](https://github.com/MaybeItsSoftware/intention/commit/726006b535426e2900f625d10300c14d767be163))
-
-## [0.24.1](https://github.com/MaybeItsSoftware/intention/compare/v0.24.0...v0.24.1) (2026-09-16)
-
-### Bug Fixes
-
-* clarify settings controls and scheduled changes ([18ed956](https://github.com/MaybeItsSoftware/intention/commit/18ed956d0fe67887a1ef9f3b09900fb8c9169edc))
-
-## [0.24.2](https://github.com/MaybeItsSoftware/intention/compare/v0.24.1...v0.24.2) (2026-09-16)
-
-### Bug Fixes
-
-* **settings:** remove redundant exit sections ([aa57008](https://github.com/MaybeItsSoftware/intention/commit/aa57008a53da025f582387ab095654b89ec86f28))
-
-## [0.24.3](https://github.com/MaybeItsSoftware/intention/compare/v0.24.2...v0.24.3) (2026-09-18)
-
-### Bug Fixes
-
-* include site icons and prepare Android internal build 66 ([298fa44](https://github.com/MaybeItsSoftware/intention/commit/298fa44dc86e59c27f1cde2d86bbabfaf998a91e))
 
 ## [0.23.1](https://github.com/MaybeItsSoftware/intention/compare/v0.23.0...v0.23.1) (2026-09-03)
 
