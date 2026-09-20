@@ -13,6 +13,24 @@ const CHROME = path.join(ROOT, 'Intention Chrome');
 const OUT = path.join(ROOT, 'store-assets');
 const apple = path.join(ROOT, 'Intention Apple/appstore/screenshots');
 const android = path.join(ROOT, 'Intention Android/fastlane/metadata/android/en-US/images/phoneScreenshots');
+// Dark first: the listing leads with the dark set, then repeats the same four
+// stories in light, so a viewer sees both themes without the order alternating.
+const schemes = ['dark', 'light'];
+
+// Each canvas gets a capture of its own shape. Reusing the 1280x800 desktop
+// capture for the portrait iPad canvas was what made the UI render tiny inside
+// a letterboxed frame while the phone shot filled its own.
+const surfaces = {
+  phone:   { width: 390,  height: 844,  browser: false },
+  tablet:  { width: 1024, height: 1366, browser: false },
+  desktop: { width: 1280, height: 800,  browser: true }
+};
+
+const theme = {
+  dark:  { paper: '#1c1a23', ink: '#f5f4f7', muted: '#b6b3bf', dim: '#b6b3bf', line: '#34313f', raised: '#25232f' },
+  light: { paper: '#faf8f4', ink: '#444054', muted: '#787486', dim: '#6d687c', line: '#dad6e1', raised: '#ffffff' }
+};
+
 const stories = [
   { id: 'reason', title: 'Give a reason for every visit', detail: 'Carry it with you while you browse.' },
   { id: 'daily-time', title: 'Choose how much time to spend', detail: 'A daily budget, divided by you.' },
@@ -68,13 +86,12 @@ async function seed(page, id) {
   await page.waitForSelector('#settings-view:not([hidden])');
 }
 
-async function capture(context, id, width, height) {
+async function capture(context, id, { width, height, browser }, scheme) {
   const page = await context.newPage();
-  await page.emulateMedia({ colorScheme: 'light' });
+  await page.emulateMedia({ colorScheme: scheme });
   await page.setViewportSize({ width, height });
   await seed(page, id);
   const pictures = {};
-  const isPhone = width < 600;
 
   await page.click('[data-section-tab="intentions"]');
   const ig = page.locator('#domain-list > li').filter({ hasText: 'instagram.com' }).first();
@@ -92,13 +109,13 @@ async function capture(context, id, width, height) {
   pictures.totals = await totals.screenshot();
 
   const site = await context.newPage();
-  await site.emulateMedia({ colorScheme: 'light' });
+  await site.emulateMedia({ colorScheme: scheme });
   await site.setViewportSize({ width, height });
   await site.goto('http://example.com/', { waitUntil: 'domcontentloaded' });
   await site.waitForSelector('.int-visit-reason', { timeout: 10000 });
   await site.fill('.int-visit-reason', 'Reply to my study group');
   pictures.reason = await site.screenshot();
-  if (!isPhone) {
+  if (browser) {
     for (const story of stories) {
       if (story.id === 'reason') continue;
       await page.click(`[data-section-tab="${story.id === 'totals' ? 'today' : 'intentions'}"]`);
@@ -112,21 +129,37 @@ async function capture(context, id, width, height) {
   return pictures;
 }
 
-function stageHtml(story, source, shape) {
-  const portrait = shape === 'portrait';
+function stageHtml(story, source, width, height, scheme) {
+  const c = theme[scheme];
   const data = `data:image/png;base64,${source.toString('base64')}`;
-  const ratio = source.readUInt32BE(20) / source.readUInt32BE(16);
-  const frameWidth = portrait ? 88 : 89;
+  // One unit is 1% of the canvas's SHORT edge. Sizing off vw instead is what
+  // made type and spacing jump between a tall phone canvas and a wide desktop
+  // one; the short edge keeps their optical weight the same on both.
+  const u = Math.min(width, height) / 100;
+  const px = n => `${(n * u).toFixed(1)}px`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden}
-    body{background:#faf8f4;color:#444054;font-family:Georgia,'Times New Roman',serif}
-    .stage{height:100%;display:flex;flex-direction:column;align-items:center;padding:${portrait ? '5% 7%' : '3% 5%'}}
-    .brand{font-size:${portrait ? '3.2vw' : '1.5vw'};font-weight:bold;letter-spacing:.18em;color:#787486;margin-bottom:2%}
-    h1{font-size:${portrait ? '7.2vw' : '4vw'};line-height:1.08;text-align:center;max-width:95%;margin:0;color:#444054}
-    p{font-size:${portrait ? '3.2vw' : '1.8vw'};text-align:center;margin:2% 0 4%;color:#6d687c}
-    .frame{width:${frameWidth}%;height:min(72vh,calc(${frameWidth}vw * ${ratio} + 4vw));margin:auto 0;border:1px solid #dad6e1;border-radius:${portrait ? '6vw' : '2vw'};padding:${portrait ? '2vw' : '1vw'};background:white;overflow:hidden}
-    .frame img{width:100%;height:100%;object-fit:contain;object-position:top center}
-  </style></head><body><div class="stage"><div class="brand">INTENTION</div><h1>${story.title}</h1><p>${story.detail}</p><div class="frame"><img src="${data}"></div></div></body></html>`;
+    body{background:${c.paper};color:${c.ink};font-family:Georgia,'Times New Roman',serif}
+    .stage{height:100%;display:flex;flex-direction:column;align-items:center;padding:${px(4.5)} ${px(5)} ${px(5)}}
+    .brand{font-size:${px(1.6)};font-weight:bold;letter-spacing:.18em;color:${c.muted};margin-bottom:${px(2)}}
+    h1{font-size:${px(6.2)};line-height:1.08;text-align:center;max-width:95%;margin:0;color:${c.ink}}
+    p{font-size:${px(2.6)};text-align:center;margin:${px(1.8)} 0 0;color:${c.dim}}
+    /* The frame carries the capture's own aspect ratio and grows to the largest
+       size that still fits the space left under the copy. The screenshot then
+       fills it exactly — no letterbox band, and the UI lands at the same
+       optical scale on every canvas. */
+    .shot{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;margin-top:${px(3)}}
+    /* Left unsized on purpose — fitFrame() measures the space left under the
+       copy and sets the exact box. CSS cannot express "largest box with this
+       aspect that fits BOTH axes": sizing off height throws a landscape capture
+       past the canvas width, sizing off width leaves a portrait one tiny. */
+    .frame{border:1px solid ${c.line};border-radius:${px(3)};padding:${px(0.9)};
+      background:${c.raised};overflow:hidden}
+    .frame img{display:block;width:100%;height:100%;object-fit:cover;object-position:top center;border-radius:${px(2.2)}}
+  </style></head><body><div class="stage"><div class="brand">INTENTION</div>
+    <h1>${story.title}</h1><p>${story.detail}</p>
+    <div class="shot"><div class="frame"><img src="${data}"></div></div>
+  </div></body></html>`;
 }
 
 function promoHtml(iconBuffer, wide) {
@@ -151,10 +184,25 @@ function featureHtml(source) {
   </style></head><body><div class="copy"><h1>A reason for<br>every visit.</h1><p>Choose the time you need.</p></div><div class="screen"><img src="${image}"></div></body></html>`;
 }
 
-async function render(page, story, source, outPath, width, height) {
+async function render(page, story, source, outPath, width, height, scheme) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   await page.setViewportSize({ width, height });
-  await page.setContent(stageHtml(story, source, height > width ? 'portrait' : 'landscape'));
+  await page.setContent(stageHtml(story, source, width, height, scheme));
+  await page.evaluate(([sourceWidth, sourceHeight]) => {
+    const shot = document.querySelector('.shot');
+    const frame = document.querySelector('.frame');
+    const style = getComputedStyle(frame);
+    const chrome = side =>
+      parseFloat(style[`padding${side}`]) + parseFloat(style[`border${side}Width`]);
+    const extraX = chrome('Left') + chrome('Right');
+    const extraY = chrome('Top') + chrome('Bottom');
+    const scale = Math.min(
+      (shot.clientWidth - extraX) / sourceWidth,
+      (shot.clientHeight - extraY) / sourceHeight
+    );
+    frame.style.width = `${Math.floor(sourceWidth * scale + extraX)}px`;
+    frame.style.height = `${Math.floor(sourceHeight * scale + extraY)}px`;
+  }, [source.readUInt32BE(16), source.readUInt32BE(20)]);
   await page.screenshot({ path: outPath });
   console.log(path.relative(ROOT, outPath));
 }
@@ -163,17 +211,32 @@ async function main() {
   const profile = await mkdtemp(path.join(tmpdir(), 'intention-store-'));
   const { context, id } = await extensionContext(profile);
   try {
-    const phone = await capture(context, id, 390, 844);
-    const wide = await capture(context, id, 1280, 800);
+    const shots = {};
+    for (const scheme of schemes) {
+      shots[scheme] = {};
+      for (const [name, surface] of Object.entries(surfaces)) {
+        shots[scheme][name] = await capture(context, id, surface, scheme);
+      }
+    }
+
     const renderPage = await context.newPage();
+    for (const [pass, scheme] of schemes.entries()) {
+      const shot = shots[scheme];
+      for (const [index, story] of stories.entries()) {
+        const number = pass * stories.length + index + 1;
+        await render(renderPage, story, shot.phone[story.id], path.join(apple, 'iphone-6.9', `${number}.png`), 1320, 2868, scheme);
+        await render(renderPage, story, shot.tablet[story.id], path.join(apple, 'ipad-13', `${number}.png`), 2064, 2752, scheme);
+        await render(renderPage, story, shot.desktop[story.id], path.join(apple, 'macos', `${number}.png`), 2560, 1600, scheme);
+        await render(renderPage, story, shot.phone[story.id], path.join(android, `${number}.png`), 1080, 1920, scheme);
+      }
+    }
+
+    // The browser listings take the raw desktop capture rather than a framed
+    // stage, and stay light — their store pages are not themed with the app.
+    const wide = shots.light.desktop;
     for (const [index, story] of stories.entries()) {
-      const number = index + 1;
-      await render(renderPage, story, phone[story.id], path.join(apple, 'iphone-6.9', `${number}.png`), 1320, 2868);
-      await render(renderPage, story, wide[story.id], path.join(apple, 'ipad-13', `${number}.png`), 2064, 2752);
-      await render(renderPage, story, wide[story.id], path.join(apple, 'macos', `${number}.png`), 2560, 1600);
-      await render(renderPage, story, phone[story.id], path.join(android, `${number}.png`), 1080, 1920);
       for (const browser of ['chrome', 'firefox']) {
-        const browserPath = path.join(OUT, 'browser', browser, 'screenshots', `${number}.png`);
+        const browserPath = path.join(OUT, 'browser', browser, 'screenshots', `${index + 1}.png`);
         fs.mkdirSync(path.dirname(browserPath), { recursive: true });
         fs.writeFileSync(browserPath, story.id === 'reason' ? wide.reason : wide[`${story.id}-browser`]);
       }
@@ -191,17 +254,19 @@ async function main() {
       await renderPage.screenshot({ path: path.join(OUT, 'browser/chrome', name) });
     }
     await renderPage.setViewportSize({ width: 1024, height: 500 });
-    await renderPage.setContent(featureHtml(phone.reason));
+    await renderPage.setContent(featureHtml(shots.light.phone.reason));
     await renderPage.screenshot({ path: path.join(ROOT,
       'Intention Android/fastlane/metadata/android/en-US/images/featureGraphic.png') });
-    // These old fifth images advertised bringing an external AI key into
-    // store-reviewed builds, and no longer represent the app or its paywall.
-    for (const old of [
-      path.join(apple, 'iphone-6.9/5.png'),
-      path.join(apple, 'ipad-13/5.png'),
-      path.join(android, '5.png')
-    ]) {
-      if (fs.existsSync(old)) fs.unlinkSync(old);
+    // Each run writes 1..N; anything past N is a leftover from a shorter set.
+    // The old fifth images also advertised bringing an external AI key into
+    // store-reviewed builds, which no longer represents the app or its paywall.
+    const total = schemes.length * stories.length;
+    for (const dir of ['iphone-6.9', 'ipad-13', 'macos'].map(d => path.join(apple, d)).concat(android)) {
+      if (!fs.existsSync(dir)) continue;
+      for (const file of fs.readdirSync(dir)) {
+        const n = Number(path.basename(file, '.png'));
+        if (Number.isInteger(n) && n > total) fs.unlinkSync(path.join(dir, file));
+      }
     }
     await renderPage.close();
   } finally {

@@ -39,6 +39,14 @@ Create or fetch the App Store signing profiles for every iOS bundle ID
 
 Build a development IPA and install it on a connected/paired device (DEVICE_UDID, DEVICE_NAME env vars)
 
+### ios metadata
+
+```sh
+[bundle exec] fastlane ios metadata
+```
+
+Push the listing (copy + screenshots) to App Store Connect, without submitting
+
 ----
 
 
@@ -59,6 +67,14 @@ Build a signed release PKG and upload it to App Store Connect
 ```
 
 Build a signed .app and install it to /Applications on this Mac
+
+### mac metadata
+
+```sh
+[bundle exec] fastlane mac metadata
+```
+
+Push the listing (copy + screenshots) to App Store Connect, without submitting
 
 ----
 
