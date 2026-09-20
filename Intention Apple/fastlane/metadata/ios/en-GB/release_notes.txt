@@ -1,0 +1,8 @@
+• Daily intentions replace the old blocking modes, and setup is now a single question.
+• A Today view shows where your time went, by website and — where the device allows it — by app.
+• Safari's website time now reaches the iPhone and Mac apps, and the gate shows your last seven days.
+• Keep most of a site behind the gate while allowing a chosen account, subreddit or page.
+• Private cross-device settings sync.
+• The Mac app now opens the real settings page instead of a status window.
+• Coaching credit runs on your own API key in browsers, with no access codes anywhere.
+• Fixes to setup layout, settings copy, site icons, and pass time shared across browser tabs.

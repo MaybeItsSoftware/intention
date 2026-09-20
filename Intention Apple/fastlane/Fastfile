@@ -3,6 +3,8 @@
 #   bundle exec fastlane ios beta      # build IPA   -> upload to App Store Connect
 #   bundle exec fastlane mac beta      # build PKG   -> upload to App Store Connect
 #   bundle exec fastlane mac local     # build .app, Developer ID sign + notarize -> /Applications
+#   bundle exec fastlane ios metadata  # listing copy + screenshots -> App Store Connect
+#   bundle exec fastlane mac metadata  # listing copy + screenshots -> App Store Connect
 #
 # Auth is via an App Store Connect API key and fastlane match, both shared
 # with the rest of the maybeitssoftware apps (same Apple team, 6NQNU5YSC2) —
@@ -12,6 +14,7 @@ ROOT = File.expand_path("..", __dir__)
 
 # Secrets live in the repo root .env (same place as the Chrome/Firefox store
 # credentials), not fastlane's own fastlane/.env, so load it explicitly.
+require "fileutils"
 require "dotenv"
 Dotenv.load(File.join(ROOT, "..", ".env"))
 
@@ -105,6 +108,53 @@ def write_export_options(path, bundle_ids)
   }
   require "plist"
   File.write(path, options.to_plist)
+end
+
+# Screenshots are generated into "Intention Apple/appstore/screenshots" by
+# scripts/store-assets/generate.mjs, laid out by device. deliver wants one flat
+# folder per locale and works out the device from each image's resolution, so
+# stage a copy rather than duplicating the PNGs in the repo under a second
+# layout. Names only control the order they appear in on the listing.
+def stage_screenshots(*dirs)
+  staged = File.join(ROOT, "..", "build", "appstore-screenshots", dirs.join("-"), "en-GB")
+  FileUtils.rm_rf(staged)
+  FileUtils.mkdir_p(staged)
+  dirs.each do |dir|
+    source = File.join(ROOT, "appstore", "screenshots", dir)
+    UI.user_error!("No screenshots in #{source} — run `node scripts/store-assets/generate.mjs`") unless Dir.exist?(source)
+    Dir.glob(File.join(source, "*.png")).sort.each do |shot|
+      FileUtils.cp(shot, File.join(staged, "#{dir}-#{File.basename(shot)}"))
+    end
+  end
+  staged
+end
+
+# Target the version the project is actually building, so a deliver run lands
+# on the same version record the matching `beta` upload feeds.
+def marketing_version
+  File.read(PBXPROJ)[/MARKETING_VERSION = ([^;]+);/, 1].strip
+end
+
+# Everything the listing says, pushed from the repo. Deliberately never submits
+# and never uploads a binary — `beta` does the binary, review submission stays
+# a human decision in App Store Connect.
+def deliver_metadata(platform, metadata_dir, screenshots)
+  upload_to_app_store(
+    api_key:                           asc_api_key,
+    app_identifier:                    "uk.co.maybeitssoftware.intention",
+    platform:                          platform,
+    app_version:                       marketing_version,
+    metadata_path:                     File.join(__dir__, "metadata", metadata_dir),
+    screenshots_path:                  screenshots,
+    overwrite_screenshots:             true,
+    submit_for_review:                 false,
+    skip_binary_upload:                true,
+    precheck_include_in_app_purchases: false,
+    run_precheck_before_submit:        false,
+    # deliver otherwise opens an HTML preview and waits for a keypress, which
+    # never returns on CI.
+    force:                             true,
+  )
 end
 
 platform :ios do
@@ -225,6 +275,11 @@ platform :ios do
     sh("xcrun devicectl device install app --device #{device_udid.shellescape} #{lane_context[SharedValues::IPA_OUTPUT_PATH].shellescape}")
     UI.success("Installed on #{device_name}")
   end
+
+  desc "Push the listing (copy + screenshots) to App Store Connect, without submitting"
+  lane :metadata do
+    deliver_metadata("ios", "ios", stage_screenshots("iphone-6.9", "ipad-13"))
+  end
 end
 
 platform :mac do
@@ -339,5 +394,10 @@ platform :mac do
     dest = "/Applications/Intention.app"
     sh("rm -rf #{dest.shellescape} && cp -R #{app_path.shellescape} #{dest.shellescape}")
     UI.success("Installed build to #{dest}")
+  end
+
+  desc "Push the listing (copy + screenshots) to App Store Connect, without submitting"
+  lane :metadata do
+    deliver_metadata("osx", "macos", stage_screenshots("macos"))
   end
 end

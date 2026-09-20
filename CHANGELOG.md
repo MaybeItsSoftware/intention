@@ -1,3 +1,43 @@
+## [0.24.0](https://github.com/MaybeItsSoftware/intention/compare/v0.23.1...v0.24.0) (2026-09-15)
+
+### Features
+
+* **activity:** send Safari's website time to the iPhone and Mac apps ([3f1b91b](https://github.com/MaybeItsSoftware/intention/commit/3f1b91b37c31e63cba458a5434d46403eba67759))
+* **billing:** browsers run on an API key only; no codes anywhere ([8b6cfe1](https://github.com/MaybeItsSoftware/intention/commit/8b6cfe1be3650b369d1458763846689f1fbf71b0))
+* **billing:** drop recovery codes from the apps and Safari; fix versionName for CI ([f0c0fea](https://github.com/MaybeItsSoftware/intention/commit/f0c0feafcd7c962e3eb16c97335237b24d38ec33))
+* **billing:** drop the Restore coaching credit box from the app builds ([1e50152](https://github.com/MaybeItsSoftware/intention/commit/1e5015290b28a1be3ddd32f601fba510d8147ced))
+* **gate:** show the last seven days of usage on the gate ([edd7ccb](https://github.com/MaybeItsSoftware/intention/commit/edd7ccb50158ffc73e2947f7e5341b55641d272a))
+* **mac:** the Mac app opens the real settings page instead of a status window ([bf070d8](https://github.com/MaybeItsSoftware/intention/commit/bf070d836246b981936c7d20acf81d02e28f8730))
+* **options:** a Today dashboard, and a sidebar layout for wide windows ([4baff78](https://github.com/MaybeItsSoftware/intention/commit/4baff78dbf36e4bfadc3ca53b2e2728371ee6696))
+* **parts:** always allow chosen accounts on a blocked site ([eb973e0](https://github.com/MaybeItsSoftware/intention/commit/eb973e09e0ad09dfc583ca8b7189f78d32f6c077))
+* **server:** remove the access-code, redeem and recovery-code endpoints ([176a945](https://github.com/MaybeItsSoftware/intention/commit/176a945f55943486bff02564b25f8fa3078414f5))
+* **sync:** add private cross-device settings sync ([ef899d3](https://github.com/MaybeItsSoftware/intention/commit/ef899d33e493fe3fe35aef4cd60f655a4500796b))
+* add daily intentions, usage reports, Reddit exceptions, and foreground passes ([091ead6](https://github.com/MaybeItsSoftware/intention/commit/091ead6912aac9e31f67684650bcf8938e859bf8))
+* replace blocking modes with daily intentions and a one-question setup ([dcbd054](https://github.com/MaybeItsSoftware/intention/commit/dcbd0544cc449ca3eef4efdcf8c6b5225650a853))
+
+### Bug Fixes
+
+* **setup:** fit every setup page to the screen and fill Android edge to edge ([e5e3382](https://github.com/MaybeItsSoftware/intention/commit/e5e33823326f1faf48d5941f926d057f2e6cd9fb))
+* **sync:** stop the settings page throwing on load ([726006b](https://github.com/MaybeItsSoftware/intention/commit/726006b535426e2900f625d10300c14d767be163))
+
+## [0.24.1](https://github.com/MaybeItsSoftware/intention/compare/v0.24.0...v0.24.1) (2026-09-16)
+
+### Bug Fixes
+
+* clarify settings controls and scheduled changes ([18ed956](https://github.com/MaybeItsSoftware/intention/commit/18ed956d0fe67887a1ef9f3b09900fb8c9169edc))
+
+## [0.24.2](https://github.com/MaybeItsSoftware/intention/compare/v0.24.1...v0.24.2) (2026-09-16)
+
+### Bug Fixes
+
+* **settings:** remove redundant exit sections ([aa57008](https://github.com/MaybeItsSoftware/intention/commit/aa57008a53da025f582387ab095654b89ec86f28))
+
+## [0.24.3](https://github.com/MaybeItsSoftware/intention/compare/v0.24.2...v0.24.3) (2026-09-18)
+
+### Bug Fixes
+
+* include site icons and prepare Android internal build 66 ([298fa44](https://github.com/MaybeItsSoftware/intention/commit/298fa44dc86e59c27f1cde2d86bbabfaf998a91e))
+
 ## [0.23.1](https://github.com/MaybeItsSoftware/intention/compare/v0.23.0...v0.23.1) (2026-09-03)
 
 ### Bug Fixes
