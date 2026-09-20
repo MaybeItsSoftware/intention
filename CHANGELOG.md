@@ -1,3 +1,10 @@
+## [0.24.4](https://github.com/MaybeItsSoftware/intention/compare/v0.24.3...v0.24.4) (2026-09-20)
+
+### Bug Fixes
+
+* restore blocking screen icons and popup styling ([2c8bccc](https://github.com/MaybeItsSoftware/intention/commit/2c8bccc66ffaaff84b0c21565e3e8c775db73388))
+* share website pass time across browser tabs ([e669af7](https://github.com/MaybeItsSoftware/intention/commit/e669af7f0ebb6e59c0f4987397529932475a5b62))
+
 ## [0.24.0](https://github.com/MaybeItsSoftware/intention/compare/v0.23.1...v0.24.0) (2026-09-15)
 
 ### Features
