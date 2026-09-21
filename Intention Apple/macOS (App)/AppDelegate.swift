@@ -6,6 +6,7 @@
 //
 
 import Cocoa
+import CoreServices
 import SafariServices
 
 @main
@@ -37,9 +38,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // would run two overlapping queries and could put up two alerts.
     private var stateCheckInFlight = false
 
+    // True when launchd started us for the login item rather than the user
+    // asking for the app. "Start Intention at login" exists so that something
+    // checks the extension is still on after a restart, not so that a window
+    // is waiting on top of whatever you actually logged in to do — so on this
+    // kind of launch we run as an accessory: no window, no Dock icon, no menu
+    // bar. The only thing that can break that silence is the extension having
+    // gone dark.
+    private var launchedAtLogin = false
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Read here rather than in didFinishLaunching: the open-application
+        // Apple event is only the *current* event while the launch is being
+        // handled, and the storyboard window goes up in between. Catching it
+        // this early is also what keeps the Dock icon from ever being drawn.
+        if Self.launchedAsLoginItem() { enterBackgroundLaunch() }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Second opinion, because the two mechanisms disagree depending on how
+        // the login item was registered: SMAppService launches come from
+        // launchd, which does not always carry the Apple event property below.
+        // A non-default launch is good enough — this app has no documents and
+        // no URL scheme, so nothing else opens it without the user. Arriving
+        // here rather than above costs at most a blink of Dock icon.
+        if let isDefaultLaunch = notification.userInfo?[NSApplication.launchIsDefaultUserInfoKey] as? Bool,
+           !isDefaultLaunch {
+            enterBackgroundLaunch()
+        }
+
         configureMainWindow()
+        if launchedAtLogin { hideMainWindow() }
         checkExtensionState()
+    }
+
+    // The classic check, and the only one that works when Launch Services
+    // (rather than launchd) does the honours: the kAEOpenApplication event
+    // carries keyAELaunchedAsLogInItem when the launch came from a login item.
+    private static func launchedAsLoginItem() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == kAEOpenApplication else { return false }
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -54,9 +93,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    // With no Dock icon and no window, the way back in is to open Intention
+    // the way you would open anything — Spotlight, Applications, the Safari
+    // extension's button. Launch Services sees us already running and sends
+    // this instead of starting a second copy, so this is the hinge the whole
+    // accessory launch turns on: it is where we become an ordinary app.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        leaveBackgroundLaunch()
         if !flag {
-            NSApp.windows.first { $0.contentViewController is ViewController }?.makeKeyAndOrderFront(nil)
+            mainWindow?.makeKeyAndOrderFront(nil)
         }
         return true
     }
@@ -68,9 +113,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // narrower than a phone. The autosave name remembers where and how big the
     // user left it.
     private func configureMainWindow() {
-        guard let window = NSApp.windows.first(where: { $0.contentViewController is ViewController }) else { return }
+        guard let window = mainWindow else { return }
         window.minSize = NSSize(width: 480, height: 560)
         window.setFrameAutosaveName("IntentionMainWindow")
+    }
+
+    private var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.contentViewController is ViewController }
+    }
+
+    // The storyboard puts its window on screen for us, so the window exists and
+    // is already ordered front by the time any delegate method runs. Ordering
+    // it out here, before the run loop draws a frame, is what keeps the login
+    // launch invisible rather than a flash. The webview behind it carries on
+    // loading, so opening Intention later is instant.
+    private func hideMainWindow() {
+        mainWindow?.orderOut(nil)
+    }
+
+    // MARK: - Accessory launch
+
+    private func enterBackgroundLaunch() {
+        guard !launchedAtLogin else { return }
+        launchedAtLogin = true
+        NSApp.setActivationPolicy(.accessory)
+        hideMainWindow()
+    }
+
+    // Once the user has asked for Intention it is an ordinary app again, with
+    // a Dock icon and a menu bar, and stays that way until it is quit. The
+    // activation is deferred by one turn of the run loop because AppKit will
+    // not bring a process forward in the same breath as the policy change that
+    // made it eligible — without this the window comes up behind the frontmost
+    // app about half the time.
+    private func leaveBackgroundLaunch() {
+        guard launchedAtLogin else { return }
+        launchedAtLogin = false
+        NSApp.setActivationPolicy(.regular)
+        DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
     }
 
     // MARK: - Extension state
@@ -135,12 +215,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             SFSafariApplication.showPreferencesForExtension(withIdentifier: extensionBundleIdentifier) { _ in }
         }
 
-        // A sheet on our own window when we have one, so this cannot end up as
-        // a free-floating alert in front of whatever the user was actually
-        // doing; a modal only when there is no window to hang it from.
-        if let window = NSApplication.shared.mainWindow ?? NSApplication.shared.windows.first {
+        // A sheet on our own window when one is on screen, so this cannot end
+        // up as a free-floating alert in front of whatever the user was
+        // actually doing. After an accessory launch there is no visible window
+        // to hang it from — and a sheet on a hidden window would be a notice
+        // nobody can see — so that case comes forward and asks outright. It is
+        // the one thing worth interrupting a login for: blocking is off.
+        //
+        // It asks as an accessory, without promoting itself to a full app: the
+        // alert is the entire interruption, and answering it either sends you
+        // to Safari or dismisses it. Neither outcome deserves a Dock icon left
+        // behind for an app the user never opened.
+        if let window = NSApp.windows.first(where: { $0.isVisible && $0.contentViewController is ViewController }) {
             alert.beginSheetModal(for: window, completionHandler: handle)
         } else {
+            NSApp.activate(ignoringOtherApps: true)
             handle(alert.runModal())
         }
     }
