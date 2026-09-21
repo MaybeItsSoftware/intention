@@ -144,19 +144,19 @@
       </section>
 
       <!-- Mac app only. Blocking never depends on the app running — Safari
-           does that — so this is about keeping Today one click away. -->
+           does that — so this is about noticing if the extension goes off. -->
       <section class="setup-step setup-page" id="setup-step-mac-login" hidden>
-        <h3 class="setup-question">Keep it where you’ll see it.</h3>
-        <p class="setup-lede">Open Intention when you log in, so your day is one click away. Blocking doesn’t depend on it: Safari does that on its own, whether this app is open or not.</p>
+        <h3 class="setup-question">Let it check on itself.</h3>
+        <p class="setup-lede">Start Intention at login and it quietly checks that the Safari extension is still switched on. No window, no Dock icon — it only speaks up if blocking has been turned off.</p>
         <button type="button" class="setup-switch" id="setup-login-btn" role="switch" aria-checked="false">
           <span class="setup-switch-text">
-            <span class="setup-switch-title">Open Intention at login</span>
+            <span class="setup-switch-title">Start Intention at login</span>
             <span class="setup-switch-sub" id="setup-login-sub"></span>
           </span>
           <span class="setup-switch-track" aria-hidden="true"><span class="setup-switch-knob"></span></span>
         </button>
         <button type="button" class="secondary add-row-btn" id="setup-login-approve-btn" hidden>Open Login Items settings</button>
-        <p class="setup-aside">Closing the window keeps Intention in the Dock. Click its icon to come back.</p>
+        <p class="setup-aside">Open Intention yourself whenever you want Today, and it comes back as a normal app.</p>
       </section>
 
       <section class="setup-step setup-page" id="setup-step-done" hidden>
@@ -365,10 +365,10 @@
             <!-- Mac app only (IS_MAC_APP). -->
             <section class="card" id="mac-app-card" data-section="settings" hidden>
               <h2>This Mac</h2>
-              <p class="subtitle">Blocking runs in Safari whether this app is open or not. This only decides whether Today is waiting for you when you log in.</p>
+              <p class="subtitle">Blocking runs in Safari whether this app is open or not. This only decides whether Intention starts in the background at login — with no window and no Dock icon — to check the extension is still on.</p>
               <button type="button" class="setup-switch" id="mac-login-btn" role="switch" aria-checked="false">
                 <span class="setup-switch-text">
-                  <span class="setup-switch-title">Open Intention at login</span>
+                  <span class="setup-switch-title">Start Intention at login</span>
                   <span class="setup-switch-sub" id="mac-login-sub"></span>
                 </span>
                 <span class="setup-switch-track" aria-hidden="true"><span class="setup-switch-knob"></span></span>

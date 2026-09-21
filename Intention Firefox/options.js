@@ -181,8 +181,10 @@ function markMacOnboarded() {
   });
 }
 
-// The "Open Intention at login" switch, in the Mac welcome and the This Mac
-// card. SMAppService (macOS 13+) owns the real state, so every paint reads it
+// The "Start Intention at login" switch, in the Mac welcome and the This Mac
+// card. A login launch runs as an accessory — see the macOS AppDelegate — so
+// what this buys is the extension-state check after every restart, not a
+// window. SMAppService (macOS 13+) owns the real state, so every paint reads it
 // back rather than trusting the click: macOS can answer "needs approval", and
 // the user can change it in System Settings behind our back.
 async function wireLoginSwitch(btnId, subId, approveId) {
@@ -203,7 +205,7 @@ async function wireLoginSwitch(btnId, subId, approveId) {
       ? 'Needs macOS 13 or later.'
       : pending
         ? 'macOS wants you to allow it in Login Items first.'
-        : on ? 'On. Intention opens when you log in.' : 'Off.';
+        : on ? 'On. Intention checks the extension in the background, out of sight.' : 'Off.';
   };
   const read = () => new Promise(resolve => window.intentionExtension.loginItem(resolve)).then(paint);
 
