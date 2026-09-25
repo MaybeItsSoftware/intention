@@ -163,7 +163,15 @@ function buildIntentionStepper({ value, min, max, label, unit = '', onChange }) 
 }
 
 // Choose one daily allowance, then adjust the numbers for that choice.
-function buildIntentionField(entry, ariaName, onChange) {
+//
+// Switching type proposes the same total, and a flexible budget of the same
+// total is a loosening (isLoosening), so the switch alone would only ever be
+// saved for tomorrow — and the row would stay on the old type, with no way to
+// reach the numbers that could have made it a tightening. So a switch that
+// would be deferred opens the new type as an unsaved draft instead: lowering
+// it saves at once, Save asks for the proposed total as a loosening, and the
+// original chip puts the row back. `savedEntry` is set only on a draft.
+function buildIntentionField(entry, ariaName, onChange, savedEntry = null) {
   const current = resolveIntention(entry);
   const field = document.createElement('div');
   field.className = 'intention-field';
@@ -180,9 +188,17 @@ function buildIntentionField(entry, ariaName, onChange) {
     button.setAttribute('aria-pressed', String((current.mode || 'opens') === mode));
     button.addEventListener('click', () => {
       if ((current.mode || 'opens') === mode) return;
-      return onChange(mode === 'dailyTime'
+      if (savedEntry) {
+        field.replaceWith(buildIntentionField(savedEntry, ariaName, onChange));
+        return;
+      }
+      const proposal = mode === 'dailyTime'
         ? { intentionMode: 'dailyTime', dailyTimeMinutes: Math.min(MAX_DAILY_MINUTES, current.opens * current.minutesEach || 30) }
-        : { intentionMode: 'opens', maxGrants: Math.min(MAX_OPENS, Math.max(1, Math.ceil(current.dailyMinutes / 10))), passMinutes: 10 });
+        : { intentionMode: 'opens', maxGrants: Math.min(MAX_OPENS, Math.max(1, Math.ceil(current.dailyMinutes / 10))), passMinutes: 10 };
+      if (!isLoosening(entry, proposal)) return onChange(proposal);
+      const draft = buildIntentionField(proposal, ariaName, onChange, entry);
+      field.replaceWith(draft);
+      draft.querySelector('.chip.selected')?.focus();
     });
     modes.appendChild(button);
   }
@@ -191,6 +207,22 @@ function buildIntentionField(entry, ariaName, onChange) {
   const note = document.createElement('p');
   note.className = 'intention-summary';
   field.append(buildRowField(microLabel('Daily allowance'), modes), controls, note);
+  // A draft says it is unsaved and offers the save that the switch deferred.
+  const draftNote = () => {
+    if (!savedEntry) return;
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'secondary';
+    save.textContent = 'Save';
+    save.addEventListener('click', () => onChange(entry));
+    const hint = document.createElement('p');
+    hint.className = 'intention-summary';
+    const was = resolveIntention(savedEntry);
+    hint.textContent = was.mode === 'dailyTime'
+      ? `Not saved yet. Up to ${was.dailyMinutes} minutes a day saves straight away; more waits until tomorrow.`
+      : `Not saved yet. Under ${was.opens * was.minutesEach} minutes a day saves straight away; ${was.opens * was.minutesEach} or more waits until tomorrow.`;
+    field.append(hint, save);
+  };
   if (current.mode === 'dailyTime') {
     const daily = buildIntentionStepper({ value: current.dailyMinutes, min: 0, max: MAX_DAILY_MINUTES,
       label: `Daily minutes for ${ariaName}`, unit: 'min / day',
@@ -199,16 +231,20 @@ function buildIntentionField(entry, ariaName, onChange) {
     note.textContent = current.dailyMinutes === 0 ? 'Blocked outright.'
       : 'Choose how many of your remaining minutes to use on each visit. A reason is required.';
     field.setIntention = next => daily.setValue(resolveIntention(next).dailyMinutes);
+    draftNote();
     return field;
   }
+  // The type is named on every change, so a visit count saved over a daily
+  // budget (a draft, above) replaces the budget rather than merging under it.
   const opens = buildIntentionStepper({ value: current.opens, min: 0, max: MAX_OPENS,
     label: `Visits per day for ${ariaName}`, unit: 'visits / day',
-    onChange: value => onChange({ maxGrants: value, passMinutes: current.minutesEach }) });
+    onChange: value => onChange({ intentionMode: 'opens', maxGrants: value, passMinutes: current.minutesEach }) });
   const minutes = buildIntentionStepper({ value: current.minutesEach, min: 1, max: MAX_PASS_MINUTES,
     label: `Minutes per visit for ${ariaName}`, unit: 'min / visit',
-    onChange: value => onChange({ maxGrants: current.opens, passMinutes: value }) });
+    onChange: value => onChange({ intentionMode: 'opens', maxGrants: current.opens, passMinutes: value }) });
   const minutesField = buildRowField(microLabel('Minutes per visit'), minutes);
   controls.append(buildRowField(microLabel('Visits per day'), opens), minutesField);
+  draftNote();
   const paint = () => {
     opens.setValue(current.opens);
     minutes.setValue(current.minutesEach);

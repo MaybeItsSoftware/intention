@@ -54,6 +54,15 @@ function makeElement(tagName) {
       parent.children = parent.children.filter(c => c !== node);
       node.parentNode = null;
     },
+    // The allowance swaps itself for an unsaved draft of the other type.
+    replaceWith: (other) => {
+      const parent = node.parentNode;
+      if (!parent) return;
+      parent.children = parent.children.map(c => (c === node ? other : c));
+      other.parentNode = parent;
+      node.parentNode = null;
+    },
+    focus() {},
     addEventListener: (type, fn) => { (handlers[type] = handlers[type] || []).push(fn); },
     querySelector: () => null
   };
@@ -212,14 +221,14 @@ describe('the intention', () => {
     expect(gates).toHaveLength(1);
     expect(gates[0].changeType).toBe('increase_limit');
     expect(gates[0].currentValue).toEqual({ maxGrants: 3, passMinutes: 10 });
-    expect(gates[0].newValue).toEqual({ maxGrants: 4, passMinutes: 10 });
+    expect(gates[0].newValue).toEqual({ intentionMode: 'opens', maxGrants: 4, passMinutes: 10 });
   });
 
   it('longer opens is a loosening too', async () => {
     const { fields } = build();
     await fire(stepper(fields)[3], 'click');
     expect(saved).toEqual([]);
-    expect(gates[0].newValue).toEqual({ maxGrants: 3, passMinutes: 11 });
+    expect(gates[0].newValue).toEqual({ intentionMode: 'opens', maxGrants: 3, passMinutes: 11 });
   });
 
   it('accepts a custom whole-minute duration and preserves it through saving', async () => {
@@ -261,8 +270,54 @@ describe('the intention', () => {
     const { fields } = build(config.domainLimits['instagram.com']);
     await fire(stepper(fields)[0], 'click');
     expect(saved[0].domainLimits['instagram.com']).toEqual({
-      maxGrants: 2, passMinutes: 10, scope: 'only', parts: ['instagram:reels']
+      intentionMode: 'opens', maxGrants: 2, passMinutes: 10, scope: 'only', parts: ['instagram:reels']
     });
+  });
+
+  // Same total as a flexible budget is a loosening, so the switch alone would
+  // be saved for tomorrow and the row would never show the minutes to lower.
+  const chip = (fields, text) => findAll(fields, 'chip').find(c => c.textContent === text);
+
+  it('switching to a daily budget opens an unsaved draft instead of deferring', async () => {
+    const { fields } = build();
+    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    expect(saved).toEqual([]);
+    expect(gates).toEqual([]);
+    expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Daily allowance', 'Total minutes per day']);
+    expect(find(fields, 'stepper-input').value).toBe('30');
+    expect(findAll(fields, 'intention-summary').map(n => n.textContent).join(' ')).toContain('Not saved yet');
+  });
+
+  it('lowering the draft budget saves the switch straight away', async () => {
+    const { fields } = build();
+    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(stepper(fields)[0], 'click');
+    expect(gates).toEqual([]);
+    expect(saved[0].domainLimits['instagram.com']).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 29, maxGrants: 3, passMinutes: 10 });
+  });
+
+  it('saving the draft at the same total asks for it as a loosening', async () => {
+    const { fields } = build();
+    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(findAll(fields, 'secondary').find(b => b.textContent === 'Save'), 'click');
+    expect(saved).toEqual([]);
+    expect(gates[0].newValue).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 30 });
+  });
+
+  it('the original chip puts the draft back', async () => {
+    const { fields } = build();
+    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(chip(fields, 'Set visits per day'), 'click');
+    expect(findAll(fields, 'stepper-input').map(i => i.value)).toEqual(['3', '10']);
+    expect(saved).toEqual([]);
+    expect(gates).toEqual([]);
+  });
+
+  it('a switch that is already a tightening still saves at once', async () => {
+    config.domainLimits['instagram.com'] = { intentionMode: 'dailyTime', dailyTimeMinutes: 30 };
+    const { fields } = build();
+    await fire(chip(fields, 'Set visits per day'), 'click');
+    expect(saved[0].domainLimits['instagram.com']).toMatchObject({ intentionMode: 'opens', maxGrants: 3, passMinutes: 10 });
   });
 
   it('an app row asks through the app change type', async () => {
