@@ -194,6 +194,19 @@ final class AppBlockingManager {
         try? center.startMonitoring(Self.passActivityName, during: schedule)
     }
 
+    /// Ends a granted pass before its time: "I'm finished". iOS cannot see the
+    /// user leave a blocked app, so on this platform finishing has to be said
+    /// rather than inferred. Same teardown as the pass lapsing — shields back,
+    /// monitoring stopped, Lock Screen card and expiry notice gone — but the
+    /// app selection stays, unlike clearAllBlocking. The caller records the
+    /// pass in the shared worker (endSession), which is where its minutes live.
+    func endPass() {
+        DeviceActivityCenter().stopMonitoring([Self.passActivityName])
+        UserDefaults(suiteName: AppGroupConfig.identifier)?.removeObject(forKey: Self.passEndsAtKey)
+        applyShields()
+        endPassTimerUI()
+    }
+
     /// Re-applies shields if a granted pass has lapsed. Called on app foreground
     /// as a backup to the DeviceActivityMonitor extension — and the only thing
     /// that runs at all after a device restart, since the app gets no background

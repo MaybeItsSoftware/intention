@@ -898,6 +898,15 @@ function wireIOSAppsCard() {
   bindOnce('ios-request-time-btn', 'click', () => {
     window.location.href = 'coaching.html?domain=apps&app=1';
   });
+  // iOS cannot see someone leave a blocked app, so a pass there only ends
+  // early when they say so. Shields first, then the record: if the worker is
+  // slow the apps are already blocked, which is the half that matters.
+  bindOnce('ios-end-pass-btn', 'click', () => {
+    window.intentionScreenTime.endPass(async () => {
+      await sendBg({ action: 'endSession', domain: 'apps', reason: 'fulfilled' });
+      refreshIOSAppsCard();
+    });
+  });
 
   refreshIOSAppsCard();
 }
@@ -907,7 +916,9 @@ async function refreshIOSAppsCard() {
   const authorizeBtn = document.getElementById('ios-authorize-btn');
   const unlockStatusEl = document.getElementById('unlock-status');
   const requestBtn = document.getElementById('ios-request-time-btn');
+  const endPassBtn = document.getElementById('ios-end-pass-btn');
   const st = await iosScreenTimeStatus();
+  endPassBtn.hidden = !(st && st.authorized && st.selectionCount && st.passEndsAt);
 
   if (!st || !st.available) {
     statusEl.textContent = 'App blocking needs iOS 16 or later.';

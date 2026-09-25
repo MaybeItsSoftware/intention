@@ -154,6 +154,9 @@
     authorize: function(callback) { screenTimeCall('authorize', null, callback); },
     pickApps: function(callback) { screenTimeCall('pickApps', null, callback); },
     grantPass: function(minutes, callback) { screenTimeCall('grantPass', { minutes: minutes }, callback); },
+    // Puts the shields back before the pass runs out. The caller ends the
+    // session in the shared worker, which is what records it.
+    endPass: function(callback) { screenTimeCall('endPass', null, callback); },
     clear: function(callback) { screenTimeCall('clear', null, callback); },
     // Aggregate-only (no per-app breakdown -- Family Controls keeps app
     // identity opaque outside Apple's own UI). Resolves { minutesByDate }.

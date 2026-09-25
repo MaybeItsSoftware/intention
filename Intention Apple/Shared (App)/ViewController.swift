@@ -548,6 +548,9 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             let minutes = dict["minutes"] as? Int ?? Int(dict["minutes"] as? Double ?? 0)
             manager.grantPass(minutes: minutes)
             invokeBridgeCallback(callbackId, result: ["ok": true])
+        case "endPass":
+            manager.endPass()
+            invokeBridgeCallback(callbackId, result: ["ok": true])
         case "clear":
             manager.clearAllBlocking()
             invokeBridgeCallback(callbackId, result: ["ok": true, "selectionCount": 0])
