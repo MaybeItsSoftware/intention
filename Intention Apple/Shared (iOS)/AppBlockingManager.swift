@@ -173,11 +173,18 @@ final class AppBlockingManager {
             PassExpiryNotifier.shared.scheduleExpiryNotice(at: endsAt, minutes: mins, purpose: purpose)
         }
 
-        // DeviceActivity enforces a minimum interval of ~15 minutes, so the
-        // schedule end is clamped; the intervalDidEnd callback in the monitor
-        // extension re-shields, and reapplyIfPassExpired() catches shorter
-        // passes as soon as the app is foregrounded again.
+        // DeviceActivity enforces a minimum interval of 15 minutes, so the
+        // schedule end is clamped. A shorter pass is ended by the schedule's
+        // warning instead: iOS calls intervalWillEndWarning `warningTime`
+        // before the interval ends, and a warning of (15 - mins) minutes lands
+        // exactly when the pass does. Without it a 5-minute pass left the apps
+        // open for 15. intervalDidEnd stays as the backstop, and
+        // reapplyIfPassExpired() still catches anything missed when the app is
+        // next opened.
         let scheduleMins = max(15, mins)
+        let warningTime = scheduleMins > mins
+            ? DateComponents(minute: scheduleMins - mins)
+            : nil
         let now = Date()
         let end = now.addingTimeInterval(TimeInterval(scheduleMins * 60))
         let calendar = Calendar.current
@@ -187,7 +194,8 @@ final class AppBlockingManager {
         let schedule = DeviceActivitySchedule(
             intervalStart: calendar.dateComponents(components, from: now),
             intervalEnd: calendar.dateComponents(components, from: end),
-            repeats: false
+            repeats: false,
+            warningTime: warningTime
         )
         let center = DeviceActivityCenter()
         center.stopMonitoring([Self.passActivityName])
