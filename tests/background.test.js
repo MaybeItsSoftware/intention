@@ -105,6 +105,26 @@ describe('site passes across browser tabs', () => {
     expect(ctx.readSession(chrome.storage._store.activeSessions, 2, 'instagram.com')).toBe(null);
   });
 
+  it('shares a site pass with a caller that could not say which tab it is', () => {
+    const { ctx, chrome } = setup();
+    expect(ctx.readSession(chrome.storage._store.activeSessions, undefined, 'instagram.com').reason)
+      .toBe('reply to DMs');
+  });
+
+  it('shares a page pass with a new tab on that same page, and gives that tab its allow rule', async () => {
+    const url = 'https://www.instagram.com/p/one/';
+    const key = loadBackground().ctx.pageScopeKeyFor(url);
+    expect(key).toBeTruthy();
+    const { ctx, chrome } = setup({ ...session(), scope: { kind: 'page', key, url } });
+    const same = await ctx.handleMessage({ action: 'getSession', domain: 'instagram.com', url, tabId: 2 }, EXT_PAGE);
+    expect(same.session.reason).toBe('reply to DMs');
+    expect(same.covers).toBe(true);
+    expect(chrome.declarativeNetRequest._sessionRules.map(r => r.condition.tabIds)).toContainEqual([2]);
+    const other = await ctx.handleMessage(
+      { action: 'getSession', domain: 'instagram.com', url: 'https://www.instagram.com/p/two/', tabId: 3 }, EXT_PAGE);
+    expect(other.session).toBe(null);
+  });
+
   it('interrupts every tab on the site at expiry and refuses a further tab', async () => {
     const { ctx, chrome, listeners } = setup({ ...session(), startTime: Date.now() - 10 * 60000 });
     chrome.tabs._queryResults.push({ id: 2, url: 'https://www.instagram.com/' },

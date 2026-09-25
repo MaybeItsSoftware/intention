@@ -171,7 +171,7 @@ async function enforceGateBackstop(tabId, url) {
   // one where the overlay is the only enforcement there is.
   // sessionCoversUrl returns true for any session with no scope, which is
   // every pass granted before this existed and every site pass since.
-  const session = readSession(activeSessions, tabId, matchedDomain);
+  const session = readSession(activeSessions, tabId, matchedDomain, { url });
   if (session && sessionCoversUrl(session, url)) return;
   // The tab may have moved on during the grace period — only act if it is
   // still sitting on the page this was scheduled for.
@@ -466,7 +466,10 @@ function sessionKeysForTab(activeSessions, tabId) {
 // re-derived at each call site — which is exactly how the cross-domain hole
 // appeared. `live: false` returns a banked session too, which the check-in
 // coach needs so it can quote the reason the user originally gave.
-function readSession(activeSessions, tabId, domain, { live = true } = {}) {
+//
+// `url` is the page being asked about, when the caller has one. It is what
+// lets a page pass reach a second tab — but only a tab on that same page.
+function readSession(activeSessions, tabId, domain, { live = true, url = '' } = {}) {
   if (!domain) return null;
   const candidates = [
     activeSessions[sessionKeyFor(tabId, domain)],
@@ -477,19 +480,34 @@ function readSession(activeSessions, tabId, domain, { live = true } = {}) {
   if (tabId != null) {
     const legacy = activeSessions[String(tabId)];
     if (legacy && legacy.domain === domain) candidates.push(legacy);
-    // Site passes share one clock across tabs. Page passes still belong to
-    // their original tab, so opening another page cannot widen the grant.
-    candidates.push(...Object.entries(activeSessions)
-      .filter(([key, session]) => tabIdFromSessionKey(key) != null &&
-        session.domain === domain && !session.scope)
-      .map(([, session]) => session));
   }
+  // Site passes share one clock across tabs, whether or not the caller knows
+  // which tab it is — coaching.html on Safari sometimes cannot find out, and
+  // was re-gating on a live pass. A page pass reaches another tab only for
+  // its own page (the same video opened in a new tab), so opening a DIFFERENT
+  // page still cannot widen the grant.
+  candidates.push(...Object.entries(activeSessions)
+    .filter(([key, session]) => tabIdFromSessionKey(key) != null && session.domain === domain &&
+      (!session.scope || (!!url && !!session.scope.key && sessionCoversUrl(session, url))))
+    .map(([, session]) => session));
   for (const session of candidates) {
     if (!session) continue;
     const resolved = live ? activeSession(session) : session;
     if (resolved) return resolved;
   }
   return null;
+}
+
+// A page pass honoured in a tab other than the one it was granted in (the
+// same video opened again in a new tab) needs that tab's own allow rule on
+// Chrome: the redirect rule stays up for a page pass, and the only allow rule
+// was registered for the original tab, so the new one would be sent back to
+// the gate on its very next load. Site passes drop the redirect outright and
+// need nothing here.
+async function adoptPagePass(activeSessions, tabId, session) {
+  if (tabId == null || !session || !session.scope) return;
+  if (activeSessions[sessionKeyFor(tabId, session.domain)] === session) return;
+  await registerSessionRule(tabId, session);
 }
 
 async function tabsForSiteSession(session, ownerTabId) {
@@ -1202,7 +1220,8 @@ async function handleMessage(message, sender) {
     case 'getSession': {
       if (!message.domain) return { session: null };
       const { activeSessions = {} } = await getStorage(['activeSessions']);
-      const session = readSession(activeSessions, tabId, message.domain);
+      const session = readSession(activeSessions, tabId, message.domain, { url: message.url || '' });
+      await adoptPagePass(activeSessions, tabId, session);
       // `covers` answers the second question the caller actually has: does
       // that pass apply where they were heading? True for every session with
       // no scope, so a caller that never sends a url sees today's behaviour.
@@ -1475,14 +1494,15 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   // granted where no tab id was available (the coaching page on Safari, or a
   // native port). Without it the grant is invisible here and the page gates
   // again straight away.
-  const session = readSession(activeSessions, tabId, matchedDomain);
+  const pageUrl = url || (pageContext && typeof pageContext.url === 'string' ? pageContext.url : '');
+  const session = readSession(activeSessions, tabId, matchedDomain, { url: pageUrl });
+  await adoptPagePass(activeSessions, tabId, session);
   // Whether that pass covers the page actually being loaded. Always true for a
   // session with no scope, so this changes nothing for a site pass. The
   // content script asks parts.js the same question itself against
   // window.location.href — it has to, because it must reach the same verdict
   // with the worker dead — and this is here so the two answers cannot come
   // from two different pieces of logic.
-  const pageUrl = url || (pageContext && typeof pageContext.url === 'string' ? pageContext.url : '');
   const covered = sessionCoversUrl(session, pageUrl);
   // Which PART of the site this is, against the rule the user set on it. The
   // same asymmetry as the session question above: the content script asks
