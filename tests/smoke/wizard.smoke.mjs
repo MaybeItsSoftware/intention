@@ -213,11 +213,12 @@ async function main() {
     await next(page);
     step = await visibleStep(page);
     record('the first intention page asks about Instagram by name',
-      step.ids.join() === 'setup-step-intention' && step.title === 'How many times a day do you want to open Instagram?',
+      step.ids.join() === 'setup-step-intention' && step.title === 'How much time a day do you want for Instagram?',
       JSON.stringify(step));
     record('and counts only the intention pages', step.label === 'Intentions · 1 of 2', step.label);
-    record('it starts at the default of three',
-      (await page.textContent('#setup-intention-opens')) === '3');
+    const startDraft = await page.evaluate(() => setupDomainLimits['instagram.com']);
+    record('it starts at the default of 30 minutes a day',
+      startDraft?.intentionMode === 'dailyTime' && startDraft?.dailyTimeMinutes === 30, JSON.stringify(startDraft));
 
     await page.click('#setup-intention-mode [data-mode="dailyTime"]');
     await page.locator('#setup-intention-daily input').fill('60');
@@ -255,11 +256,15 @@ async function main() {
     await next(page);
     step = await visibleStep(page);
     record('the second intention page is the hand-typed site',
-      step.title === 'How many times a day do you want to open some-blog.example?', step.title);
+      step.title === 'How much time a day do you want for some-blog.example?', step.title);
     record('and its count moved within the run', step.label === 'Intentions · 2 of 2', step.label);
     record('the last intention page offers no "use this for the rest"',
       await page.locator('#setup-intention-same-btn').isHidden());
 
+    // New targets start on daily minutes; 30 of them become three visits.
+    await page.click('#setup-intention-mode [data-mode="opens"]');
+    record('switching to visits turns 30 minutes into three',
+      (await page.textContent('#setup-intention-opens')) === '3');
     // Zero opens is a block, and the minutes question goes away with it.
     for (let i = 0; i < 3; i++) await page.click('#setup-intention-minus');
     await page.waitForTimeout(60);
