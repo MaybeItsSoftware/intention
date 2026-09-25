@@ -1305,6 +1305,13 @@ async function handleMessage(message, sender) {
         newValue: message.newValue
       });
     }
+    // Android, when a package is installed: see linkInstalledApp. Adding to the
+    // blocklist is a tightening, but it is still a write to it, so it gets the
+    // same refusal every other blocklist writer carries.
+    case 'appInstalled': {
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      return linkInstalledApp(message.packageName, message.label);
+    }
     case 'cancelPendingChange': {
       if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
       return cancelPendingChange({ changeType: message.changeType, domain: message.domain });
@@ -2275,6 +2282,44 @@ async function saveSettings(partial) {
     await syncBlockingRules();
   }
   return { ok: true };
+}
+
+// A newly installed app that is the same service as a blocked site — the
+// Instagram app arriving on a phone where instagram.com is already blocked.
+// Without this the app is a way round the block that did not exist on the day
+// they set it up, so it joins the blocklist carrying a copy of the site's
+// entry: same opens a day, same minutes, same part rule (part ids are
+// per-service, so "instagram:reels" means the same thing to AppParts.kt).
+//
+// Copied, not shared: getLimitsForDomain() relies on appLimits and
+// domainLimits being disjoint, and after today the two rows are edited
+// separately like any other pair.
+//
+// Only ever called for an install, never swept over the installed list. An
+// app already on the phone at setup was offered in the wizard and left out on
+// purpose, and one removed from the list later was removed on purpose;
+// re-adding either would be overruling a decision rather than closing a gap.
+//
+// Only a site blocked whole-host counts: a blocked "old.reddit.com" says
+// nothing about the Reddit app, a blocked "reddit.com" does.
+async function linkInstalledApp(packageName, label) {
+  const pkg = String(packageName || '');
+  const site = APP_ICON_SITE[pkg];
+  if (!site) return { linked: null };
+  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {} } =
+    await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels']);
+  if (blockedApps.includes(pkg)) return { linked: null };
+  const domain = blockedDomains.find(d => hostMatchesDomain(site, d));
+  if (!domain) return { linked: null };
+
+  const write = {
+    blockedApps: [...blockedApps, pkg],
+    appLimits: { ...appLimits, [pkg]: { ...(domainLimits[domain] || INTENTION_DEFAULTS) } }
+  };
+  const name = String(label || '').trim();
+  if (name) write.appLabels = { ...appLabels, [pkg]: name };
+  await setStorage(write);
+  return { linked: domain };
 }
 
 // Keeps a "credit remaining" indicator live after every message, rather than

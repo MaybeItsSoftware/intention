@@ -172,6 +172,30 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
     private var screenReceiverRegistered = false
+    // An app installed after setup that is the same service as a blocked site
+    // (Instagram, with instagram.com blocked) would be a way round the block,
+    // so the background joins it to the blocklist on install — see
+    // linkInstalledApp in background.js, which owns the site↔app table and the
+    // rules. Registered here rather than in the manifest because Android 8+
+    // no longer delivers PACKAGE_ADDED to manifest receivers; this service is
+    // what does the blocking, so while it is off there is nothing to protect.
+    // An update arrives as a PACKAGE_ADDED too, flagged EXTRA_REPLACING, and
+    // is ignored: that app was already here, and a choice already made.
+    private val installReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return
+            val pkg = intent.data?.schemeSpecificPart ?: return
+            val message = JSONObject()
+                .put("action", "appInstalled")
+                .put("packageName", pkg)
+                .put("label", getAppLabel(pkg))
+            BackgroundJsHelper.init(applicationContext)
+            BackgroundJsHelper.sendMessage(message.toString()) { response ->
+                Log.d(TAG, "Install of $pkg: $response")
+            }
+        }
+    }
+    private var installReceiverRegistered = false
     private var lastForegroundPackage: String? = null
     private var lastPipPauseAt = 0L
     // Which blocked packages have already eaten their one pause for the
@@ -191,6 +215,12 @@ class IntentionAccessibilityService : AccessibilityService() {
             })
             screenReceiverRegistered = true
         }
+        if (!installReceiverRegistered) {
+            registerReceiver(installReceiver, IntentFilter(Intent.ACTION_PACKAGE_ADDED).apply {
+                addDataScheme("package")
+            })
+            installReceiverRegistered = true
+        }
         val root = rootInActiveWindow
         val target = foregroundTarget(root?.packageName?.toString(), root)
         ForegroundPass.sync(applicationContext, target)
@@ -199,7 +229,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance == this) instance = null
-        unregisterScreenReceiver()
+        unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
         handler.removeCallbacks(expiryRecheck)
         // The pass timer is a window this service added to the WindowManager,
@@ -212,16 +242,20 @@ class IntentionAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        unregisterScreenReceiver()
+        unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
         SessionOverlay.hide(applicationContext)
         return super.onUnbind(intent)
     }
 
-    private fun unregisterScreenReceiver() {
+    private fun unregisterReceivers() {
         if (screenReceiverRegistered) {
             unregisterReceiver(screenReceiver)
             screenReceiverRegistered = false
+        }
+        if (installReceiverRegistered) {
+            unregisterReceiver(installReceiver)
+            installReceiverRegistered = false
         }
     }
 

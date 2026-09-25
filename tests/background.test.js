@@ -4836,3 +4836,62 @@ describe('always-allowed accounts in the worker', () => {
     });
   });
 });
+
+// Android, when an app is installed after setup: the app version of a blocked
+// site must not be a way round it (linkInstalledApp).
+describe('appInstalled', () => {
+  const RULE = { maxGrants: 1, passMinutes: 5, scope: 'only', parts: ['instagram:reels'] };
+  const seed = (extra = {}) => ({
+    ...CONFIGURED,
+    blockedDomains: ['instagram.com', 'old.reddit.com'],
+    domainLimits: { 'instagram.com': RULE, 'old.reddit.com': SPENT },
+    blockedApps: [], appLimits: {}, appLabels: {},
+    ...extra
+  });
+
+  it("blocks the app with a copy of its site's rule", async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    const res = await ctx.handleMessage(
+      { action: 'appInstalled', packageName: 'com.instagram.android', label: 'Instagram' }, NATIVE);
+    expect(res.linked).toBe('instagram.com');
+    const store = chrome.storage._store;
+    expect(store.blockedApps).toEqual(['com.instagram.android']);
+    expect(store.appLimits['com.instagram.android']).toEqual(RULE);
+    expect(store.appLimits['com.instagram.android']).not.toBe(store.domainLimits['instagram.com']);
+    expect(store.appLabels['com.instagram.android']).toBe('Instagram');
+  });
+
+  it('keeps a daily-time rule as daily time', async () => {
+    const daily = { intentionMode: 'dailyTime', dailyTimeMinutes: 20 };
+    const { ctx, chrome } = loadBackground({ seed: seed({ domainLimits: { 'instagram.com': daily } }) });
+    await ctx.handleMessage({ action: 'appInstalled', packageName: 'com.instagram.android' }, NATIVE);
+    expect(chrome.storage._store.appLimits['com.instagram.android']).toEqual(daily);
+  });
+
+  it('leaves alone an app whose site is not blocked, or only a subdomain of it', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    for (const pkg of ['com.google.android.youtube', 'com.reddit.frontpage', 'com.example.unknown']) {
+      const res = await ctx.handleMessage({ action: 'appInstalled', packageName: pkg }, NATIVE);
+      expect(res.linked).toBeNull();
+    }
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+
+  it('does not overwrite an app that is already blocked', async () => {
+    const own = { maxGrants: 2, passMinutes: 15 };
+    const { ctx, chrome } = loadBackground({ seed: seed({
+      blockedApps: ['com.instagram.android'], appLimits: { 'com.instagram.android': own }
+    }) });
+    await ctx.handleMessage({ action: 'appInstalled', packageName: 'com.instagram.android' }, NATIVE);
+    expect(chrome.storage._store.blockedApps).toEqual(['com.instagram.android']);
+    expect(chrome.storage._store.appLimits['com.instagram.android']).toEqual(own);
+  });
+
+  it('is refused from a web page', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    const res = await ctx.handleMessage(
+      { action: 'appInstalled', packageName: 'com.instagram.android' }, tab(1));
+    expect(res.error).toBeTruthy();
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+});
