@@ -256,7 +256,7 @@ function renderSetupDomains() {
 function addSetupApp(app) {
   if (setupBlockedApps.includes(app.packageName)) return;
   setupBlockedApps.push(app.packageName);
-  setupAppLimits[app.packageName] = { ...INTENTION_DEFAULTS };
+  setupAppLimits[app.packageName] = { ...NEW_TARGET_INTENTION };
   setupAppLabels[app.packageName] = app.label;
   renderSetupApps();
 }

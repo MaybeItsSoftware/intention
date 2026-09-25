@@ -31,6 +31,14 @@
 // What a target with no entry, or an unreadable one, resolves to.
 const INTENTION_DEFAULTS = { maxGrants: 3, passMinutes: 10 };
 
+// What a newly added target is given: a daily budget of minutes, with the
+// length asked for on each visit. Deliberately a second constant rather than
+// a change to the one above — every entry stored before this has no
+// intentionMode and has to go on meaning opens, so the fallback stays put and
+// only the value written on adding moves. 30 is the old default's total
+// (3 × 10), so a new target's allowance is the same size as before.
+const NEW_TARGET_INTENTION = { intentionMode: 'dailyTime', dailyTimeMinutes: 30 };
+
 // Minute controls accept whole minutes. Keep the existing upper limits while
 // allowing the user to choose any duration inside them.
 const MAX_PASS_MINUTES = 30;

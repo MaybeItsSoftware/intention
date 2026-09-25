@@ -171,7 +171,7 @@ function buildIntentionField(entry, ariaName, onChange) {
   modes.className = 'intention-minutes intention-modes';
   modes.setAttribute('role', 'group');
   modes.setAttribute('aria-label', `Allowance type for ${ariaName}`);
-  for (const [mode, title] of [['opens', 'Set visits per day'], ['dailyTime', 'Set total minutes per day']]) {
+  for (const [mode, title] of [['dailyTime', 'Set total minutes per day'], ['opens', 'Set visits per day']]) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'chip';

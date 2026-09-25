@@ -497,7 +497,7 @@ function wireIntentionStep() {
 
   const modes = document.getElementById('setup-intention-mode');
   modes.textContent = '';
-  for (const [mode, title] of [['opens', 'Set visits per day'], ['dailyTime', 'Set total minutes per day']]) {
+  for (const [mode, title] of [['dailyTime', 'Set total minutes per day'], ['opens', 'Set visits per day']]) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'setup-mode-chip';
@@ -915,7 +915,7 @@ function renderDoneStep() {
   const list = document.getElementById('setup-done-list');
   list.textContent = '';
   for (const target of intentionTargets()) {
-    const { opens, minutesEach } = resolveIntention(setupLimitsFor(target)[target]);
+    const { mode, dailyMinutes, opens, minutesEach } = resolveIntention(setupLimitsFor(target)[target]);
     const li = document.createElement('li');
     const mark = document.createElement('span');
     mark.className = 'setup-service-mark';
@@ -926,7 +926,8 @@ function renderDoneStep() {
     name.textContent = setupTargetLabel(target);
     const rule = document.createElement('span');
     rule.className = 'setup-done-rule';
-    rule.textContent = opens === 0 ? 'Blocked' : `${opens} × ${minutesEach} min`;
+    if (mode === 'dailyTime') rule.textContent = dailyMinutes === 0 ? 'Blocked' : `${dailyMinutes} min a day`;
+    else rule.textContent = opens === 0 ? 'Blocked' : `${opens} × ${minutesEach} min`;
     li.append(mark, name, rule);
     list.appendChild(li);
   }
@@ -941,7 +942,7 @@ function renderDoneStep() {
   list.hidden = list.children.length === 0;
 
   document.getElementById('setup-done-note').textContent =
-    'Every day you keep all of these adds to your streak. One slip a week is forgiven. Fewer opens take effect straight away; more waits until tomorrow.';
+    'Every day you keep all of these adds to your streak. One slip a week is forgiven. Less time takes effect straight away; more waits until tomorrow.';
 }
 
 // ---- Page: welcome ---------------------------------------------------------
@@ -1141,7 +1142,7 @@ async function renderMacWelcomeStep() {
     count
       ? `Today: your streak, your week, and each of your ${count} ${count === 1 ? 'site' : 'sites'} against its intention, from every Safari profile on this Mac.`
       : 'Today: your streak and your week, once there’s a site on your list.',
-    'Intentions: what’s on your list. Fewer opens take effect straight away; more waits until tomorrow.',
+    'Intentions: what’s on your list. Less time takes effect straight away; more waits until tomorrow.',
     'Your coach, a click away when something genuinely needs more time.'
   ];
   list.textContent = '';

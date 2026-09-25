@@ -300,3 +300,27 @@ describe('collectServiceReasons', () => {
   });
 });
 
+
+// A newly added site starts on a daily budget of minutes, chosen per visit —
+// while an entry stored before that (no intentionMode) still means opens.
+describe('a newly added website', () => {
+  it('is given 30 minutes a day, not opens', async () => {
+    const saved = [];
+    const orig = { getConfig: ctx.getConfig, sendBg: ctx.sendBg, renderDomains: ctx.renderDomains, doc: ctx.document.getElementById };
+    ctx.document.getElementById = (id) => (id === 'setup-view' ? { hidden: true } : null);
+    ctx.getConfig = async () => ({ blockedDomains: ['x.com'], domainLimits: { 'x.com': { maxGrants: 3, passMinutes: 10 } } });
+    ctx.sendBg = async (m) => { saved.push(m); return { ok: true }; };
+    ctx.renderDomains = () => {};
+    try {
+      expect(await ctx.addDomainToBlocklist('youtube.com')).toBe(true);
+    } finally {
+      Object.assign(ctx, { getConfig: orig.getConfig, sendBg: orig.sendBg, renderDomains: orig.renderDomains });
+      ctx.document.getElementById = orig.doc;
+    }
+    const limits = saved[0].config.domainLimits;
+    expect(limits['youtube.com']).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 30 });
+    expect(ctx.resolveIntention(limits['youtube.com'])).toEqual({ mode: 'dailyTime', dailyMinutes: 30, opens: 0, minutesEach: 0 });
+    // The existing entry is written back untouched and still reads as opens.
+    expect(ctx.resolveIntention(limits['x.com'])).toEqual({ opens: 3, minutesEach: 10 });
+  });
+});

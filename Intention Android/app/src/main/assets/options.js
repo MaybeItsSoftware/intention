@@ -948,7 +948,7 @@ async function addDomainToBlocklist(domain) {
   if (!document.getElementById('setup-view').hidden) {
     if (setupBlockedDomains.includes(domain)) return false;
     setupBlockedDomains.push(domain);
-    setupDomainLimits[domain] = { ...INTENTION_DEFAULTS };
+    setupDomainLimits[domain] = { ...NEW_TARGET_INTENTION };
     renderSetupDomains();
     return true;
   }
@@ -957,7 +957,7 @@ async function addDomainToBlocklist(domain) {
   const limits = state.domainLimits || {};
   if (domains.includes(domain)) return false;
   domains.push(domain);
-  limits[domain] = { ...INTENTION_DEFAULTS };
+  limits[domain] = { ...NEW_TARGET_INTENTION };
   await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
   renderDomains(domains, limits, state.serviceReasons || {});
   return true;
@@ -1526,7 +1526,7 @@ async function addApp(app) {
   const labels = state.appLabels || {};
   if (!apps.includes(app.packageName)) {
     apps.push(app.packageName);
-    limits[app.packageName] = { ...INTENTION_DEFAULTS };
+    limits[app.packageName] = { ...NEW_TARGET_INTENTION };
     labels[app.packageName] = app.label;
     await sendBg({ action: 'saveSettings', config: { blockedApps: apps, appLimits: limits, appLabels: labels } });
     renderApps(apps, limits, labels, state.serviceReasons || {});
