@@ -1,3 +1,31 @@
+## [1.0.0](https://github.com/MaybeItsSoftware/intention/compare/v0.24.4...v1.0.0) (2026-09-25)
+
+### ⚠ BREAKING CHANGES
+
+* **release:** Intention leaves 0.x. This is the first 1.0.0 release on
+every platform (Chrome, Firefox, Safari, iOS, macOS and Android).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+* **android:** block a newly installed app when its website is blocked ([5775b2c](https://github.com/MaybeItsSoftware/intention/commit/5775b2cdd48d155952b93c0fa1df0effa806dbf7))
+* **ios:** add an "I'm finished" button that ends a pass early ([08baf89](https://github.com/MaybeItsSoftware/intention/commit/08baf89e2b60ca24fab534989c98e717dbf91dac))
+* **ios:** remind to block the app for a blocked website ([63425f4](https://github.com/MaybeItsSoftware/intention/commit/63425f485f965e1a431659e8fb0cc043ab6a6853))
+* start new sites and apps on 30 minutes a day ([1f1e764](https://github.com/MaybeItsSoftware/intention/commit/1f1e764b9f9d15bcbe8dd1337fe9bb680e530498))
+
+### Bug Fixes
+
+* **android:** end a pass once its app has been left for a minute ([8391a15](https://github.com/MaybeItsSoftware/intention/commit/8391a151e6213b21ac08ffa3199166404e2d9d3e))
+* **ios:** re-block apps when a pass shorter than 15 minutes ends ([2f87c79](https://github.com/MaybeItsSoftware/intention/commit/2f87c79c6d84b151e3b471066b43aee1d9e05a03))
+* **mac:** start the login item launch as an accessory ([fb8cb5e](https://github.com/MaybeItsSoftware/intention/commit/fb8cb5e19795e3cfd8abcebdbb45ce73c025c66f))
+* **options:** describe the login switch as a background check ([91193c0](https://github.com/MaybeItsSoftware/intention/commit/91193c041f9f6d37a561831818f34c2526726c96))
+* **web:** keep a live pass when the same site opens in a new tab ([1faa6a0](https://github.com/MaybeItsSoftware/intention/commit/1faa6a0ca74112525f4fb90b88bb720cd65f9995))
+
+### Miscellaneous Chores
+
+* **release:** release Intention as 1.0.0 ([cd0c003](https://github.com/MaybeItsSoftware/intention/commit/cd0c00314c07e6d3118fbd448b857b50aee67b6d))
+
 ## [0.24.4](https://github.com/MaybeItsSoftware/intention/compare/v0.24.3...v0.24.4) (2026-09-20)
 
 ### Bug Fixes
