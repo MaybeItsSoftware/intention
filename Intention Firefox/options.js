@@ -911,7 +911,24 @@ function wireIOSAppsCard() {
   refreshIOSAppsCard();
 }
 
+// "You block Instagram and YouTube on the web…" — or '' when none of the
+// blocked sites has an app. See appNamesForSites for why iOS needs asking.
+function iosAppReminderText(domains) {
+  const names = appNamesForSites(domains);
+  if (!names.length) return '';
+  const list = new Intl.ListFormat('en', { type: 'conjunction' }).format(names);
+  const one = names.length === 1;
+  return `You block ${list} on the web. iOS doesn't let Intention see which apps are on this iPhone, ` +
+    `so if you have ${one ? 'its app' : 'their apps'}, or install ${one ? 'it' : 'them'} later, ` +
+    `choose ${one ? 'it' : 'them'} here too.`;
+}
+
 async function refreshIOSAppsCard() {
+  const reminderEl = document.getElementById('ios-apps-reminder');
+  const { blockedDomains = [] } = await getConfig();
+  reminderEl.textContent = iosAppReminderText(blockedDomains);
+  reminderEl.hidden = !reminderEl.textContent;
+
   const statusEl = document.getElementById('ios-apps-status');
   const authorizeBtn = document.getElementById('ios-authorize-btn');
   const unlockStatusEl = document.getElementById('unlock-status');

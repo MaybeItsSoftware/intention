@@ -89,6 +89,8 @@
           <ul id="setup-websites-list" class="setup-picked"></ul>
         </div>
         <button type="button" id="setup-open-add-site-btn" class="secondary add-row-btn">+ Type a website</button>
+        <p class="setup-aside" id="setup-ios-app-reminder" hidden></p>
+        <button type="button" id="setup-ios-app-reminder-btn" class="secondary add-row-btn" hidden>Choose their apps</button>
         <p class="setup-aside" id="setup-sites-empty-hint">Pick at least one site or app to carry on.</p>
       </section>
 
@@ -330,6 +332,7 @@
               <ul id="app-list"></ul>
               <div id="ios-apps-controls" hidden>
                 <p class="subtitle" id="ios-apps-status"></p>
+                <p class="subtitle" id="ios-apps-reminder" hidden></p>
                 <button id="ios-authorize-btn" class="secondary" style="width: 100%; margin-bottom: 8px;" hidden>Enable Screen Time access</button>
                 <!-- Site rows carry a "Parts of the site" control and app rows do
                      not, and on iOS that gap is permanent rather than pending. A

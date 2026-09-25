@@ -119,6 +119,20 @@ function serviceKeyFor(target) {
   return APP_ICON_SITE[key] || key;
 }
 
+// The names of the apps that are the same service as any of these blocked
+// sites — "Instagram" for instagram.com. iOS uses this to remind someone to
+// block the app too: Screen Time never tells Intention which apps are
+// installed, so it cannot do it for them the way Android does.
+function appNamesForSites(domains) {
+  const names = [];
+  for (const site of new Set(Object.values(APP_ICON_SITE))) {
+    if (!(domains || []).some(d => site === d || site.endsWith(`.${d}`))) continue;
+    const name = (SITE_META[site] || {}).name || site;
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
 // Resolve marks independently of rule keys: a subdomain can share its site's
 // branding while retaining its own limits and answers. All marks are bundled,
 // so rendering a user's blocklist never contacts a favicon service or the site.

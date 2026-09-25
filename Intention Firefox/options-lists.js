@@ -233,6 +233,15 @@ function renderSetupDomains() {
   renderSiteRecommendations('setup-sites-recommend-grid', 'setup-sites-recommend-more', setupBlockedDomains);
   refreshSetupNav();
   saveSetupDraft();
+  // iOS: the apps page came before this one, so a site picked here whose app
+  // was not picked there gets a nudge and a way straight back to the picker.
+  if (HAS_IOS_APP_BLOCKING) {
+    const reminder = document.getElementById('setup-ios-app-reminder');
+    const pick = document.getElementById('setup-ios-app-reminder-btn');
+    reminder.textContent = iosAppReminderText(setupBlockedDomains);
+    reminder.hidden = pick.hidden = !reminder.textContent;
+    bindOnce('setup-ios-app-reminder-btn', 'click', () => window.intentionScreenTime.pickApps(() => {}));
+  }
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';
   for (const d of setupBlockedDomains) {

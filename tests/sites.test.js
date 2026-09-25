@@ -126,3 +126,17 @@ describe('serviceMembersLabel', () => {
     expect(S.serviceMembersLabel(g, {})).toBe('com.example.unknown');
   });
 });
+
+// iOS cannot see installed apps, so it reminds instead (options.js).
+describe('appNamesForSites', () => {
+  const S = loadSource('sites.js');
+  it('names the app for a blocked site, once, and ignores sites without one', () => {
+    expect(S.appNamesForSites(['instagram.com', 'www.instagram.com', 'example.org'])).toEqual(['Instagram']);
+  });
+  it('does not claim a subdomain block covers the whole app', () => {
+    expect(S.appNamesForSites(['old.reddit.com'])).toEqual([]);
+  });
+  it('is empty for nothing', () => {
+    expect(S.appNamesForSites(undefined)).toEqual([]);
+  });
+});
