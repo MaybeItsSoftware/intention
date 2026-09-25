@@ -544,7 +544,20 @@ function activeSession(session) {
   if (!session || session.endedAt) return null;
   const now = Date.now();
   return sessionElapsedMs(session, now) < Number(session.intervalMinutes) * 60000 &&
+    !leftTooLong(session, now) &&
     (!session.wallExpiresAt || now < Number(session.wallExpiresAt)) ? session : null;
+}
+
+// How long an Android pass survives with its app out of the foreground. Time
+// away is never charged, but it is not banked for later either: leaving the
+// app for longer than this is leaving, and the pass is over. The grace is for
+// what Android also reports as leaving — the notification shade, a share
+// sheet, the screen going off for a moment, our own coach. Mirrored in
+// PassClock.LEAVE_GRACE_MS on the Android side; keep the two equal.
+const LEAVE_GRACE_MS = 60 * 1000;
+
+function leftTooLong(session, now = Date.now()) {
+  return !!session.pausedAt && now - Number(session.pausedAt) >= LEAVE_GRACE_MS;
 }
 
 // Android records time away from a native target. Sessions without these
@@ -556,7 +569,7 @@ function sessionElapsedMs(session, now = Date.now()) {
 }
 
 function sessionExpiryTime(session) {
-  const foregroundExpiry = session.pausedAt ? Infinity :
+  const foregroundExpiry = session.pausedAt ? Number(session.pausedAt) + LEAVE_GRACE_MS :
     Number(session.startTime) + Number(session.intervalMinutes) * 60000 +
       Math.max(0, Number(session.pausedDurationMs) || 0);
   return session.wallExpiresAt ? Math.min(foregroundExpiry, Number(session.wallExpiresAt)) : foregroundExpiry;
@@ -990,7 +1003,10 @@ async function bankExpiredSession(sessionKey) {
   const session = activeSessions[sessionKey];
   if (!session || isBanked(session) || activeSession(session)) return;
   const elapsed = sessionElapsedMs(session) / 60000;
-  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes), 'ran_out', session.startTime);
+  // A pass that ended because they left the app is not one that ran out: they
+  // stopped before the time did, and the coach should hear it that way.
+  const outcome = leftTooLong(session) && elapsed < session.intervalMinutes ? 'left_target' : 'ran_out';
+  await recordSessionMinutes(session.domain, Math.min(elapsed, session.intervalMinutes), outcome, session.startTime);
   await mutateStorage('activeSessions', (sessions) => {
     if (sessions[sessionKey]) sessions[sessionKey].endedAt = Date.now();
   });

@@ -4,7 +4,10 @@ import android.content.Context
 import android.util.Log
 import org.json.JSONObject
 
-/** Keeps native target passes charged only while their target is on screen. */
+/**
+ * Keeps native target passes charged only while their target is on screen,
+ * and ends them once it has been away for PassClock.LEAVE_GRACE_MS.
+ */
 object ForegroundPass {
     private const val TAG = "ForegroundPass"
 
@@ -41,7 +44,12 @@ object ForegroundPass {
                     changed = true
                 } else if (!inFront && pausedAt == 0L) {
                     session.put("pausedAt", now)
-                    alarmUpdates.add("checkin-$key" to wallExpiresAt.takeIf { it > 0L })
+                    // The check-in alarm now marks the end of the grace: if
+                    // they are not back by then, the shared worker banks the
+                    // pass as left. Coming back re-arms the real deadline.
+                    val graceEnds = now + PassClock.LEAVE_GRACE_MS
+                    alarmUpdates.add("checkin-$key" to
+                        (if (wallExpiresAt > 0L) minOf(graceEnds, wallExpiresAt) else graceEnds))
                     changed = true
                 }
             }

@@ -687,8 +687,16 @@ class IntentionAccessibilityService : AccessibilityService() {
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val paused = session.optLong("pausedDurationMs", 0L)
                     val pausedAt = session.optLong("pausedAt", 0L)
-                    val foregroundExpiry = PassClock.expiresAt(startTime, intervalMinutes, paused) +
-                        (if (pausedAt > 0L) (System.currentTimeMillis() - pausedAt).coerceAtLeast(0L) else 0L)
+                    val now = System.currentTimeMillis()
+                    // Time away is not charged, so a paused pass's deadline
+                    // moves with the clock — until the leave grace runs out,
+                    // at which point the pass ended when the grace did.
+                    val foregroundExpiry = when {
+                        PassClock.leftTooLong(pausedAt, now) -> pausedAt + PassClock.LEAVE_GRACE_MS
+                        pausedAt > 0L -> PassClock.expiresAt(startTime, intervalMinutes, paused) +
+                            (now - pausedAt).coerceAtLeast(0L)
+                        else -> PassClock.expiresAt(startTime, intervalMinutes, paused)
+                    }
                     val wallExpiresAt = session.optLong("wallExpiresAt", 0L)
                     val expirationTime = if (wallExpiresAt > 0L) minOf(foregroundExpiry, wallExpiresAt)
                         else foregroundExpiry

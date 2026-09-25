@@ -346,7 +346,10 @@ const OUTCOME_LABELS = {
   // closed_early: "you asked for that one video and closed it" is a different
   // story from "you asked for ten minutes and took four", and the coach reads
   // this list as evidence for how much the next ask deserves.
-  left_page: 'left the page it was for'
+  left_page: 'left the page it was for',
+  // Android: they left the app for more than a minute and the pass ended
+  // there. Stopping before the time did, like closing a tab.
+  left_target: 'left the app'
 };
 
 // The history below is user-shaped: one entry per grant, for up to a week. The
@@ -436,11 +439,11 @@ function renderRecentHistory(recentDays) {
 // "count the outcomes above and decide whether they're reliable" is exactly
 // the kind of tallying weak BYOK models get wrong, and the answer changes how
 // many minutes someone gets. Reliable = the pass ended at or before its time
-// (closed early, finished, closed the tab); unreliable = it had to be ended
+// (closed early, finished, closed the tab, left the app); unreliable = it had to be ended
 // for them (ran out) or stretched (extended). Under three completed passes
 // there is no record worth generalising from, so the summary stays silent.
 function computeTrustSummary(sessionsToday, recentDays) {
-  const tally = { closed_early: 0, finished: 0, tab_closed: 0, ran_out: 0, extended: 0 };
+  const tally = { closed_early: 0, finished: 0, tab_closed: 0, left_target: 0, ran_out: 0, extended: 0 };
   for (const s of sessionsToday || []) {
     if (s && s.outcome && tally[s.outcome] !== undefined) tally[s.outcome] += 1;
   }
@@ -452,7 +455,7 @@ function computeTrustSummary(sessionsToday, recentDays) {
       if (tally[key] !== undefined) tally[key] += Number(outcomes[key]) || 0;
     }
   }
-  const reliable = tally.closed_early + tally.finished + tally.tab_closed;
+  const reliable = tally.closed_early + tally.finished + tally.tab_closed + tally.left_target;
   const unreliable = tally.ran_out + tally.extended;
   const completed = reliable + unreliable;
   if (completed < 3) return null;

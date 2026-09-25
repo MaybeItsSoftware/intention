@@ -206,13 +206,21 @@ describe('activeSession', () => {
     const { ctx } = loadBackground();
     const now = Date.now();
     const session = { domain: 'com.instagram.android', startTime: now - 40 * 60000,
-      intervalMinutes: 10, pausedDurationMs: 3 * 60000, pausedAt: now - 35 * 60000 };
+      intervalMinutes: 10, pausedDurationMs: 35 * 60000, pausedAt: now - 30000 };
     expect(ctx.activeSession(session)).toBe(session);
-    expect(ctx.sessionElapsedMs(session, now)).toBe(2 * 60000);
-    expect(ctx.sessionExpiryTime(session)).toBe(Infinity);
+    expect(ctx.sessionElapsedMs(session, now)).toBe(40 * 60000 - 30000 - 35 * 60000);
+    expect(ctx.sessionExpiryTime(session)).toBe(now - 30000 + ctx.LEAVE_GRACE_MS);
     delete session.pausedAt;
     session.pausedDurationMs = 38 * 60000;
     expect(ctx.sessionExpiryTime(session)).toBe(now + 8 * 60000);
+  });
+
+  it('ends a native pass once its app has been away longer than the grace', () => {
+    const { ctx } = loadBackground();
+    const now = Date.now();
+    const session = { domain: 'com.instagram.android', startTime: now - 5 * 60000,
+      intervalMinutes: 10, pausedAt: now - ctx.LEAVE_GRACE_MS };
+    expect(ctx.activeSession(session)).toBe(null);
   });
 
   it('ends a daily visit at midnight even when it was paused', () => {
@@ -254,20 +262,43 @@ describe('Android foreground passes', () => {
     { nativePlatform: 'android' });
     expect(response.grantedSession.pausedAt).toBe(response.grantedSession.startTime);
     expect(ctx.activeSession(response.grantedSession)).toBe(response.grantedSession);
-    expect(chrome.alarms._created).toEqual([]);
+    // Armed for the end of the leave grace, in case they never open the app.
+    expect(chrome.alarms._created.map(a => a.info.when))
+      .toEqual([response.grantedSession.startTime + ctx.LEAVE_GRACE_MS]);
   });
 
-  it('ignores a stale alarm while the pass is paused', async () => {
+  it('re-arms rather than ends when the alarm fires inside the grace', async () => {
     const { ctx, chrome, listeners } = loadBackground({ seed: {
       ...CONFIGURED, activeSessions: { 'target:com.instagram.android': {
         domain: 'com.instagram.android', reason: 'message a friend',
-        startTime: Date.now() - 40 * 60000, intervalMinutes: 10,
-        pausedAt: Date.now() - 38 * 60000
+        startTime: Date.now() - 3 * 60000, intervalMinutes: 10,
+        pausedAt: Date.now() - 10000
       } }
     } });
     await listeners.alarm({ name: 'checkin-target:com.instagram.android' });
     expect(chrome.storage._store.activeSessions['target:com.instagram.android'].endedAt).toBeUndefined();
     expect(ctx.activeSession(chrome.storage._store.activeSessions['target:com.instagram.android'])).not.toBeNull();
+  });
+
+  it('ends and records the pass as left once the app has been away past the grace', async () => {
+    const pausedAt = Date.now() - 2 * 60000;
+    const startTime = pausedAt - 4 * 60000;
+    const day = new Date(startTime);
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    const { chrome, listeners } = loadBackground({ seed: {
+      ...CONFIGURED,
+      dailyStats: { [key]: { 'com.instagram.android': { minutes: 0, grants: 1, sessions: [{ reason: 'message a friend' }] } } },
+      activeSessions: { 'target:com.instagram.android': {
+        domain: 'com.instagram.android', reason: 'message a friend',
+        startTime, intervalMinutes: 10, pausedAt
+      } }
+    } });
+    await listeners.alarm({ name: 'checkin-target:com.instagram.android' });
+    expect(chrome.storage._store.activeSessions['target:com.instagram.android'].endedAt).toBeTypeOf('number');
+    const stats = chrome.storage._store.dailyStats[key]['com.instagram.android'];
+    expect(stats.sessions[0].outcome).toBe('left_target');
+    // Charged the four minutes in the app, not the two away from it.
+    expect(stats.minutes).toBeCloseTo(4, 1);
   });
 });
 

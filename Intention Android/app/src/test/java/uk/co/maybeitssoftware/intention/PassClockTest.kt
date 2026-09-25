@@ -12,12 +12,19 @@ class PassClockTest {
     @Test fun backgroundTimeDoesNotSpendThePass() {
         val pausedAt = start + 2 * minute
         assertEquals(2 * minute, PassClock.elapsedMs(start, 0, pausedAt, pausedAt + 40 * minute))
-        assertTrue(PassClock.isLive(start, 10, 0, pausedAt, pausedAt + 40 * minute))
-        val resumedAt = pausedAt + 40 * minute
+        assertTrue(PassClock.isLive(start, 10, 0, pausedAt, pausedAt + 30_000L))
+        val resumedAt = pausedAt + 30_000L
         val pausedDuration = resumedAt - pausedAt
         assertEquals(2 * minute, PassClock.elapsedMs(start, pausedDuration, 0, resumedAt))
         assertEquals(resumedAt + 8 * minute, PassClock.expiresAt(start, 10, pausedDuration))
         assertFalse(PassClock.isLive(start, 10, pausedDuration, 0, resumedAt + 8 * minute))
+    }
+
+    @Test fun leavingForLongerThanTheGraceEndsThePass() {
+        val pausedAt = start + 2 * minute
+        assertTrue(PassClock.isLive(start, 10, 0, pausedAt, pausedAt + PassClock.LEAVE_GRACE_MS - 1))
+        assertFalse(PassClock.isLive(start, 10, 0, pausedAt, pausedAt + PassClock.LEAVE_GRACE_MS))
+        assertFalse(PassClock.isLive(start, 10, 0, pausedAt, pausedAt + 40 * minute))
     }
 
     @Test fun oldSessionsStillUseWallClockTime() {
