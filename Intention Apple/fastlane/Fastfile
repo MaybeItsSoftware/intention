@@ -403,8 +403,10 @@ platform :mac do
       skip_package_pkg:   true,
     )
 
+    # Move rather than copy: a copy left in build/macos-local is a second
+    # registered install, and Safari lists its extension twice.
     dest = "/Applications/Intention.app"
-    sh("rm -rf #{dest.shellescape} && cp -R #{app_path.shellescape} #{dest.shellescape}")
+    sh("rm -rf #{dest.shellescape} && mv #{app_path.shellescape} #{dest.shellescape}")
     UI.success("Installed build to #{dest}")
   end
 
