@@ -18,6 +18,7 @@ import { defineConfig } from 'vitest/config';
 // artefact of the test design rather than a fact about the code.
 export default defineConfig({
   test: {
+    setupFiles: ['tests/setup-clock.js'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
