@@ -481,6 +481,7 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
   fields.appendChild(reasonLabel);
 
   let minutesInput = null;
+  let markPreset = () => {};
   if (intention.mode === 'dailyTime') {
     const maxMinutes = Number(intention.visitMinutesMax) > 0
       ? Math.min(intention.minutesLeft, intention.visitMinutesMax)
@@ -497,6 +498,39 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
     minutesInput.value = String(Math.min(maxMinutes, Math.max(1, Number(draft.minutes) || 10)));
     minutesLabel.appendChild(minutesInput);
     fields.appendChild(minutesLabel);
+
+    // One tap for the usual lengths: typing a number into a phone's keypad
+    // is the fiddliest part of the gate, and most visits are one of these.
+    // Only lengths that fit in what is left are offered, plus the rest of it.
+    const presets = [...new Set([5, 10, 15, 30].filter(m => m < maxMinutes).concat(maxMinutes))];
+    if (presets.length > 1) {
+      const row = document.createElement('div');
+      row.className = 'int-visit-presets';
+      row.setAttribute('role', 'group');
+      row.setAttribute('aria-label', 'Quick lengths');
+      const buttons = [];
+      const mark = () => {
+        for (const b of buttons) {
+          b.setAttribute('aria-pressed', String(Number(minutesInput.value) === b.minutes));
+        }
+      };
+      for (const m of presets) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'int-visit-preset';
+        b.minutes = m;
+        b.textContent = m === maxMinutes && m > 30 ? `All ${m} min` : `${m} min`;
+        b.addEventListener('click', () => {
+          minutesInput.value = String(m);
+          changed();
+        });
+        buttons.push(b);
+        row.appendChild(b);
+      }
+      markPreset = mark;
+      mark();
+      fields.appendChild(row);
+    }
   }
 
   const read = () => {
@@ -508,6 +542,7 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
   const changed = () => {
     draft.reason = reasonInput.value;
     if (minutesInput) draft.minutes = minutesInput.value;
+    markPreset();
     onChange(read());
   };
   reasonInput.addEventListener('input', changed);

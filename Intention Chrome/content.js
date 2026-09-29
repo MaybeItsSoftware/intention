@@ -305,6 +305,35 @@ const OVERLAY_CSS = `/* The gate and status badge's own tokens, declared on thei
 
 #intention-root .int-visit-minutes { max-width: 140px; }
 
+#intention-root .int-visit-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+
+#intention-root .int-visit-preset {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+#intention-root .int-visit-preset[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+@media (max-width: 520px) {
+  #intention-root .int-visit-minutes { max-width: none; }
+  #intention-root .int-actions > button { flex: 1 1 100%; }
+}
+
 #intention-root .int-solid-btn {
   border: 1px solid var(--ink);
   background: var(--ink);

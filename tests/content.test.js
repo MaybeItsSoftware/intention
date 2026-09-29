@@ -442,6 +442,30 @@ describe('when the background never answers', () => {
     });
   });
 
+  it('offers one-tap visit lengths that fit in the time left', async () => {
+    vi.useFakeTimers();
+    const sent = [];
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: (message, cb) => {
+        if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { mode: 'dailyTime', dailyMinutes: 30, minutesUsed: 18, minutesLeft: 12, opens: 0, opensUsed: 0 } });
+        if (message.action === 'intentionGrant') { sent.push(message); cb({ grantedSession: { intervalMinutes: message.minutes } }); }
+      }
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    const presets = dom.created.filter(el => el.className === 'int-visit-preset');
+    expect(presets.map(b => b.textContent)).toEqual(['5 min', '10 min', '12 min']);
+    const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
+    reason.value = 'Reply to a message';
+    reason._on.input[0]();
+    presets[0]._on.click[0]();
+    expect(presets[0].getAttribute('aria-pressed')).toBe('true');
+    expect(presets[1].getAttribute('aria-pressed')).toBe('false');
+    press(dom.created.find(el => el.className === 'int-solid-btn'));
+    expect(sent[0]).toMatchObject({ minutes: 5 });
+    vi.useRealTimers();
+  });
+
   it('retries before giving up on the background', async () => {
     vi.useFakeTimers();
     let attempts = 0;
