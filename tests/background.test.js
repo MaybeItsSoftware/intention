@@ -2204,6 +2204,20 @@ describe('loosening from settings waits until tomorrow', () => {
     expect(chrome.storage._store.domainLimits['instagram.com'].maxGrants).toBe(2);
   });
 
+  it('a later tightening of a daily budget supersedes a queued raise', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: { ...BLOCKED, domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 30 } } }
+    });
+    await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'increase_limit', domain: 'instagram.com', newValue: { intentionMode: 'dailyTime', dailyTimeMinutes: 60 } },
+      EXT_PAGE
+    );
+    expect(chrome.storage._store.pendingChanges).toHaveLength(1);
+    await ctx.saveSettings({ domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 20 } } });
+    expect(chrome.storage._store.pendingChanges).toEqual([]);
+    expect(chrome.storage._store.domainLimits['instagram.com'].dailyTimeMinutes).toBe(20);
+  });
+
   // The direction guard behind the UI: a whole-map write cannot raise an
   // intention, field by field, while a tightening in the same write stands.
   it('saveSettings holds a raised intention at its stored value', async () => {
@@ -4938,11 +4952,101 @@ describe('appInstalled', () => {
     expect(chrome.storage._store.appLimits['com.instagram.android']).toEqual(own);
   });
 
+  it('does not put back an app that was removed from the list', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed({
+      blockedApps: ['com.instagram.android'], appLimits: { 'com.instagram.android': RULE }
+    }) });
+    await ctx.applySettingChange({ changeType: 'remove_app', domain: 'com.instagram.android' });
+    expect(chrome.storage._store.appLinkDeclined).toEqual(['com.instagram.android']);
+    const res = await ctx.handleMessage(
+      { action: 'appInstalled', packageName: 'com.instagram.android' }, NATIVE);
+    expect(res.linked).toBeNull();
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+
   it('is refused from a web page', async () => {
     const { ctx, chrome } = loadBackground({ seed: seed() });
     const res = await ctx.handleMessage(
       { action: 'appInstalled', packageName: 'com.instagram.android' }, tab(1));
     expect(res.error).toBeTruthy();
     expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+});
+
+// iOS blocks apps as one Screen Time selection under the 'apps' target, which
+// had no rule until the Blocked apps card offered one (IOS_APPS_TARGET).
+describe('the iOS apps target', () => {
+  it('reads as a daily budget of minutes before anything is stored for it', async () => {
+    const { ctx } = loadBackground({ seed: CONFIGURED });
+    const intention = await ctx.getIntention('apps');
+    expect(intention.mode).toBe('dailyTime');
+    expect(intention.dailyMinutes).toBe(30);
+  });
+
+  it('cannot be raised by its first write', async () => {
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED });
+    await ctx.saveSettings({ appLimits: { apps: { intentionMode: 'dailyTime', dailyTimeMinutes: 240 } } });
+    expect((await ctx.getIntention('apps')).dailyMinutes).toBe(30);
+    await ctx.saveSettings({ appLimits: { apps: { intentionMode: 'dailyTime', dailyTimeMinutes: 15 } } });
+    expect(chrome.storage._store.appLimits.apps.dailyTimeMinutes).toBe(15);
+  });
+});
+
+// Android, sweeping for installs the listener missed (linkInstalledApps).
+describe('appsInstalled', () => {
+  const SETUP_AT = Date.parse('2026-09-01T09:00:00');
+  const seed = (extra = {}) => ({
+    ...CONFIGURED,
+    setupComplete: true,
+    setupCompletedAt: SETUP_AT,
+    blockedDomains: ['instagram.com', 'youtube.com'],
+    domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 20 } },
+    blockedApps: [], appLimits: {}, appLabels: {},
+    ...extra
+  });
+  const sweep = (ctx, apps) => ctx.handleMessage({ action: 'appsInstalled', apps }, NATIVE);
+
+  it('links an app installed after setup whose site is blocked', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    const res = await sweep(ctx, [
+      { packageName: 'com.instagram.android', label: 'Instagram', installedAt: SETUP_AT + 86400000 },
+      { packageName: 'com.example.notes', label: 'Notes', installedAt: SETUP_AT + 86400000 }
+    ]);
+    expect(res.linked).toEqual(['com.instagram.android']);
+    expect(chrome.storage._store.blockedApps).toEqual(['com.instagram.android']);
+    expect(chrome.storage._store.appLimits['com.instagram.android'])
+      .toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 20 });
+  });
+
+  it('leaves an app that was already installed at setup', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed() });
+    const res = await sweep(ctx, [
+      { packageName: 'com.instagram.android', label: 'Instagram', installedAt: SETUP_AT - 86400000 }
+    ]);
+    expect(res.linked).toEqual([]);
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+
+  it('falls back to the first day with usage when setup has no timestamp', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed({
+      setupCompletedAt: undefined, dailyStats: { '2026-09-10': {} }
+    }) });
+    await sweep(ctx, [
+      { packageName: 'com.instagram.android', installedAt: Date.parse('2026-09-05T12:00:00') },
+      { packageName: 'com.google.android.youtube', installedAt: Date.parse('2026-09-12T12:00:00') }
+    ]);
+    expect(chrome.storage._store.blockedApps).toEqual(['com.google.android.youtube']);
+  });
+
+  it('does nothing before setup is finished', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed({ setupComplete: false }) });
+    await sweep(ctx, [{ packageName: 'com.instagram.android', installedAt: Date.now() }]);
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+
+  it('is refused from a web page', async () => {
+    const { ctx } = loadBackground({ seed: seed() });
+    const res = await ctx.handleMessage({ action: 'appsInstalled', apps: [] }, tab(1));
+    expect(res.error).toBeTruthy();
   });
 });

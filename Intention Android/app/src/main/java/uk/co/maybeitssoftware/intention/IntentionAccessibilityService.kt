@@ -20,6 +20,7 @@ class IntentionAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "IntentionAccessService"
         private const val CONTENT_CHECK_THROTTLE_MS = 400L
+        private const val INSTALL_SWEEP_INTERVAL_MS = 10 * 60 * 1000L
         // Fire the re-check just after the session's expiration timestamp so
         // the timestamp comparison in sessionExpiresAt sees it as expired.
         private const val EXPIRY_RECHECK_BUFFER_MS = 250L
@@ -168,6 +169,7 @@ class IntentionAccessibilityService : AccessibilityService() {
                 handler.removeCallbacks(expiryRecheck)
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 recheckForeground()
+                sweepInstalledApps()
             }
         }
     }
@@ -196,6 +198,7 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
     private var installReceiverRegistered = false
+    private var lastInstallSweepAt = 0L
     private var lastForegroundPackage: String? = null
     private var lastPipPauseAt = 0L
     // Which blocked packages have already eaten their one pause for the
@@ -225,6 +228,45 @@ class IntentionAccessibilityService : AccessibilityService() {
         val target = foregroundTarget(root?.packageName?.toString(), root)
         ForegroundPass.sync(applicationContext, target)
         SessionOverlay.sync(applicationContext, target)
+        sweepInstalledApps()
+    }
+
+    // The installs installReceiver could not hear, because this service was
+    // not running for them. Hands the background every launcher app with its
+    // install time; linkInstalledApps in background.js decides which, if any,
+    // arrived after setup as the app of a blocked site. At most every ten
+    // minutes — the screen comes on far more often than apps get installed.
+    private fun sweepInstalledApps() {
+        val now = System.currentTimeMillis()
+        if (now - lastInstallSweepAt < INSTALL_SWEEP_INTERVAL_MS) return
+        lastInstallSweepAt = now
+        val apps = org.json.JSONArray()
+        try {
+            val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            packageManager.queryIntentActivities(launcher, 0)
+                .map { it.activityInfo.packageName }
+                .distinct()
+                .filter { it != packageName }
+                .forEach { pkg ->
+                    val installedAt = try {
+                        packageManager.getPackageInfo(pkg, 0).firstInstallTime
+                    } catch (e: Exception) {
+                        return@forEach
+                    }
+                    apps.put(JSONObject()
+                        .put("packageName", pkg)
+                        .put("label", getAppLabel(pkg))
+                        .put("installedAt", installedAt))
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not list installed apps", e)
+            return
+        }
+        val message = JSONObject().put("action", "appsInstalled").put("apps", apps)
+        BackgroundJsHelper.init(applicationContext)
+        BackgroundJsHelper.sendMessage(message.toString()) { response ->
+            Log.d(TAG, "Install sweep: $response")
+        }
     }
 
     override fun onDestroy() {

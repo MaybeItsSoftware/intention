@@ -146,7 +146,11 @@ final class AppBlockingManager {
     }
 
     func grantPass(minutes: Int) {
-        let mins = max(1, min(60, minutes))
+        // Up to a whole day's budget (MAX_DAILY_MINUTES in shared/rules.js): a
+        // daily-time visit can be as long as the minutes left, and clamping it
+        // shorter here would re-shield the apps while the worker still counts
+        // the visit as running.
+        let mins = max(1, min(240, minutes))
         let startedAt = Date()
         let endsAt = startedAt.addingTimeInterval(TimeInterval(mins * 60))
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {

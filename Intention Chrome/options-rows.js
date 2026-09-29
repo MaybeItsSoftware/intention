@@ -1284,15 +1284,16 @@ function buildRowRedditAllowField(target, label, limitInfo, rerender) {
 // visible, and the rest folded under one disclosure — which parts are blocked
 // and what the target is for are things you set once, not things to scan past
 // on every visit to this page.
-function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReasons, rerender }) {
+// A row's daily allowance, edited: a tightening is saved at once, for free;
+// a loosening goes to requestLoosening. Shared by every blocked row and the
+// iOS Blocked apps card, which has an allowance but no row.
+function buildSavedIntentionField({ target, label, limitInfo, kind, rerender }) {
   const stored = resolveIntention(limitInfo);
-
-  fields.appendChild(buildIntentionField(limitInfo, label, async (next) => {
+  return buildIntentionField(limitInfo, label, async (next) => {
     const state = await getConfig();
     const currentLimits = state[kind.persistKey] || {};
     const before = currentLimits[target] || limitInfo;
     if (!isLoosening(before, next)) {
-      // Fewer or shorter opens: a tightening, saved at once, for free.
       currentLimits[target] = { ...(currentLimits[target] || {}), ...next };
       await sendBg({ action: 'saveSettings', config: { [kind.persistKey]: currentLimits } });
       await rerender();
@@ -1310,7 +1311,11 @@ function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReaso
       subtitle: `From ${describeIntention(stored)} to ${describeIntention(after)}.`,
       onApproved: rerender
     });
-  }));
+  });
+}
+
+function buildRowBody({ li, fields, target, label, limitInfo, kind, serviceReasons, rerender }) {
+  fields.appendChild(buildSavedIntentionField({ target, label, limitInfo, kind, rerender }));
 
   const more = document.createElement('details');
   more.className = 'row-more';

@@ -965,6 +965,24 @@ async function refreshIOSAppsCard() {
     unlockStatusEl.textContent = `${n} app${n === 1 ? '' : 's or categories'} blocked.${passNote}`;
     requestBtn.hidden = false;
   }
+  renderIOSAppsIntention(n > 0);
+}
+
+// The one allowance every Screen Time app shares (IOS_APPS_TARGET): iOS never
+// says which app is which, so there is one budget for the lot of them.
+async function renderIOSAppsIntention(show) {
+  const wrap = document.getElementById('ios-apps-intention');
+  wrap.hidden = !show;
+  wrap.textContent = '';
+  if (!show) return;
+  const config = await getConfig();
+  wrap.appendChild(buildSavedIntentionField({
+    target: IOS_APPS_TARGET,
+    label: 'your blocked apps',
+    limitInfo: limitEntryFor(IOS_APPS_TARGET, config),
+    kind: ROW_KINDS.app,
+    rerender: () => renderIOSAppsIntention(true)
+  }));
 }
 
 // Adding tightens the rules, so it's applied immediately: during setup that
@@ -1145,7 +1163,8 @@ function renderPendingList(state, cardId, listId) {
 }
 
 function describePendingChange(p, labels) {
-  const name = (p.domain && labels[p.domain]) || p.domain || '';
+  const name = (p.domain && labels[p.domain]) ||
+    (p.domain === IOS_APPS_TARGET ? 'Blocked apps' : p.domain) || '';
   switch (p.changeType) {
     case 'remove':
     case 'remove_app': return `Stop blocking ${name}`;

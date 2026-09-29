@@ -59,8 +59,16 @@ function limitEntryFor(target, stored) {
   if (!target || !stored) return null;
   const domainLimits = stored.domainLimits || {};
   const appLimits = stored.appLimits || {};
-  return domainLimits[target] || appLimits[target] || null;
+  return domainLimits[target] || appLimits[target] ||
+    (target === IOS_APPS_TARGET ? NEW_TARGET_INTENTION : null);
 }
+
+// iOS blocks apps as one Screen Time selection, and Screen Time never says
+// which apps are in it, so they share one target and one intention under this
+// key in appLimits. Until that is edited it reads as a new target's intention
+// rather than INTENTION_DEFAULTS: nobody ever chose opens for it, because
+// until the Blocked apps card offered a control there was nowhere to choose.
+const IOS_APPS_TARGET = 'apps';
 
 // Resolve stored counts and durations into bounded whole numbers. Invalid
 // values fall back to the defaults; fractions round down to avoid adding time.

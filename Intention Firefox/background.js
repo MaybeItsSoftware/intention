@@ -1347,6 +1347,12 @@ async function handleMessage(message, sender) {
       if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
       return linkInstalledApp(message.packageName, message.label);
     }
+    // Android, when the accessibility service starts or the screen comes on:
+    // the installs the listener above could not hear. See linkInstalledApps.
+    case 'appsInstalled': {
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      return linkInstalledApps(message.apps);
+    }
     case 'cancelPendingChange': {
       if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
       return cancelPendingChange({ changeType: message.changeType, domain: message.domain });
@@ -2162,7 +2168,9 @@ function holdIntentionDirection(next, stored) {
   const before = (stored && typeof stored === 'object') ? stored : {};
   const out = {};
   for (const [target, entry] of Object.entries(next)) {
-    const prior = before[target];
+    // The iOS apps target has a rule before anything is stored for it (see
+    // limitEntryFor), so its first write is an edit, not an addition.
+    const prior = before[target] || (target === IOS_APPS_TARGET ? NEW_TARGET_INTENTION : undefined);
     if (!entry || typeof entry !== 'object' || !prior || !isLoosening(prior, entry)) {
       out[target] = entry;
       continue;
@@ -2331,10 +2339,11 @@ async function saveSettings(partial) {
 // domainLimits being disjoint, and after today the two rows are edited
 // separately like any other pair.
 //
-// Only ever called for an install, never swept over the installed list. An
-// app already on the phone at setup was offered in the wizard and left out on
-// purpose, and one removed from the list later was removed on purpose;
-// re-adding either would be overruling a decision rather than closing a gap.
+// Never an app already on the phone at setup — it was offered in the wizard
+// and left out on purpose — and never one removed from the list later
+// (appLinkDeclined, written by remove_app); re-adding either would be
+// overruling a decision rather than closing a gap. linkInstalledApps holds the
+// first line; this function holds the second for both callers.
 //
 // Only a site blocked whole-host counts: a blocked "old.reddit.com" says
 // nothing about the Reddit app, a blocked "reddit.com" does.
@@ -2342,9 +2351,9 @@ async function linkInstalledApp(packageName, label) {
   const pkg = String(packageName || '');
   const site = APP_ICON_SITE[pkg];
   if (!site) return { linked: null };
-  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {} } =
-    await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels']);
-  if (blockedApps.includes(pkg)) return { linked: null };
+  const { blockedDomains = [], domainLimits = {}, blockedApps = [], appLimits = {}, appLabels = {}, appLinkDeclined = [] } =
+    await getStorage(['blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'appLinkDeclined']);
+  if (blockedApps.includes(pkg) || appLinkDeclined.includes(pkg)) return { linked: null };
   const domain = blockedDomains.find(d => hostMatchesDomain(site, d));
   if (!domain) return { linked: null };
 
@@ -2356,6 +2365,38 @@ async function linkInstalledApp(packageName, label) {
   if (name) write.appLabels = { ...appLabels, [pkg]: name };
   await setStorage(write);
   return { linked: domain };
+}
+
+// The sweep behind the install listener. PACKAGE_ADDED only reaches a running
+// accessibility service, so an app installed while it was off — killed by a
+// battery saver, not yet switched on, the phone restoring from a backup —
+// was never heard about, and stayed a way round its site's block for good.
+// Android sends the launcher apps with their install times whenever the
+// service starts and when the screen comes on, and each one installed after
+// setup goes through the same check a live install does.
+//
+// "After setup" is what separates an app that arrived later from one that was
+// offered in the wizard and left out. Installs from before setupCompletedAt
+// existed have no such stamp; for them, the first day with usage stands in,
+// as it does for the leaving conversation. With neither there is nothing to
+// go on, and nothing is linked.
+async function linkInstalledApps(apps) {
+  const { setupComplete = false, setupCompletedAt = 0, dailyStats = {} } =
+    await getStorage(['setupComplete', 'setupCompletedAt', 'dailyStats']);
+  if (!setupComplete) return { linked: [] };
+  let since = Number(setupCompletedAt) || 0;
+  const firstDay = Object.keys(dailyStats || {}).sort()[0];
+  if (!since && firstDay) since = Date.parse(`${firstDay}T00:00:00`) || 0;
+  if (!since) return { linked: [] };
+
+  const linked = [];
+  for (const app of Array.isArray(apps) ? apps : []) {
+    if (!app || !APP_ICON_SITE[app.packageName]) continue;
+    if (!(Number(app.installedAt) > since)) continue;
+    const res = await linkInstalledApp(app.packageName, app.label);
+    if (res.linked) linked.push(app.packageName);
+  }
+  return { linked };
 }
 
 // Keeps a "credit remaining" indicator live after every message, rather than
@@ -3086,7 +3127,14 @@ async function applySettingChange({ domain, changeType, newValue }) {
     const labels = { ...appLabels };
     delete limits[domain];
     delete labels[domain];
-    await setStorage({ blockedApps: apps, appLimits: limits, appLabels: labels });
+    const write = { blockedApps: apps, appLimits: limits, appLabels: labels };
+    // An app with a website of its own would otherwise be put straight back
+    // by linkInstalledApps the next time the screen came on.
+    if (APP_ICON_SITE[domain]) {
+      const { appLinkDeclined = [] } = await getStorage(['appLinkDeclined']);
+      if (!appLinkDeclined.includes(domain)) write.appLinkDeclined = [...appLinkDeclined, domain];
+    }
+    await setStorage(write);
     return { changeType, domain, blockedApps: apps, appLimits: limits };
   }
 
@@ -3474,7 +3522,8 @@ async function dropSupersededRaises(partial) {
     return new Set(Object.keys(next).filter(t => {
       const a = resolveIntention(before[t]);
       const b = resolveIntention(next[t]);
-      return a.opens !== b.opens || a.minutesEach !== b.minutesEach;
+      return a.mode !== b.mode || a.dailyMinutes !== b.dailyMinutes ||
+        a.opens !== b.opens || a.minutesEach !== b.minutesEach;
     }));
   };
   const sites = changed('domainLimits');
