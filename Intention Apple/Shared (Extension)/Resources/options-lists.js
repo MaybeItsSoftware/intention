@@ -236,11 +236,31 @@ function renderSetupDomains() {
   // iOS: the apps page came before this one, so a site picked here whose app
   // was not picked there gets a nudge and a way straight back to the picker.
   if (HAS_IOS_APP_BLOCKING) {
-    const reminder = document.getElementById('setup-ios-app-reminder');
-    const pick = document.getElementById('setup-ios-app-reminder-btn');
+    const reminder = document.getElementById('setup-app-reminder');
+    const pick = document.getElementById('setup-app-reminder-btn');
     reminder.textContent = iosAppReminderText(setupBlockedDomains);
     reminder.hidden = pick.hidden = !reminder.textContent;
-    bindOnce('setup-ios-app-reminder-btn', 'click', () => window.intentionScreenTime.pickApps(() => {}));
+    bindOnce('setup-app-reminder-btn', 'click', () => window.intentionScreenTime.pickApps(() => {}));
+  }
+  // Android: the apps page came first here too, but this phone can say which
+  // of the sites picked here have their app installed, so it offers to block
+  // them in one tap rather than sending anyone back a page.
+  if (HAS_APP_BLOCKING) {
+    const reminder = document.getElementById('setup-app-reminder');
+    const add = document.getElementById('setup-app-reminder-btn');
+    getInstalledApps().then(installed => {
+      const missing = unblockedAppsForSites(setupBlockedDomains, installed, setupBlockedApps);
+      reminder.hidden = add.hidden = !missing.length;
+      if (!missing.length) return;
+      const one = missing.length === 1;
+      reminder.textContent = `The ${appListPhrase(missing)} app${one ? ' is' : 's are'} on this phone. ` +
+        `Blocking only the website leaves ${one ? 'the app' : 'the apps'} open.`;
+      add.textContent = one ? `Block the ${missing[0].label || 'app'} app too` : 'Block these apps too';
+      add.onclick = () => {
+        for (const app of missing) addSetupApp(app);
+        renderSetupDomains();
+      };
+    });
   }
   const list = document.getElementById('setup-websites-list');
   list.innerHTML = '';

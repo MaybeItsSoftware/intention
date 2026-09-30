@@ -133,6 +133,24 @@ function appNamesForSites(domains) {
   return names;
 }
 
+// Android: the installed apps that are the same service as a blocked site but
+// are not blocked themselves — the Instagram app on a phone where only
+// instagram.com is on the list. Only a whole-host site counts, as in
+// appNamesForSites. `installed` is the bridge's [{ packageName, label }].
+function unblockedAppsForSites(domains, installed, blockedApps) {
+  const blocked = new Set(blockedApps || []);
+  return (installed || []).filter(app => {
+    const site = app && APP_ICON_SITE[app.packageName];
+    return site && !blocked.has(app.packageName) &&
+      (domains || []).some(d => site === d || site.endsWith(`.${d}`));
+  });
+}
+
+// "Instagram" / "Instagram and YouTube" for a reminder line.
+function appListPhrase(apps) {
+  return new Intl.ListFormat('en', { type: 'conjunction' }).format(apps.map(a => a.label || a.packageName));
+}
+
 // Resolve marks independently of rule keys: a subdomain can share its site's
 // branding while retaining its own limits and answers. All marks are bundled,
 // so rendering a user's blocklist never contacts a favicon service or the site.

@@ -140,3 +140,24 @@ describe('appNamesForSites', () => {
     expect(S.appNamesForSites(undefined)).toEqual([]);
   });
 });
+
+// Android offers to block the app of a blocked site (options.js).
+describe('unblockedAppsForSites', () => {
+  const S = loadSource('sites.js');
+  const installed = [
+    { packageName: 'com.instagram.android', label: 'Instagram' },
+    { packageName: 'com.reddit.frontpage', label: 'Reddit' },
+    { packageName: 'com.google.android.youtube', label: 'YouTube' },
+    { packageName: 'com.example.notes', label: 'Notes' }
+  ];
+  it('finds installed apps of blocked sites that are not blocked themselves', () => {
+    const got = S.unblockedAppsForSites(['instagram.com', 'old.reddit.com', 'youtube.com'], installed, ['com.google.android.youtube']);
+    expect(got.map(a => a.packageName)).toEqual(['com.instagram.android']);
+  });
+  it('is empty with nothing to go on', () => {
+    expect(S.unblockedAppsForSites(undefined, undefined, undefined)).toEqual([]);
+  });
+  it('names them in a list', () => {
+    expect(S.appListPhrase(installed.slice(0, 2))).toBe('Instagram and Reddit');
+  });
+});

@@ -1006,6 +1006,7 @@ async function addDomainToBlocklist(domain) {
   limits[domain] = { ...NEW_TARGET_INTENTION };
   await sendBg({ action: 'saveSettings', config: { blockedDomains: domains, domainLimits: limits } });
   renderDomains(domains, limits, state.serviceReasons || {});
+  refreshAndroidAppReminder();
   return true;
 }
 
@@ -1596,8 +1597,32 @@ function removeApp(pkg, label) {
   });
 }
 
+// Android: a blocked site whose app is on the phone but not blocked is a way
+// round the site. Installs after setup are linked by the background on their
+// own (linkInstalledApps); one that was already here is offered instead.
+async function refreshAndroidAppReminder() {
+  if (!HAS_APP_BLOCKING) return;
+  const text = document.getElementById('android-app-reminder');
+  const btn = document.getElementById('android-app-reminder-btn');
+  const { blockedDomains = [], blockedApps = [] } = await getConfig();
+  const missing = unblockedAppsForSites(blockedDomains, await getInstalledApps(), blockedApps);
+  text.hidden = btn.hidden = !missing.length;
+  if (!missing.length) return;
+  const one = missing.length === 1;
+  text.textContent = `${appListPhrase(missing)} ${one ? 'is' : 'are'} blocked on the web, but ` +
+    `${one ? 'its app' : 'their apps'} on this phone ${one ? 'isn’t' : 'aren’t'}.`;
+  btn.textContent = one ? `Block the ${missing[0].label || 'app'} app too` : 'Block these apps too';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    for (const app of missing) await addApp(app);
+    btn.disabled = false;
+    refreshAndroidAppReminder();
+  };
+}
+
 function renderApps(apps, limits = {}, labels = {}, serviceReasons = {}) {
   settingsBlockedApps = apps;
+  refreshAndroidAppReminder();
   renderAppRecommendations('apps-recommend-grid', 'apps-recommend-more', apps);
   const list = document.getElementById('app-list');
   list.innerHTML = '';

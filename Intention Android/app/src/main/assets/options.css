@@ -2712,3 +2712,6 @@ button.history-more:hover { background: none; color: var(--ink); }
   font-size: 14px;
   line-height: 1.6;
 }
+
+/* The app-for-a-blocked-site reminder under the Blocked apps list (Android). */
+#android-app-reminder { margin: 16px 0 10px; }
