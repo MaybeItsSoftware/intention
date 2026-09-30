@@ -371,6 +371,14 @@ describe('when the background never answers', () => {
       expect(intention(dom)).toEqual({ opens: 2, minutesEach: 5 });
     });
 
+    it('paints a daily budget as unspent rather than used up', async () => {
+      const dom = await gateWith({
+        domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 20 } }
+      });
+      expect(intention(dom)).toMatchObject({ mode: 'dailyTime', dailyMinutes: 20, minutesLeft: 20 });
+      expect(dom.created.some(el => el.className === 'int-visit-preset')).toBe(true);
+    });
+
     it('falls back to the built-in defaults when nothing is configured', async () => {
       const dom = await gateWith({});
       expect(intention(dom)).toEqual({ opens: 3, minutesEach: 10 });

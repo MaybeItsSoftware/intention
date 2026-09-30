@@ -1100,6 +1100,13 @@ async function checkFromStorage(host) {
   // not read (it is a year of history). The gate asks the background for the
   // live count when it renders; until then it paints the intention alone.
   matchedIntention = resolveIntention(partEntry);
+  // Likewise minutes: unknown here, so painted as the whole day's, just as
+  // opens paint as none used. Left undefined, the gate read a daily budget as
+  // spent and sent them to the coach; the grant itself is checked by the
+  // background against what was really used.
+  if (matchedIntention.mode === 'dailyTime') {
+    matchedIntention = { ...matchedIntention, minutesUsed: 0, minutesLeft: matchedIntention.dailyMinutes };
+  }
 
   // Which part of the site this is, asked here for the same reason everything
   // else on this path is: Safari suspends the background page, so this is
