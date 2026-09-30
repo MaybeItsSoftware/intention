@@ -497,7 +497,7 @@ function wireIntentionStep() {
 
   const modes = document.getElementById('setup-intention-mode');
   modes.textContent = '';
-  for (const [mode, title] of [['dailyTime', 'Set total minutes per day'], ['opens', 'Set visits per day']]) {
+  for (const [mode, title] of [['dailyTime', 'Minutes a day'], ['opens', 'Visits a day']]) {
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'setup-mode-chip';
@@ -512,7 +512,7 @@ function wireIntentionStep() {
 
   const daily = document.getElementById('setup-intention-daily');
   daily.textContent = '';
-  setupDailyMinutesControl = buildIntentionStepper({ value: 30, min: 0, max: MAX_DAILY_MINUTES,
+  setupDailyMinutesControl = buildIntentionStepper({ value: 30, min: 0, max: MAX_DAILY_MINUTES, step: 5,
     label: 'Total minutes per day', unit: 'min / day',
     onChange: minutes => change(i => ({ ...i, dailyMinutes: minutes })) });
   daily.appendChild(setupDailyMinutesControl);

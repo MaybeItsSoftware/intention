@@ -221,11 +221,12 @@ async function main() {
       startDraft?.intentionMode === 'dailyTime' && startDraft?.dailyTimeMinutes === 30, JSON.stringify(startDraft));
 
     await page.click('#setup-intention-mode [data-mode="dailyTime"]');
-    await page.locator('#setup-intention-daily input').fill('60');
+    // Typed minutes are kept exactly; the buttons move to the next five.
+    await page.locator('#setup-intention-daily input').fill('62');
     await page.locator('#setup-intention-daily input').dispatchEvent('change');
     await page.locator('#setup-intention-daily .stepper-btn').last().click();
-    const oneMinuteMore = await page.evaluate(() => setupDomainLimits['instagram.com'].dailyTimeMinutes);
-    record('daily minute plus adjusts by exactly one minute', oneMinuteMore === 61, String(oneMinuteMore));
+    const stepMore = await page.evaluate(() => setupDomainLimits['instagram.com'].dailyTimeMinutes);
+    record('daily minute plus moves up to the next five', stepMore === 65, String(stepMore));
     await page.locator('#setup-intention-daily .stepper-btn').first().click();
     await page.click('#setup-intention-mode [data-mode="dailyTime"]');
     const timeDraft = await page.evaluate(() => setupDomainLimits['instagram.com']);

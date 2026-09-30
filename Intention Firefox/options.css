@@ -473,8 +473,15 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   .stepper-btn { min-width: 44px; }
   .intention-stepper .stepper-input { font-size: 16px; }
 }
-@media (max-width: 420px) {
-  .intention-modes { display: grid; grid-template-columns: 1fr; }
+/* A segmented pair: two halves of one control, side by side at every width.
+   Short labels ("Minutes a day") are what let it fit a 320px phone. */
+.intention-modes { display: grid; grid-template-columns: 1fr 1fr; }
+.intention-modes .chip { text-align: center; }
+.intention-minutes.intention-modes .chip.selected {
+  border-color: var(--primary);
+  background: var(--primary-fill);
+  color: var(--primary-text);
+  font-weight: 700;
 }
 
 /* Parts and purpose, folded under one hairline disclosure. */
@@ -663,6 +670,17 @@ ul#app-list li.list-empty, ul#setup-apps-list li.list-empty {
   .row-scope-toggle { flex-direction: column; align-items: stretch; }
   .row-parts-field > .row-field-control > .row-scope-toggle { flex: 1; }
   .row-scope-toggle > .row-scope-btn { min-height: 44px; text-align: left; }
+  /* Stacked, the pill's rounded ends became one tall oval drawn across all
+     three options. A column is a list: square 6px corners, hairlines between
+     the rows rather than beside them. */
+  .row-mode-toggle.row-scope-toggle { border-radius: var(--radius-control); }
+  .row-scope-toggle > .row-mode-btn { border-radius: 0; }
+  .row-scope-toggle > .row-mode-btn:first-child { border-radius: var(--radius-control) var(--radius-control) 0 0; }
+  .row-scope-toggle > .row-mode-btn:last-child { border-radius: 0 0 var(--radius-control) var(--radius-control); }
+  .row-scope-toggle > .row-mode-btn + .row-mode-btn {
+    border-left: 0;
+    border-top: 1px solid var(--border-input);
+  }
   .row-parts-list > .row-parts-add { min-height: 44px; }
 }
 
@@ -1354,9 +1372,9 @@ html:has(#setup-view:not([hidden])) .container {
   font: inherit;
   cursor: pointer;
 }
-.setup-mode-chip.selected { border-color: var(--ink); background: var(--hover); font-weight: 700; }
+.setup-mode-chip.selected { border-color: var(--primary); background: var(--primary-fill); color: var(--primary-text); font-weight: 700; }
 #setup-intention-daily-wrap { margin: 0 0 16px; }
-#setup-intention-daily-wrap .setup-field-label { margin: 0 0 10px; }
+#setup-intention-daily-wrap .setup-sub, #setup-intention-minutes-wrap .setup-sub { text-align: center; }
 #setup-intention-daily, #setup-intention-minutes { display: flex; justify-content: center; margin-bottom: 14px; }
 
 .setup-sum {
@@ -2532,9 +2550,18 @@ button.history-more:hover { background: none; color: var(--ink); }
      characters of domain, so "instagram.com" arrived as "instagram…". The mark
      and the name take the line — the basis is the row minus the mark and its
      gap — and everything else wraps under them. */
+  /* The head holds only the mark, the name and Remove now that the
+     allowance controls live below it, so they share one line: the name gives
+     way (ellipsis, full name in its title) rather than pushing Remove onto a
+     line of its own. */
   .row-head .domain-name {
-    flex-basis: calc(100% - 46px);
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .row-head { flex-wrap: nowrap; }
 
   ul#domain-list li .delete-btn, ul#setup-websites-list li .delete-btn,
   ul#app-list li .delete-btn, ul#setup-apps-list li .delete-btn {

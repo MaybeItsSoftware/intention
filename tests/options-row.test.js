@@ -240,15 +240,15 @@ describe('the intention', () => {
     expect(saved[0].domainLimits['instagram.com'].passMinutes).toBe(7);
   });
 
-  it('a single daily minute more is deferred while a single minute less saves', async () => {
+  it('a step more of daily time is deferred while a step less saves, in fives', async () => {
     config.domainLimits['instagram.com'] = { intentionMode: 'dailyTime', dailyTimeMinutes: 47 };
     let fields = build().fields;
     await fire(stepper(fields)[1], 'click');
     expect(saved).toEqual([]);
-    expect(gates[0].newValue.dailyTimeMinutes).toBe(48);
+    expect(gates[0].newValue.dailyTimeMinutes).toBe(50);
     fields = build().fields;
     await fire(stepper(fields)[0], 'click');
-    expect(saved[0].domainLimits['instagram.com'].dailyTimeMinutes).toBe(46);
+    expect(saved[0].domainLimits['instagram.com'].dailyTimeMinutes).toBe(45);
   });
 
   it('restores empty inputs and clamps custom minutes to the supported bounds', async () => {
@@ -280,7 +280,7 @@ describe('the intention', () => {
 
   it('switching to a daily budget opens an unsaved draft instead of deferring', async () => {
     const { fields } = build();
-    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(chip(fields, 'Minutes a day'), 'click');
     expect(saved).toEqual([]);
     expect(gates).toEqual([]);
     expect(findAll(fields, 'micro-label').map(l => l.textContent)).toEqual(['Daily allowance', 'Total minutes per day']);
@@ -290,15 +290,15 @@ describe('the intention', () => {
 
   it('lowering the draft budget saves the switch straight away', async () => {
     const { fields } = build();
-    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(chip(fields, 'Minutes a day'), 'click');
     await fire(stepper(fields)[0], 'click');
     expect(gates).toEqual([]);
-    expect(saved[0].domainLimits['instagram.com']).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 29, maxGrants: 3, passMinutes: 10 });
+    expect(saved[0].domainLimits['instagram.com']).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 25, maxGrants: 3, passMinutes: 10 });
   });
 
   it('saving the draft at the same total asks for it as a loosening', async () => {
     const { fields } = build();
-    await fire(chip(fields, 'Set total minutes per day'), 'click');
+    await fire(chip(fields, 'Minutes a day'), 'click');
     await fire(findAll(fields, 'secondary').find(b => b.textContent === 'Save'), 'click');
     expect(saved).toEqual([]);
     expect(gates[0].newValue).toEqual({ intentionMode: 'dailyTime', dailyTimeMinutes: 30 });
@@ -306,8 +306,8 @@ describe('the intention', () => {
 
   it('the original chip puts the draft back', async () => {
     const { fields } = build();
-    await fire(chip(fields, 'Set total minutes per day'), 'click');
-    await fire(chip(fields, 'Set visits per day'), 'click');
+    await fire(chip(fields, 'Minutes a day'), 'click');
+    await fire(chip(fields, 'Visits a day'), 'click');
     expect(findAll(fields, 'stepper-input').map(i => i.value)).toEqual(['3', '10']);
     expect(saved).toEqual([]);
     expect(gates).toEqual([]);
@@ -316,7 +316,7 @@ describe('the intention', () => {
   it('a switch that is already a tightening still saves at once', async () => {
     config.domainLimits['instagram.com'] = { intentionMode: 'dailyTime', dailyTimeMinutes: 30 };
     const { fields } = build();
-    await fire(chip(fields, 'Set visits per day'), 'click');
+    await fire(chip(fields, 'Visits a day'), 'click');
     expect(saved[0].domainLimits['instagram.com']).toMatchObject({ intentionMode: 'opens', maxGrants: 3, passMinutes: 10 });
   });
 

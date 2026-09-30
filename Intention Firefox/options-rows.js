@@ -110,7 +110,10 @@ function buildInfoAffordance(labelText, text) {
 
 // Whole-number control shared by settings and setup. The caller owns saving;
 // the displayed value stays at the active rule until the caller repaints it.
-function buildIntentionStepper({ value, min, max, label, unit = '', onChange }) {
+// `step` is how far − and + move, to the next multiple of it: a daily budget
+// counted in single minutes took thirty taps to go from half an hour to an
+// hour. Typing still takes any whole number.
+function buildIntentionStepper({ value, min, max, label, unit = '', step = 1, onChange }) {
   const wrap = document.createElement('div');
   wrap.className = 'intention-opens intention-stepper';
   const minus = document.createElement('button');
@@ -144,8 +147,8 @@ function buildIntentionStepper({ value, min, max, label, unit = '', onChange }) 
     const bounded = Math.max(min, Math.min(max, Math.floor(next)));
     if (bounded !== current) return onChange(bounded);
   };
-  minus.addEventListener('click', () => change(current - 1));
-  plus.addEventListener('click', () => change(current + 1));
+  minus.addEventListener('click', () => change(Math.ceil(current / step) * step - step));
+  plus.addEventListener('click', () => change(Math.floor(current / step) * step + step));
   input.addEventListener('change', () => {
     if (input.value.trim() === '') return paint();
     return change(input.value);
@@ -179,7 +182,7 @@ function buildIntentionField(entry, ariaName, onChange, savedEntry = null) {
   modes.className = 'intention-minutes intention-modes';
   modes.setAttribute('role', 'group');
   modes.setAttribute('aria-label', `Allowance type for ${ariaName}`);
-  for (const [mode, title] of [['dailyTime', 'Set total minutes per day'], ['opens', 'Set visits per day']]) {
+  for (const [mode, title] of [['dailyTime', 'Minutes a day'], ['opens', 'Visits a day']]) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'chip';
@@ -224,7 +227,7 @@ function buildIntentionField(entry, ariaName, onChange, savedEntry = null) {
     field.append(hint, save);
   };
   if (current.mode === 'dailyTime') {
-    const daily = buildIntentionStepper({ value: current.dailyMinutes, min: 0, max: MAX_DAILY_MINUTES,
+    const daily = buildIntentionStepper({ value: current.dailyMinutes, min: 0, max: MAX_DAILY_MINUTES, step: 5,
       label: `Daily minutes for ${ariaName}`, unit: 'min / day',
       onChange: minutes => onChange({ intentionMode: 'dailyTime', dailyTimeMinutes: minutes }) });
     controls.appendChild(buildRowField(microLabel('Total minutes per day'), daily));
