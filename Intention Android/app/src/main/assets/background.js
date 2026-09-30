@@ -1875,7 +1875,7 @@ function sanitizeServiceReasons(raw) {
 
 async function getFullConfig() {
   await applyDuePendingChanges();
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'leaveDelayMinutes', 'setupCompletedAt', 'pendingChanges'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'leaveDelayMinutes', 'setupCompletedAt', 'pendingChanges', 'screenTimeClearPending'];
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -1904,6 +1904,7 @@ async function getFullConfig() {
     // nothing selected. normalizeLeaveDelay only ever snaps down.
     leaveDelayMinutes: normalizeLeaveDelay(stored.leaveDelayMinutes),
     setupCompletedAt: Number(stored.setupCompletedAt) || 0,
+    screenTimeClearPending: stored.screenTimeClearPending === true,
     providers: PROVIDERS
   };
 }
@@ -3280,7 +3281,10 @@ async function applySettingChange({ domain, changeType, newValue }) {
   // — which applySettingChange's callers already treat as "not approved".
 
   if (changeType === 'disable_all') {
-    await setStorage({ blockedDomains: [], blockedApps: [], appLimits: {}, appLabels: {} });
+    // iOS apps are blocked by a Screen Time selection this worker cannot
+    // reach; the flag asks the settings page, which can, to clear it the next
+    // time it loads (refreshIOSAppsCard). Harmless anywhere else.
+    await setStorage({ blockedDomains: [], blockedApps: [], appLimits: {}, appLabels: {}, screenTimeClearPending: true });
     await syncBlockingRules();
     return { changeType, blockedDomains: [], blockedApps: [] };
   }

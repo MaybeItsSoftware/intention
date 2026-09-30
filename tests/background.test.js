@@ -5101,3 +5101,14 @@ describe('appsInstalled', () => {
     expect(res.error).toBeTruthy();
   });
 });
+
+// iOS: approving "Disable all blocking" has to reach the Screen Time
+// selection too, which only the settings page can clear.
+describe('disable_all and Screen Time', () => {
+  it('asks the settings page to clear the Screen Time selection', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { ...CONFIGURED, blockedDomains: ['instagram.com'] } });
+    await ctx.applySettingChange({ changeType: 'disable_all' });
+    expect(chrome.storage._store.screenTimeClearPending).toBe(true);
+    expect((await ctx.handleMessage({ action: 'getConfig' }, EXT_PAGE)).screenTimeClearPending).toBe(true);
+  });
+});

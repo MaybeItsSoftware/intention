@@ -925,7 +925,13 @@ function iosAppReminderText(domains) {
 
 async function refreshIOSAppsCard() {
   const reminderEl = document.getElementById('ios-apps-reminder');
-  const { blockedDomains = [] } = await getConfig();
+  const { blockedDomains = [], screenTimeClearPending = false } = await getConfig();
+  // "Disable all blocking" was approved, now or as a change that came due:
+  // take the Screen Time selection with it, or the apps stay shielded.
+  if (screenTimeClearPending && window.intentionScreenTime.clear) {
+    await new Promise(resolve => window.intentionScreenTime.clear(resolve));
+    await sendBg({ action: 'saveSettings', config: { screenTimeClearPending: false } });
+  }
   reminderEl.textContent = iosAppReminderText(blockedDomains);
   reminderEl.hidden = !reminderEl.textContent;
 
@@ -963,7 +969,10 @@ async function refreshIOSAppsCard() {
       : '';
     statusEl.textContent = `${n} app${n === 1 ? '' : 's or categories'} blocked.${passNote}`;
     unlockStatusEl.textContent = `${n} app${n === 1 ? '' : 's or categories'} blocked.${passNote}`;
-    requestBtn.hidden = false;
+    // Not while a pass runs: there is nothing to ask for, and closing the
+    // gate from here would end the pass in the worker with the apps still
+    // unshielded. "I'm finished" is the way out of a live pass.
+    requestBtn.hidden = !!st.passEndsAt;
   }
   renderIOSAppsIntention(n > 0);
 }

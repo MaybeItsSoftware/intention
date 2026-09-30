@@ -546,8 +546,10 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             }
         case "grantPass":
             let minutes = dict["minutes"] as? Int ?? Int(dict["minutes"] as? Double ?? 0)
-            manager.grantPass(minutes: minutes)
-            invokeBridgeCallback(callbackId, result: ["ok": true])
+            let granted = manager.grantPass(minutes: minutes)
+            invokeBridgeCallback(callbackId, result: granted
+                ? ["ok": true]
+                : ["ok": false, "error": "Screen Time would not schedule the end of this pass."])
         case "endPass":
             manager.endPass()
             invokeBridgeCallback(callbackId, result: ["ok": true])

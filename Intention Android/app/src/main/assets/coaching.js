@@ -476,7 +476,10 @@ function followGrantedSession(grantedSession, delayMs = 600) {
       window.intentionApps.launchApp(domain);
     } else if (isApp && window.intentionScreenTime) {
       // iOS: lift the Screen Time shields for the granted window.
-      window.intentionScreenTime.grantPass(grantedSession.intervalMinutes, () => {
+      window.intentionScreenTime.grantPass(grantedSession.intervalMinutes, (res) => {
+        // Screen Time refused the schedule that ends the pass, so nothing was
+        // lifted. End the worker's pass as well, which gives its time back.
+        if (res && res.ok === false) postTabMessage({ action: 'endSession', domain, reason: 'fulfilled' });
         window.location.href = 'options.html';
       });
     } else if (!isApp && window.intentionApps && browserPackage) {
@@ -548,5 +551,11 @@ closeBtn.addEventListener('click', async () => {
   // immediately — 'walked_away' doesn't close the tab on the background side,
   // so the moment below owns the close timing.
   postTabMessage({ action: 'endSession', domain, reason: 'walked_away' });
+  // iOS: a walk-away retires any pass the worker still holds for the apps, so
+  // Screen Time has to put the shields back with it — otherwise the worker
+  // says the pass is over while the apps stay open until it would have ended.
+  if (isApp && window.intentionScreenTime && window.intentionScreenTime.endPass) {
+    window.intentionScreenTime.endPass(() => {});
+  }
   showWalkAwayMoment(leave, domainStats);
 });

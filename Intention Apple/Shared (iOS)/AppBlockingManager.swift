@@ -145,7 +145,10 @@ final class AppBlockingManager {
         return date > Date() ? date : nil
     }
 
-    func grantPass(minutes: Int) {
+    /// Returns false, leaving everything shielded, when Screen Time will not
+    /// take the schedule that puts the shields back.
+    @discardableResult
+    func grantPass(minutes: Int) -> Bool {
         // Up to a whole day's budget (MAX_DAILY_MINUTES in shared/rules.js): a
         // daily-time visit can be as long as the minutes left, and clamping it
         // shorter here would re-shield the apps while the worker still counts
@@ -153,6 +156,43 @@ final class AppBlockingManager {
         let mins = max(1, min(240, minutes))
         let startedAt = Date()
         let endsAt = startedAt.addingTimeInterval(TimeInterval(mins * 60))
+        // DeviceActivity enforces a minimum interval of 15 minutes, so the
+        // schedule end is clamped. A shorter pass is ended by the schedule's
+        // warning instead: iOS calls intervalWillEndWarning `warningTime`
+        // before the interval ends, and a warning of (15 - mins) minutes lands
+        // exactly when the pass does. Without it a 5-minute pass left the apps
+        // open for 15. intervalDidEnd stays as the backstop, and
+        // reapplyIfPassExpired() still catches anything missed when the app is
+        // next opened.
+        let scheduleMins = max(15, mins)
+        let warningTime = scheduleMins > mins
+            ? DateComponents(minute: scheduleMins - mins)
+            : nil
+        let now = startedAt
+        let end = now.addingTimeInterval(TimeInterval(scheduleMins * 60))
+        let calendar = Calendar.current
+        // Full date components (not just h/m/s) so a pass that crosses
+        // midnight doesn't produce an intervalEnd "earlier" than its start.
+        let components: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
+        let schedule = DeviceActivitySchedule(
+            intervalStart: calendar.dateComponents(components, from: now),
+            intervalEnd: calendar.dateComponents(components, from: end),
+            repeats: false,
+            warningTime: warningTime
+        )
+        let center = DeviceActivityCenter()
+        center.stopMonitoring([Self.passActivityName])
+        // Registered before anything is lifted. A schedule Screen Time turns
+        // down (authorization revoked, too many activities) used to be
+        // swallowed by try? after the shields were already off — leaving the
+        // apps open with nothing to close them until Intention was next opened.
+        do {
+            try center.startMonitoring(Self.passActivityName, during: schedule)
+        } catch {
+            NSLog("Intention: could not schedule the end of a pass, so it was not granted: \(error)")
+            return false
+        }
+
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {
             defaults.set(endsAt.timeIntervalSince1970, forKey: Self.passEndsAtKey)
         }
@@ -177,33 +217,7 @@ final class AppBlockingManager {
             PassExpiryNotifier.shared.scheduleExpiryNotice(at: endsAt, minutes: mins, purpose: purpose)
         }
 
-        // DeviceActivity enforces a minimum interval of 15 minutes, so the
-        // schedule end is clamped. A shorter pass is ended by the schedule's
-        // warning instead: iOS calls intervalWillEndWarning `warningTime`
-        // before the interval ends, and a warning of (15 - mins) minutes lands
-        // exactly when the pass does. Without it a 5-minute pass left the apps
-        // open for 15. intervalDidEnd stays as the backstop, and
-        // reapplyIfPassExpired() still catches anything missed when the app is
-        // next opened.
-        let scheduleMins = max(15, mins)
-        let warningTime = scheduleMins > mins
-            ? DateComponents(minute: scheduleMins - mins)
-            : nil
-        let now = Date()
-        let end = now.addingTimeInterval(TimeInterval(scheduleMins * 60))
-        let calendar = Calendar.current
-        // Full date components (not just h/m/s) so a pass that crosses
-        // midnight doesn't produce an intervalEnd "earlier" than its start.
-        let components: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
-        let schedule = DeviceActivitySchedule(
-            intervalStart: calendar.dateComponents(components, from: now),
-            intervalEnd: calendar.dateComponents(components, from: end),
-            repeats: false,
-            warningTime: warningTime
-        )
-        let center = DeviceActivityCenter()
-        center.stopMonitoring([Self.passActivityName])
-        try? center.startMonitoring(Self.passActivityName, during: schedule)
+        return true
     }
 
     /// Ends a granted pass before its time: "I'm finished". iOS cannot see the
