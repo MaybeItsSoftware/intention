@@ -1807,6 +1807,10 @@ async function getIntention(domain) {
     for (const session of Object.values(stored.activeSessions || {})) {
       if (!session || session.domain !== domain || isBanked(session) ||
           (session.wallExpiresAt && now >= Number(session.wallExpiresAt))) continue;
+      // A browser pass has no wallExpiresAt, and one left on its check-in
+      // overnight is still here in the morning. Its minutes will be banked to
+      // the day it began (recordSessionMinutes), so it reserves none of today.
+      if (session.startTime && dateKey(new Date(Number(session.startTime))) !== dateKey(new Date(now))) continue;
       const elapsed = sessionElapsedMs(session, now) / 60000;
       const duration = Math.max(0, Number(session.intervalMinutes) || 0);
       liveElapsed += Math.min(elapsed, duration);
@@ -1825,7 +1829,23 @@ async function getIntention(domain) {
     };
   }
   const { opens, minutesEach } = resolved;
-  const opensUsed = Math.min(opens, Math.max(0, stats.grantsToday - (stats.negotiatedToday || 0)));
+  // Opens are counted by grants, but a day can also have been spent in
+  // minutes: a target switched from a daily budget to opens after its 30
+  // minutes were used had one grant on the books, and so two "free" opens
+  // left. The free minutes already taken today count too, in opens of this
+  // length. Within a day spent only on opens this is never more than the
+  // grant count — no pass outlasts minutesEach — so nothing changes there.
+  const display = await getDisplayStats();
+  const sessions = display.dailyStats?.[dateKey()]?.[domain]?.sessions || [];
+  let freeMinutes = 0;
+  for (const s of sessions) {
+    if (!s || s.negotiated || s.quickCheck) continue;
+    const used = Number.isFinite(Number(s.usedMinutes)) ? Number(s.usedMinutes) : Number(s.grantedMinutes) || 0;
+    freeMinutes += Math.max(0, used);
+  }
+  const byMinutes = minutesEach > 0 ? Math.ceil(Math.round(freeMinutes * 10) / 10 / minutesEach) : 0;
+  const byGrants = Math.max(0, stats.grantsToday - (stats.negotiatedToday || 0));
+  const opensUsed = Math.min(opens, Math.max(byGrants, byMinutes));
   return { opens, minutesEach, opensUsed, opensLeft: Math.max(0, opens - opensUsed) };
 }
 

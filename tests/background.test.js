@@ -2099,6 +2099,47 @@ describe('daily time allowance', () => {
     expect((await ctx.getIntention('instagram.com')).minutesLeft).toBeLessThanOrEqual(5);
   });
 
+  it('does not hand out free opens after a spent daily budget is switched to opens', async () => {
+    const { ctx, chrome } = loadBackground({ seed: DAILY });
+    await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'Catch up', minutes: 30 }, NATIVE
+    );
+    chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 30 * 60000;
+    await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com', reason: 'done' }, NATIVE);
+    expect((await ctx.getIntention('instagram.com')).minutesLeft).toBe(0);
+
+    await ctx.saveSettings({ domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } });
+    const after = await ctx.getIntention('instagram.com');
+    expect(after.opensLeft).toBe(0);
+    const res = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', reason: 'One more' }, NATIVE
+    );
+    expect(res.grantedSession).toBeUndefined();
+  });
+
+  it("does not reserve today's minutes for a pass left open since yesterday", async () => {
+    const { ctx, chrome } = loadBackground({ seed: {
+      ...DAILY,
+      activeSessions: { '7:instagram.com': {
+        domain: 'instagram.com', intervalMinutes: 20,
+        startTime: Date.now() - 13 * 3600000
+      } }
+    } });
+    const intention = await ctx.getIntention('instagram.com');
+    expect(intention.minutesLeft).toBe(30);
+    expect(chrome.storage._store.activeSessions['7:instagram.com']).toBeTruthy();
+  });
+
+  it('counts a visit cut short as the one open it was, not by its minutes', async () => {
+    const OPENS = { ...CONFIGURED, blockedDomains: ['instagram.com'],
+      domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } };
+    const { ctx, chrome } = loadBackground({ seed: OPENS });
+    await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com', reason: 'Reply' }, NATIVE);
+    chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 2 * 60000;
+    await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com', reason: 'done' }, NATIVE);
+    expect((await ctx.getIntention('instagram.com')).opensLeft).toBe(2);
+  });
+
   it('serializes parallel requests so they cannot both spend the same remaining time', async () => {
     const { ctx } = loadBackground({ seed: DAILY });
     const ask = () => ctx.handleMessage(
