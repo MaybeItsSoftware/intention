@@ -160,13 +160,16 @@ class IntentionAccessibilityService : AccessibilityService() {
     private val dismissedUntil = mutableMapOf<String, Long>()
 
     private val handler = Handler(Looper.getMainLooper())
-    private val expiryRecheck = Runnable { recheckForeground() }
+    private val expiryRecheck = Runnable { expiryArmedFor = null; recheckForeground() }
+    // Which target the pending expiryRecheck is for, so a return to it from
+    // the shade re-arms the timer once rather than on every content event.
+    private var expiryArmedFor: String? = null
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
                 ForegroundPass.sync(applicationContext, null)
                 SessionOverlay.hide(applicationContext)
-                handler.removeCallbacks(expiryRecheck)
+                cancelExpiryRecheck()
             } else if (intent.action == Intent.ACTION_SCREEN_ON) {
                 recheckForeground()
                 sweepInstalledApps()
@@ -273,7 +276,7 @@ class IntentionAccessibilityService : AccessibilityService() {
         if (instance == this) instance = null
         unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
-        handler.removeCallbacks(expiryRecheck)
+        cancelExpiryRecheck()
         // The pass timer is a window this service added to the WindowManager,
         // so it does not go away with the service: left behind it would sit on
         // the user's screen with nothing left to tick it. Both teardown paths
@@ -321,7 +324,20 @@ class IntentionAccessibilityService : AccessibilityService() {
         val target = foregroundTarget(activePackage, activeRoot)
         ForegroundPass.sync(applicationContext, target)
         SessionOverlay.sync(applicationContext, target)
-        if (target == null) handler.removeCallbacks(expiryRecheck)
+        if (target == null) {
+            cancelExpiryRecheck()
+        } else if (target != expiryArmedFor) {
+            // Back on a target after anything else had the screen — the shade,
+            // a dialog, another app. That cancelled the timer above, and an app
+            // like Instagram is one long activity that may never send another
+            // window-state change to re-arm it, leaving the cut-off to an alarm
+            // Android 13+ is free to deliver late. Re-arm once per return.
+            // Marked even when there is no live pass, so a gated target is not
+            // re-read from prefs on every content event; a grant arrives with
+            // a window-state change of its own, which schedules the timer.
+            val expiresAt = sessionExpiresAt(target)
+            if (expiresAt != null) scheduleExpiryRecheck(expiresAt, target) else expiryArmedFor = target
+        }
 
         // Skip our own app packages
         if (packageName == this.packageName) return
@@ -413,6 +429,18 @@ class IntentionAccessibilityService : AccessibilityService() {
         return System.currentTimeMillis() < until
     }
 
+    // A dismissal that ran out while the browser stayed on the same host. The
+    // gate only fires on a host change, so without this a decline that could
+    // not divert the tab (a browser with no blank-page handler) left the site
+    // open for as long as the user stayed on it. True once per dismissal.
+    private fun dismissalLapsed(browserPackage: String, domain: String): Boolean {
+        val key = "$browserPackage|$domain"
+        val until = dismissedUntil[key] ?: return false
+        if (System.currentTimeMillis() < until) return false
+        dismissedUntil.remove(key)
+        return true
+    }
+
     // Once this browser is seen showing anything but the blocked site, the
     // dismissal has done its job. Dropping it here — rather than waiting the
     // full grace period out — is what stops "decline, then close the blank tab"
@@ -448,7 +476,8 @@ class IntentionAccessibilityService : AccessibilityService() {
             // Keep an expiry re-check armed while the user stays on the site,
             // since no further host change will trigger a check.
             scheduleExpiryRecheck(expiresAt)
-        } else if (hostChanged && !isDismissed(packageName, matchedDomain)) {
+        } else if ((hostChanged || dismissalLapsed(packageName, matchedDomain)) &&
+            !isDismissed(packageName, matchedDomain)) {
             Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
             launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
         }
@@ -483,8 +512,17 @@ class IntentionAccessibilityService : AccessibilityService() {
             return
         }
 
+        // A browser in PiP is a blocked SITE still playing (youtube.com went
+        // fullscreen, the coach covered it, Chrome shrank it to a window). The
+        // PiP window has no address bar to read, so the site is the last host
+        // this browser showed — which is the page it was on when it shrank.
         val offender = pipPackages.firstOrNull {
-            it != packageName && isAppBlocked(it) && sessionExpiresAt(it) == null
+            it != packageName && (
+                (isAppBlocked(it) && sessionExpiresAt(it) == null) ||
+                (BROWSER_URL_BAR_IDS.containsKey(it) && lastSeenHost[it]
+                    ?.let { host -> findBlockedDomain(host) }
+                    ?.let { domain -> sessionExpiresAt(domain) == null } == true)
+            )
         } ?: return
 
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -500,7 +538,7 @@ class IntentionAccessibilityService : AccessibilityService() {
 
         lastPipPauseAt = now
         pipPausedOnce.add(offender)
-        Log.d(TAG, "Blocked app $offender playing in PiP without a session — pausing playback")
+        Log.d(TAG, "Blocked $offender playing in PiP without a session — pausing playback")
         // KEYCODE_MEDIA_PAUSE, not PLAY_PAUSE: idempotent, so a mis-aimed
         // dispatch can pause something but never start it.
         audioManager.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PAUSE))
@@ -512,7 +550,7 @@ class IntentionAccessibilityService : AccessibilityService() {
     // check-in alarm fires, so the user is cut off mid-use instead of only on
     // the next app switch or navigation.
     fun recheckForeground() {
-        handler.removeCallbacks(expiryRecheck)
+        cancelExpiryRecheck()
         val root = rootInActiveWindow
         val foreground = root?.packageName?.toString() ?: lastForegroundPackage
         // Expiry is the pass timer's most important moment. This runs when a
@@ -584,10 +622,16 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun scheduleExpiryRecheck(expiresAt: Long) {
+    private fun cancelExpiryRecheck() {
+        handler.removeCallbacks(expiryRecheck)
+        expiryArmedFor = null
+    }
+
+    private fun scheduleExpiryRecheck(expiresAt: Long, target: String? = null) {
         val delay = (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L) + EXPIRY_RECHECK_BUFFER_MS
         handler.removeCallbacks(expiryRecheck)
         handler.postDelayed(expiryRecheck, delay)
+        expiryArmedFor = target
     }
 
     private fun foregroundTarget(packageName: String?, root: AccessibilityNodeInfo?): String? {

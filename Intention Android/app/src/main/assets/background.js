@@ -2401,18 +2401,26 @@ async function linkInstalledApp(packageName, label) {
 // as it does for the leaving conversation. With neither there is nothing to
 // go on, and nothing is linked.
 async function linkInstalledApps(apps) {
-  const { setupComplete = false, setupCompletedAt = 0, dailyStats = {} } =
-    await getStorage(['setupComplete', 'setupCompletedAt', 'dailyStats']);
+  const { setupComplete = false, setupCompletedAt = 0, dailyStats = {}, allTimeStats = {} } =
+    await getStorage(['setupComplete', 'setupCompletedAt', 'dailyStats', 'allTimeStats']);
   if (!setupComplete) return { linked: [] };
   let since = Number(setupCompletedAt) || 0;
   const firstDay = Object.keys(dailyStats || {}).sort()[0];
   if (!since && firstDay) since = Date.parse(`${firstDay}T00:00:00`) || 0;
   if (!since) return { linked: [] };
 
+  // An app with any history here was on the list once, so it is off it now
+  // because someone took it off — before appLinkDeclined existed to say so.
+  const everBlocked = new Set(Object.keys(allTimeStats || {}));
+  for (const day of Object.values(dailyStats || {})) {
+    for (const key of Object.keys(day || {})) everBlocked.add(key);
+  }
+
   const linked = [];
   for (const app of Array.isArray(apps) ? apps : []) {
     if (!app || !APP_ICON_SITE[app.packageName]) continue;
     if (!(Number(app.installedAt) > since)) continue;
+    if (everBlocked.has(app.packageName)) continue;
     const res = await linkInstalledApp(app.packageName, app.label);
     if (res.linked) linked.push(app.packageName);
   }

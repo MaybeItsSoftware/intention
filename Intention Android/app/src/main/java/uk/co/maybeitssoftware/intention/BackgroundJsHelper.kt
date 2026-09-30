@@ -17,8 +17,15 @@ object BackgroundJsHelper {
     private val pendingCallbacks = mutableMapOf<String, (String?) -> Unit>()
     private val pendingMessages = mutableListOf<() -> Unit>()
 
+    // Set the moment creation is queued, not when it lands: `webView` is only
+    // assigned inside the posted block, so a boot that reaches init() from
+    // BootReceiver, the accessibility service and an alarm before that block
+    // runs used to queue one WebView each — two copies of background.js, each
+    // with its own storage lock, writing over each other.
+    private val creating = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun init(context: Context) {
-        if (webView != null) return
+        if (webView != null || !creating.compareAndSet(false, true)) return
 
         Handler(Looper.getMainLooper()).post {
             // BootReceiver initializes us straight out of a device restart, where
@@ -29,6 +36,7 @@ object BackgroundJsHelper {
                 WebView(context.applicationContext)
             } catch (e: Exception) {
                 Log.e(TAG, "Could not create the background WebView: ", e)
+                creating.set(false)
                 return@post
             }
             wv.settings.javaScriptEnabled = true
@@ -50,10 +58,12 @@ object BackgroundJsHelper {
 
                 @JavascriptInterface
                 fun onMessageResponse(callbackId: String, responseJson: String?) {
-                    synchronized(pendingCallbacks) {
-                        val cb = pendingCallbacks.remove(callbackId)
-                        cb?.let { it(responseJson) }
-                    }
+                    val cb = synchronized(pendingCallbacks) { pendingCallbacks.remove(callbackId) }
+                    // A @JavascriptInterface method runs on the WebView's own
+                    // bridge thread. Callers touch the accessibility service's
+                    // maps and node tree and the overlay's views, all main-
+                    // thread state, so every answer is delivered there.
+                    if (cb != null) Handler(Looper.getMainLooper()).post { cb(responseJson) }
                 }
 
                 @JavascriptInterface

@@ -5079,6 +5079,16 @@ describe('appsInstalled', () => {
     expect(chrome.storage._store.blockedApps).toEqual(['com.google.android.youtube']);
   });
 
+  it('leaves an app that was blocked once and taken off before removals were remembered', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seed({
+      dailyStats: { '2026-09-10': { 'com.instagram.android': { minutes: 12, grants: 2, sessions: [] } } }
+    }) });
+    await sweep(ctx, [
+      { packageName: 'com.instagram.android', label: 'Instagram', installedAt: SETUP_AT + 86400000 }
+    ]);
+    expect(chrome.storage._store.blockedApps).toEqual([]);
+  });
+
   it('does nothing before setup is finished', async () => {
     const { ctx, chrome } = loadBackground({ seed: seed({ setupComplete: false }) });
     await sweep(ctx, [{ packageName: 'com.instagram.android', installedAt: Date.now() }]);
