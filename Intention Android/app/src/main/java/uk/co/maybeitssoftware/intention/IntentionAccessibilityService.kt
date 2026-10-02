@@ -232,6 +232,26 @@ class IntentionAccessibilityService : AccessibilityService() {
         ForegroundPass.sync(applicationContext, target)
         SessionOverlay.sync(applicationContext, target)
         sweepInstalledApps()
+        returnToSetupIfAsked()
+    }
+
+    // Brings Intention back once the switch is on, so the user is not left in
+    // Settings working out how to get back. Only when the gate's Agree was
+    // tapped in the last few minutes: a reboot or an app update reconnects
+    // this service too, and that must not throw the app into the foreground.
+    // An accessibility service bound by the system may start activities from
+    // the background, so this is allowed on Android 10+.
+    private fun returnToSetupIfAsked() {
+        if (!MainActivity.takeReturnRequest(applicationContext)) return
+        try {
+            startActivity(
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not bring Intention back after the switch went on: ", e)
+        }
     }
 
     // The installs installReceiver could not hear, because this service was

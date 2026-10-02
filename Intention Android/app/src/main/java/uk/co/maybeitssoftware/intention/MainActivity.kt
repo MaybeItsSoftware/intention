@@ -26,10 +26,8 @@ import androidx.core.view.WindowInsetsCompat
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        // House palette, dark mode — used by the overlay prompt below (and azure
-        // by the accessibility disclosure buttons).
-        // The accessibility gate above it predates these tokens and is left
-        // on its own older hex rather than half-restyled.
+        // House palette, dark mode — used by the accessibility gate, its
+        // disclosure buttons and the overlay prompt.
         private const val COLOR_SURFACE = "#25232f"
         private const val COLOR_BORDER = "#34313f"
         private const val COLOR_TEXT = "#f5f4f7"
@@ -47,7 +45,7 @@ class MainActivity : AppCompatActivity() {
 
         // The accessibility gate's own background. The page's paper is
         // R.color.paper (values / values-night), see paintSystemBars.
-        private const val COLOR_GATE = "#0f1115"
+        private const val COLOR_GATE = "#1c1a23"
 
         // "Open the leaving conversation rather than the settings page you
         // were going to open anyway." Set by IntentionAccessibilityService
@@ -63,6 +61,29 @@ class MainActivity : AppCompatActivity() {
 
         // The section deep link, e.g. from the chat's "invalid API key" error.
         private const val EXTRA_SECTION = "section"
+
+        // "Bring me back here once the switch is on." Written when the
+        // disclosure's Agree sends the user to Settings, read once by
+        // IntentionAccessibilityService.onServiceConnected. Native-only, so
+        // kept out of intention_prefs, which the background WebView owns.
+        private const val SETUP_PREFS = "intention_setup"
+        private const val KEY_RETURN_REQUESTED_AT = "a11y_return_requested_at"
+        private const val RETURN_WINDOW_MS = 10 * 60 * 1000L
+
+        fun requestReturn(context: Context) {
+            context.getSharedPreferences(SETUP_PREFS, Context.MODE_PRIVATE).edit()
+                .putLong(KEY_RETURN_REQUESTED_AT, System.currentTimeMillis()).apply()
+        }
+
+        // True at most once per request, and only inside the window.
+        fun takeReturnRequest(context: Context): Boolean {
+            val prefs = context.getSharedPreferences(SETUP_PREFS, Context.MODE_PRIVATE)
+            val at = prefs.getLong(KEY_RETURN_REQUESTED_AT, 0L)
+            if (at == 0L) return false
+            prefs.edit().remove(KEY_RETURN_REQUESTED_AT).apply()
+            val age = System.currentTimeMillis() - at
+            return age in 0..RETURN_WINDOW_MS
+        }
     }
 
     private lateinit var webView: WebView
@@ -111,57 +132,74 @@ class MainActivity : AppCompatActivity() {
         // The rest of the app (webview) is not reachable until this passes.
         accessibilityGate = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            gravity = android.view.Gravity.CENTER
+            gravity = android.view.Gravity.CENTER_VERTICAL
             layoutParams = android.widget.LinearLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1.0f
             )
-            setPadding(64, 64, 64, 64)
+            setPadding(dp(24f), dp(24f), dp(24f), dp(24f))
             visibility = View.GONE
         }
 
         val alertTitle = TextView(this).apply {
-            text = "Accessibility permission required"
-            setTextColor(android.graphics.Color.parseColor("#e7e7ea"))
-            textSize = 20f
-            gravity = android.view.Gravity.CENTER
+            text = "Turn on Accessibility for Intention"
+            setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
+            textSize = 22f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.START
         }
 
         val alertText = TextView(this).apply {
-            text = "Intention needs Accessibility permission to coach you when you open distracting apps."
-            setTextColor(android.graphics.Color.parseColor("#9a9aa5"))
-            gravity = android.view.Gravity.CENTER
-            setPadding(0, 24, 0, 24)
+            text = "Intention blocks apps and sites by noticing which one is open. " +
+                "Android only allows that through the Accessibility permission."
+            setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
+            textSize = 16f
+            gravity = android.view.Gravity.START
+            setPadding(0, dp(12f), 0, dp(24f))
         }
 
         // Some OEM settings screens (MIUI, One UI, etc.) drop the app straight
         // into a long "Downloaded apps" list rather than Intention's toggle, so
-        // spell out every tap rather than assuming the deep link lands exactly.
+        // name where it hides rather than assuming the deep link lands exactly.
+        // No "come back here" step: the service brings the app back itself
+        // (returnToSetupIfAsked).
         val stepsText = TextView(this).apply {
-            text = "1. Tap \"Open Accessibility Settings\" below, read what Intention reads, and tap \"Agree\"\n" +
-                "2. Find \"Intention\" in the list (it may be under \"Downloaded apps\" or \"Installed apps\")\n" +
-                "3. Tap it, then turn the switch on\n" +
-                "4. Confirm \"Allow\" on the popup, then come back here"
-            setTextColor(android.graphics.Color.parseColor("#c7c7d1"))
+            text = "1.  Tap the button below and agree\n\n" +
+                "2.  Find Intention in the list (sometimes under \"Downloaded apps\") and turn it on\n\n" +
+                "3.  Tap \"Allow\". Intention reopens by itself"
+            setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
+            textSize = 16f
             gravity = android.view.Gravity.START
-            setPadding(0, 0, 0, 48)
+            setPadding(0, 0, 0, dp(32f))
         }
 
         // Never straight to Settings: Play's prominent-disclosure policy wants
         // the consent dialog first, every time, with Agree as the only way on.
         val enableServiceBtn = Button(this).apply {
-            text = "Open Accessibility Settings"
-            setBackgroundColor(android.graphics.Color.parseColor("#e7e7ea"))
-            setTextColor(android.graphics.Color.parseColor("#0f1115"))
+            text = "Turn on Accessibility"
+            isAllCaps = false
+            textSize = 16f
+            minHeight = dp(52f)
+            stateListAnimator = null
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(6f).toFloat()
+                setColor(android.graphics.Color.parseColor(COLOR_AZURE))
+            }
+            setTextColor(android.graphics.Color.WHITE)
             setOnClickListener { showAccessibilityDisclosure() }
         }
 
+        // A fallback only: onResume already re-checks, and the service brings
+        // the app back on its own, so this is for the phone where neither did.
         val recheckBtn = Button(this).apply {
-            text = "I've turned it on — check again"
-            setBackgroundColor(android.graphics.Color.parseColor("#0f1115"))
-            setTextColor(android.graphics.Color.parseColor("#e7e7ea"))
-            setPadding(0, 24, 0, 0)
+            text = "Already turned it on? Check again"
+            isAllCaps = false
+            textSize = 15f
+            minHeight = dp(48f)
+            stateListAnimator = null
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
             setOnClickListener {
                 if (isAccessibilityServiceEnabled()) {
                     accessibilityGate.visibility = View.GONE
@@ -170,7 +208,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     android.widget.Toast.makeText(
                         this@MainActivity,
-                        "Still not enabled — make sure the switch next to Intention is on",
+                        "Still off. Make sure the switch next to Intention is on",
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -638,16 +676,28 @@ class MainActivity : AppCompatActivity() {
             accessibilityGate.visibility = View.GONE
             webView.visibility = View.VISIBLE
             refreshPartsWarning()
-            // Only once the app actually works, and only while there is
+            // Only once the app actually works and setup is done — arriving
+            // from the accessibility switch to a second permission on top of
+            // the welcome page was one ask too many — and only while there is
             // something to ask for — coming back from Settings with the
             // permission granted takes the card away for good.
             overlayPrompt.visibility =
-                if (!overlayPromptDismissed && !Settings.canDrawOverlays(this)) {
+                if (!overlayPromptDismissed && !Settings.canDrawOverlays(this) && setupComplete()) {
                     View.VISIBLE
                 } else {
                     View.GONE
                 }
         }
+    }
+
+    // The page's own flag, read from the storage it shares with the
+    // background. Unreadable counts as not done: the cost is an optional
+    // offer shown a visit later.
+    private fun setupComplete(): Boolean = try {
+        org.json.JSONObject(BackgroundJsHelper.getSharedStorage(this, "[\"setupComplete\"]"))
+            .optBoolean("setupComplete", false)
+    } catch (e: Exception) {
+        false
     }
 
     // Deep-links to Intention's own row in "Display over other apps". The
@@ -707,7 +757,7 @@ class MainActivity : AppCompatActivity() {
     private fun paperColor(): Int = ContextCompat.getColor(this, R.color.paper)
 
     // The strips behind the status and navigation bars belong to whatever is
-    // on screen: the page's paper for the WebView, the gate's own near-black
+    // on screen: the page's paper for the WebView, the gate's own dark grape
     // while the accessibility gate is up (its text is light-on-dark whatever
     // the system theme). The bar icons follow, so they stay legible on it.
     private fun paintSystemBars(gate: Boolean) {
@@ -742,6 +792,7 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
             .setPositiveButton(R.string.a11y_disclosure_agree) { d, _ ->
                 d.dismiss()
+                requestReturn(this)
                 openAccessibilitySettings()
             }
             .setNegativeButton(R.string.a11y_disclosure_decline) { d, _ ->

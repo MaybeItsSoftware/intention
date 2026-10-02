@@ -951,7 +951,7 @@ function renderWelcomeStep() {
   const blocksApps = HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING;
   const items = [
     blocksApps ? 'Pick the apps and sites that pull you in.' : 'Pick the sites that pull you in.',
-    'Say how often you mean to open each one. Those opens are one tap.',
+    'Give each one some minutes a day. Spending them is one tap.',
     'Past that, the coach decides.'
   ];
   const list = document.getElementById('setup-welcome-checklist');
