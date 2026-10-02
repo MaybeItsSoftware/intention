@@ -1,3 +1,22 @@
+## [1.1.0](https://github.com/MaybeItsSoftware/intention/compare/v1.0.0...v1.1.0) (2026-10-02)
+
+### Features
+
+* **android:** offer to block the app of a blocked site that is already installed ([7a64637](https://github.com/MaybeItsSoftware/intention/commit/7a64637b04b40d34702af208fc044c24f5bb4106))
+* **android:** return to Intention by itself once Accessibility is on ([c43ba9b](https://github.com/MaybeItsSoftware/intention/commit/c43ba9b7d1751741eb7ffb2fc598e2f7ec18d520))
+* **gate:** one-tap visit lengths on a daily-time gate ([aabbdd3](https://github.com/MaybeItsSoftware/intention/commit/aabbdd35285dbecd458963c7516356cf7d442b15))
+
+### Bug Fixes
+
+* **android:** ask for explicit consent before opening Accessibility settings ([fd4d123](https://github.com/MaybeItsSoftware/intention/commit/fd4d123714d57c0dbdcedf8713e3d0aecea1cc21))
+* **android:** close four ways a blocked app or site stayed open ([ed5810f](https://github.com/MaybeItsSoftware/intention/commit/ed5810f9909985348723dc3a09cc300484af20f7))
+* close the ways round a blocked site's app, and give iOS apps a daily budget ([ba9fb9b](https://github.com/MaybeItsSoftware/intention/commit/ba9fb9b8e8fccb0656c369e5b5d1ab45eb5df331))
+* **gate:** don't show a daily budget as spent when the worker is asleep ([5969633](https://github.com/MaybeItsSoftware/intention/commit/59696339da140a384620eca22c1b3cebbc0df90f))
+* **ios:** keep Screen Time and the worker agreeing about app passes ([c02c6c8](https://github.com/MaybeItsSoftware/intention/commit/c02c6c87d0e70bd93e44c985fc5763d9a001c4ea))
+* **options:** let a deferred allowance switch be edited as a draft ([4426094](https://github.com/MaybeItsSoftware/intention/commit/442609481fe042116c5a5b37890937b295c141e9))
+* **options:** make the allowance controls usable on a phone ([f7574d1](https://github.com/MaybeItsSoftware/intention/commit/f7574d18377c77ef7184b1c03d7b4f80f1793d42))
+* stop a daily budget leaking free time across a mode switch or midnight ([326ecc8](https://github.com/MaybeItsSoftware/intention/commit/326ecc87577dd97e4aaff097de7cc32ba316af84))
+
 ## [1.0.0](https://github.com/MaybeItsSoftware/intention/compare/v0.24.4...v1.0.0) (2026-09-25)
 
 ### ⚠ BREAKING CHANGES
