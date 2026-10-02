@@ -98,3 +98,8 @@ jobs:
           releaseFiles: Intention Android/app/build/outputs/bundle/release/app-release.aab
           track: internal
           status: completed
+          # Commit the internal release without sending it for review. Play
+          # refuses to auto-submit while any review on the app is open (e.g. a
+          # rejection), and an internal build doesn't need one anyway; send
+          # changes for review from the Play console when a review is wanted.
+          changesNotSentForReview: true
