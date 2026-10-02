@@ -47,4 +47,14 @@
          changed. -->
     <string name="part_gate_notice_unresolved">Intention can\'t tell which part of %1$s this is, so it\'s blocking all of %1$s for now. Change or remove that rule in Intention\'s settings.</string>
     <string name="part_gate_notice_refused">Intention can\'t recognise the part of %1$s you picked, so it\'s blocking all of %1$s. Choose a different part, or block the app outright, in Intention\'s settings.</string>
+    <!-- Google Play's prominent disclosure for the AccessibilityService API.
+         Policy: shown in-app before the user is sent to Settings, two explicit
+         buttons, and anything other than "Agree" (back, tapping outside, "No
+         thanks") counts as declining. Keep it in step with
+         accessibility_service_description above and PRIVACY.md. -->
+    <string name="a11y_disclosure_title">Intention uses the Accessibility service</string>
+    <string name="a11y_disclosure_body">Intention needs Accessibility permission (the AccessibilityService API) to block the apps and websites you choose and to let your coach talk you through opening them.\n\nWhat it reads, while the service is on:\n• The name of the app that is on screen, to see whether it is one you blocked.\n• In supported browsers, the address in the address bar, to block the websites you chose.\n• Only in an app where you blocked one part (for example Reels), the names of the on-screen sections, to tell which part is open. It never reads posts, messages, passwords or anything you type.\n• Whether you have opened Intention\'s own page in Settings, so it can offer a word with your coach first. It never stops you leaving.\n\nHow it is used: all of this is checked on your phone against your own block list. None of it is stored or shared, with one exception: when you choose to talk to your coach, the name of the app or the address of the site you were opening is sent with your message to the AI service that answers it.\n\nIntention never taps, types or controls other apps for you.\n\nDo you agree to Intention using the Accessibility service this way?</string>
+    <string name="a11y_disclosure_agree">Agree</string>
+    <string name="a11y_disclosure_decline">No thanks</string>
+    <string name="a11y_declined_notice">Without Accessibility permission Intention can\'t block anything on this phone. You can agree at any time from this screen.</string>
 </resources>

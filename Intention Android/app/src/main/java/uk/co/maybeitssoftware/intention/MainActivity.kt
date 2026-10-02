@@ -26,7 +26,8 @@ import androidx.core.view.WindowInsetsCompat
 class MainActivity : AppCompatActivity() {
 
     companion object {
-        // House palette, dark mode — used only by the overlay prompt below.
+        // House palette, dark mode — used by the overlay prompt below (and azure
+        // by the accessibility disclosure buttons).
         // The accessibility gate above it predates these tokens and is left
         // on its own older hex rather than half-restyled.
         private const val COLOR_SURFACE = "#25232f"
@@ -138,7 +139,7 @@ class MainActivity : AppCompatActivity() {
         // into a long "Downloaded apps" list rather than Intention's toggle, so
         // spell out every tap rather than assuming the deep link lands exactly.
         val stepsText = TextView(this).apply {
-            text = "1. Tap \"Open Accessibility Settings\" below\n" +
+            text = "1. Tap \"Open Accessibility Settings\" below, read what Intention reads, and tap \"Agree\"\n" +
                 "2. Find \"Intention\" in the list (it may be under \"Downloaded apps\" or \"Installed apps\")\n" +
                 "3. Tap it, then turn the switch on\n" +
                 "4. Confirm \"Allow\" on the popup, then come back here"
@@ -147,11 +148,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 48)
         }
 
+        // Never straight to Settings: Play's prominent-disclosure policy wants
+        // the consent dialog first, every time, with Agree as the only way on.
         val enableServiceBtn = Button(this).apply {
             text = "Open Accessibility Settings"
             setBackgroundColor(android.graphics.Color.parseColor("#e7e7ea"))
             setTextColor(android.graphics.Color.parseColor("#0f1115"))
-            setOnClickListener { openAccessibilitySettings() }
+            setOnClickListener { showAccessibilityDisclosure() }
         }
 
         val recheckBtn = Button(this).apply {
@@ -720,6 +723,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(value: Float): Int =
         (value * resources.displayMetrics.density).toInt()
+
+    // Google Play's prominent disclosure for the AccessibilityService API. The
+    // policy's four rules, and how each is met:
+    //   - shown before the permission is requested: this is the only path to
+    //     openAccessibilitySettings, and it runs on every tap, not once;
+    //   - affirmative action: only the Agree button opens Settings;
+    //   - leaving is not consent: not cancelable, so back and tapping outside
+    //     do nothing, and "No thanks" is an explicit second button;
+    //   - nothing auto-dismisses or times out.
+    // The wording lives in strings.xml beside the service description it
+    // summarises, so the two are edited together.
+    private fun showAccessibilityDisclosure() {
+        if (isFinishing || isDestroyed) return
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.a11y_disclosure_title)
+            .setMessage(R.string.a11y_disclosure_body)
+            .setCancelable(false)
+            .setPositiveButton(R.string.a11y_disclosure_agree) { d, _ ->
+                d.dismiss()
+                openAccessibilitySettings()
+            }
+            .setNegativeButton(R.string.a11y_disclosure_decline) { d, _ ->
+                d.dismiss()
+                android.widget.Toast.makeText(
+                    this, R.string.a11y_declined_notice, android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+            .create()
+        dialog.setCanceledOnTouchOutside(false)
+        dialog.show()
+        // The theme's colorAccent is a near-white meant for the dark gate, so
+        // on a light phone the default button text would all but vanish. Both
+        // buttons get the primary colour, so neither reads as the lesser choice.
+        val azure = android.graphics.Color.parseColor(COLOR_AZURE)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)?.setTextColor(azure)
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE)?.setTextColor(azure)
+    }
 
     // Deep-links to Intention's own toggle where supported; some OEM skins
     // (MIUI, One UI, etc.) reject the fragment-args extras and throw, so fall
