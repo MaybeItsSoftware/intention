@@ -1,3 +1,9 @@
+## [1.1.2](https://github.com/MaybeItsSoftware/intention/compare/v1.1.1...v1.1.2) (2026-10-03)
+
+### Bug Fixes
+
+* **android:** show a redeemed code's credit instead of leaving it on the server ([8734d06](https://github.com/MaybeItsSoftware/intention/commit/8734d06eff7793c2b7b0023c4a524f49f393de2d))
+
 ## [1.1.1](https://github.com/MaybeItsSoftware/intention/compare/v1.1.0...v1.1.1) (2026-10-03)
 
 ### Bug Fixes
