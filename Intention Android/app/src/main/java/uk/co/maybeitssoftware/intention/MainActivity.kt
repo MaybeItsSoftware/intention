@@ -288,6 +288,7 @@ class MainActivity : AppCompatActivity() {
         // Connect to Play Billing up front so the paywall has prices ready by
         // the time onboarding reaches it.
         BillingManager.init(applicationContext)
+        BillingManager.onBackgroundCredit = { announceAppActive(it) }
 
         // Set up bridge
         webView.addJavascriptInterface(WebAppInterface(this, webView) {
@@ -651,12 +652,23 @@ class MainActivity : AppCompatActivity() {
      * rendered before any of this and has a stale balance on it.
      */
     private fun sweepForPurchasesOnReturn() {
-        BillingManager.restore {
-            runOnUiThread {
-                webView.evaluateJavascript(
-                    "window.dispatchEvent(new Event('intention-app-active'))", null
-                )
-            }
+        BillingManager.restore { result ->
+            announceAppActive(result.takeIf { it.optString("status") == "purchased" })
+        }
+    }
+
+    // A credited purchase rides along as the event's detail. Crediting it here
+    // moves the backend balance but leaves the web layer holding no receipt
+    // and no token, and its own recovery check is throttled to once a day —
+    // so without the receipt a redeemed code stayed invisible until tomorrow.
+    private fun announceAppActive(purchase: org.json.JSONObject?) {
+        val event = if (purchase == null) {
+            "new Event('intention-app-active')"
+        } else {
+            "new CustomEvent('intention-app-active', { detail: $purchase })"
+        }
+        runOnUiThread {
+            webView.evaluateJavascript("window.dispatchEvent($event)", null)
         }
     }
 

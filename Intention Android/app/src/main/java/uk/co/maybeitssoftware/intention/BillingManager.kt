@@ -84,6 +84,13 @@ object BillingManager : PurchasesUpdatedListener {
     // here until Play answers.
     private var pendingPurchaseCallback: ((JSONObject) -> Unit)? = null
 
+    // Told about a purchase credited with no JS callback waiting on it — a
+    // redeemed code picked up by the poll below. The backend balance moves
+    // either way, but the web layer only learns of it from a receipt it can
+    // verify itself, and dropping this result is how a redeemed code showed
+    // "item added" in Play and nothing in the app. Set by MainActivity.
+    var onBackgroundCredit: ((JSONObject) -> Unit)? = null
+
     fun init(context: Context) {
         appContext = context.applicationContext
         if (billingClient != null) return
@@ -300,7 +307,9 @@ object BillingManager : PurchasesUpdatedListener {
         // grant is picked up by the poll and by the sweep on resume; the UI's
         // job here is only to say where the user has been sent.
         callback(JSONObject().put("status", "opened").put("route", route))
-        pollForRedeemedPurchase(0) { }
+        pollForRedeemedPurchase(0) { result ->
+            if (result.optString("status") == "purchased") onBackgroundCredit?.invoke(result)
+        }
     }
 
     // Where the user actually ended up. The redemption itself happens in

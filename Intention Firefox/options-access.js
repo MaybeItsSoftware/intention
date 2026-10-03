@@ -358,7 +358,15 @@ let accessRefreshOnReturnWired = false;
 function wireAccessRefreshOnReturn(containerId) {
   if (accessRefreshOnReturnWired) return;
   accessRefreshOnReturnWired = true;
-  window.addEventListener('intention-app-active', async () => {
+  window.addEventListener('intention-app-active', async (event) => {
+    // Android hands over a purchase it credited in the background (a redeemed
+    // code). Verifying it here is idempotent server-side and is what gives
+    // this device the token and balance — without it the credit sat on the
+    // backend while the paywall still said there was none.
+    const purchase = event?.detail;
+    if (purchase?.receipt) {
+      await verifyAndStore(purchase.platform || storePlatform(), purchase.receipt);
+    }
     await refreshAccessUI(containerId);
     await onAccessChanged();
   });
