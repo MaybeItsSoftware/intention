@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/MaybeItsSoftware/intention/compare/v1.1.0...v1.1.1) (2026-10-03)
+
+### Bug Fixes
+
+* **server:** read a mangled Google service-account key instead of failing every Play verify ([da0c4fe](https://github.com/MaybeItsSoftware/intention/commit/da0c4feac4823c6f2efb025739d5298beb8442c4))
+
 ## [1.1.0](https://github.com/MaybeItsSoftware/intention/compare/v1.0.0...v1.1.0) (2026-10-02)
 
 ### Features
