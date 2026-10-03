@@ -1860,3 +1860,26 @@ describe('assertBootConfig', () => {
     expect(assertBootConfig(silent)).toBe(true);
   });
 });
+
+describe('normalisePem', () => {
+  // Every Android verify died with "DECODER routines::unsupported" because the
+  // dashboard copy of GOOGLE_PRIVATE_KEY wasn't a clean PEM.
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
+  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const parses = (value) => !!crypto.createPrivateKey(value);
+
+  it('accepts every common paste mangling', async () => {
+    const { normalisePem } = await import('../server/src/config.js');
+    const escaped = pem.replace(/\n/g, '\\n');
+    for (const raw of [
+      pem,
+      escaped,
+      `"${escaped}"`,
+      JSON.stringify({ type: 'service_account', private_key: pem }),
+      pem.replace(/\n/g, ' ')
+    ]) {
+      expect(parses(normalisePem(raw))).toBe(true);
+    }
+    expect(normalisePem('')).toBe('');
+  });
+});

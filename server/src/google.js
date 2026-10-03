@@ -36,7 +36,14 @@ async function accessToken() {
   };
   const encode = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
   const signingInput = `${encode(header)}.${encode(claims)}`;
-  const signature = crypto.sign('sha256', Buffer.from(signingInput), privateKey).toString('base64url');
+  let signature;
+  try {
+    signature = crypto.sign('sha256', Buffer.from(signingInput), privateKey).toString('base64url');
+  } catch (e) {
+    // A malformed GOOGLE_PRIVATE_KEY — our misconfiguration, not the
+    // purchase's fault, so the client keeps the purchase and retries.
+    throw new VerificationError(`Play service-account key is unreadable: ${e.message}`, 'upstream_unavailable');
+  }
   const assertion = `${signingInput}.${signature}`;
 
   const res = await fetch('https://oauth2.googleapis.com/token', {

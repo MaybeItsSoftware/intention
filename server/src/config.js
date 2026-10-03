@@ -3,6 +3,8 @@
 // opt-in, refuse to engage unless NODE_ENV is explicitly 'development', and are
 // logged loudly at boot.
 
+import crypto from 'node:crypto';
+
 function required(name) {
   const value = process.env[name];
   if (!value) return '';
@@ -11,6 +13,38 @@ function required(name) {
 
 function bool(name) {
   return /^(1|true|yes)$/i.test(process.env[name] || '');
+}
+
+// A PEM pasted into a dashboard arrives mangled in one of a few ways: newlines
+// as literal "\n", the value still wrapped in the JSON's quotes, the whole
+// service-account JSON pasted instead of its private_key field, or newlines
+// flattened to spaces. Any of them makes crypto.sign throw a DECODER error on
+// every verify — which is how every Android purchase and promo code failed
+// with a 500 while the server looked healthy. Exported for tests.
+export function normalisePem(raw) {
+  let value = String(raw || '').trim();
+  if (!value) return '';
+  if (value.startsWith('{')) {
+    try {
+      value = String(JSON.parse(value).private_key || '');
+    } catch {
+      // Not JSON after all — carry on with it as a bare key.
+    }
+  }
+  value = value.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n').trim();
+  const match = value.match(/^(-----BEGIN [A-Z ]+-----)\s*([\s\S]*?)\s*(-----END [A-Z ]+-----)$/);
+  if (!match) return value;
+  const body = match[2].replace(/\s+/g, '').match(/.{1,64}/g) || [];
+  return `${match[1]}\n${body.join('\n')}\n${match[3]}\n`;
+}
+
+function pemParses(pem) {
+  try {
+    crypto.createPrivateKey(pem);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const config = {
@@ -130,7 +164,7 @@ export const config = {
     packageName: process.env.GOOGLE_PACKAGE_NAME || 'uk.co.maybeitssoftware.intention',
     // Play Developer API service account (JSON key fields).
     clientEmail: process.env.GOOGLE_CLIENT_EMAIL || '',
-    privateKey: (process.env.GOOGLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    privateKey: normalisePem(process.env.GOOGLE_PRIVATE_KEY),
     // Optional secret for Google Pub/Sub webhook authorization
     webhookSecret: process.env.INTENTION_WEBHOOK_SECRET || '',
     // Play purchases carrying a purchaseType of 0 (licence-tester) or 2
@@ -211,6 +245,8 @@ export function assertBootConfig(log = console) {
   }
   if (!config.google.clientEmail || !config.google.privateKey) {
     log.warn('[intention] Play Developer API credentials missing — Android purchases cannot be verified.');
+  } else if (!pemParses(config.google.privateKey)) {
+    (log.error || log.warn)('[intention] GOOGLE_PRIVATE_KEY is set but is not a readable private key — every Android purchase and promo code will fail to verify. Paste the service-account JSON\'s private_key value (or the whole JSON).');
   }
   if (config.allowUnverifiedReceipts) {
     log.warn('[intention] INTENTION_ALLOW_UNVERIFIED_RECEIPTS is on. Never use this outside local development.');
