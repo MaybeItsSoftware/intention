@@ -296,34 +296,56 @@
   font-size: 16px;
 }
 
-#intention-root .int-visit-minutes { max-width: 140px; }
-
-#intention-root .int-visit-presets {
+#intention-root .int-visit-stepper {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: stretch;
   width: 100%;
-}
-
-#intention-root .int-visit-preset {
-  min-height: 44px;
-  padding: 8px 14px;
   border: 1px solid var(--border-input);
   border-radius: var(--radius-control);
   background: var(--paper);
+  overflow: hidden;
+}
+
+#intention-root .int-step-btn {
+  flex: 0 0 56px;
+  min-height: 48px;
+  border: 0;
+  background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 15px;
+  font-size: 22px;
+  line-height: 1;
   cursor: pointer;
 }
 
-#intention-root .int-visit-preset[aria-pressed="true"] {
-  border-color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--ink);
+#intention-root .int-step-btn:first-child { border-right: 1px solid var(--border-input); }
+
+#intention-root .int-step-btn:last-child { border-left: 1px solid var(--border-input); }
+
+#intention-root .int-step-btn:hover:not(:disabled) { background: var(--hover); }
+
+#intention-root .int-step-btn:disabled { color: var(--text-dim); cursor: default; }
+
+#intention-root .int-step-value {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
 }
 
+#intention-root .int-visit-note, #intention-root .int-visit-hint {
+  width: 100%;
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#intention-root .int-visit-hint { color: var(--danger-text); }
+
 @media (max-width: 520px) {
-  #intention-root .int-visit-minutes { max-width: none; }
   #intention-root .int-actions > button { flex: 1 1 100%; }
 }
 

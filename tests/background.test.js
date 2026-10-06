@@ -2069,6 +2069,32 @@ describe('daily time allowance', () => {
     domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 30 } }
   };
 
+  it('lets a visit up to the reason-free minutes through on a tap', async () => {
+    const { ctx, chrome } = loadBackground({ seed: DAILY });
+    const result = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', minutes: 3 }, NATIVE);
+    expect(result.grantedSession).toMatchObject({ intervalMinutes: 3, reason: '' });
+    expect(chrome.storage._store.activeSessions['target:instagram.com']).toBeTruthy();
+  });
+
+  it('asks for a reason one minute past them, and refuses a keyboard mash', async () => {
+    const { ctx } = loadBackground({ seed: DAILY });
+    const mash = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', minutes: 4, reason: 'asdfgh jkl' }, NATIVE);
+    expect(mash).toMatchObject({ denied: 'reason required' });
+    expect(mash.problem).toMatch(/keyboard mash/);
+    const real = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', minutes: 4, reason: 'Reply to my sister' }, NATIVE);
+    expect(real.grantedSession).toMatchObject({ intervalMinutes: 4, reason: 'Reply to my sister' });
+  });
+
+  it('follows a lowered threshold', async () => {
+    const { ctx } = loadBackground({ seed: { ...DAILY, reasonFreeMinutes: 0 } });
+    const result = await ctx.handleMessage(
+      { action: 'intentionGrant', domain: 'instagram.com', minutes: 1 }, NATIVE);
+    expect(result).toMatchObject({ denied: 'reason required' });
+  });
+
   it('requires a reason and a chosen duration for each free pass', async () => {
     const { ctx, chrome } = loadBackground({ seed: DAILY });
     const noReason = await ctx.handleMessage(
@@ -2134,7 +2160,7 @@ describe('daily time allowance', () => {
     const OPENS = { ...CONFIGURED, blockedDomains: ['instagram.com'],
       domainLimits: { 'instagram.com': { maxGrants: 3, passMinutes: 10 } } };
     const { ctx, chrome } = loadBackground({ seed: OPENS });
-    await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com', reason: 'Reply' }, NATIVE);
+    await ctx.handleMessage({ action: 'intentionGrant', domain: 'instagram.com', reason: 'Reply to a friend' }, NATIVE);
     chrome.storage._store.activeSessions['target:instagram.com'].startTime = Date.now() - 2 * 60000;
     await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com', reason: 'done' }, NATIVE);
     expect((await ctx.getIntention('instagram.com')).opensLeft).toBe(2);
@@ -4537,6 +4563,44 @@ describe("applySettingChange: the user's way out", () => {
   it('refuses a decrease when there is no cool-off to decrease', async () => {
     const { ctx } = seeded({ leaveDelayMinutes: 0 });
     expect(await ctx.applySettingChange({ changeType: 'decrease_leave_delay', newValue: 0 })).toBe(null);
+  });
+});
+
+describe('the reason-free minutes only loosen through a conversation or a night', () => {
+  const seeded = (extra = {}) => loadBackground({ seed: { ...CONFIGURED, ...extra } });
+
+  it('defaults to three minutes', async () => {
+    const { ctx } = seeded();
+    expect((await ctx.getIntention('instagram.com')).reasonFreeMinutes).toBe(3);
+  });
+
+  it('saves a lower value at once — asking sooner is a tightening', async () => {
+    const { ctx, chrome } = seeded({ reasonFreeMinutes: 3 });
+    await ctx.saveSettings({ reasonFreeMinutes: 1 });
+    expect(chrome.storage._store.reasonFreeMinutes).toBe(1);
+  });
+
+  it('will not raise it through saveSettings', async () => {
+    const { ctx, chrome } = seeded({ reasonFreeMinutes: 3 });
+    await ctx.saveSettings({ reasonFreeMinutes: 10 });
+    expect(chrome.storage._store.reasonFreeMinutes).toBe(3);
+  });
+
+  it('queues a raise for tomorrow', async () => {
+    const { ctx, chrome } = seeded({ reasonFreeMinutes: 3 });
+    const result = await ctx.handleMessage(
+      { action: 'applySettingChange', changeType: 'increase_reason_free_minutes', newValue: 10 }, EXT_PAGE);
+    expect(result.scheduled).toBe(true);
+    expect(result.pending).toMatchObject({ domain: null, newValue: 10 });
+    expect(chrome.storage._store.reasonFreeMinutes).toBe(3);
+  });
+
+  it('applies a raise the coach agreed to, and refuses one that is not a raise', async () => {
+    const { ctx, chrome } = seeded({ reasonFreeMinutes: 3 });
+    expect(await ctx.applySettingChange({ changeType: 'increase_reason_free_minutes', newValue: 3 })).toBe(null);
+    const result = await ctx.applySettingChange({ changeType: 'increase_reason_free_minutes', newValue: 10 });
+    expect(result.reasonFreeMinutes).toBe(10);
+    expect(chrome.storage._store.reasonFreeMinutes).toBe(10);
   });
 });
 

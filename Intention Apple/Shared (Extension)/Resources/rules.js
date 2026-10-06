@@ -171,3 +171,88 @@ function formatLeaveDelay(minutes) {
     default: return '';
   }
 }
+
+// ===========================================================================
+// REASONS — when a free visit has to say what it is for
+// ===========================================================================
+//
+// A visit of a minute or two is a glance: checking a message, looking one
+// thing up. Asking someone to type a sentence first made the gate more work
+// than the glance, so short visits go through on a tap. Past the user's own
+// threshold the visit has to say what it is for, and that reason is checked
+// here, without a model, for being words rather than a keyboard mash — the
+// whole point of the field is lost if "asdfgh" opens it.
+//
+// The threshold is one number for the whole install. Lowering it asks for a
+// reason sooner and is free; raising it is a loosening and goes through the
+// same deferral as every other ('increase_reason_free_minutes').
+
+const REASON_FREE_MINUTES_DEFAULT = 3;
+const MAX_REASON_FREE_MINUTES = MAX_PASS_MINUTES;
+
+// Never set reads as the default. Anything else unreadable reads as 0 — a
+// reason for every visit — because the failure mode of this number must be
+// more friction, never less.
+function normalizeReasonFreeMinutes(value) {
+  if (value === undefined || value === null) return REASON_FREE_MINUTES_DEFAULT;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(MAX_REASON_FREE_MINUTES, Math.floor(n));
+}
+
+function visitNeedsReason(minutes, reasonFreeMinutes) {
+  return Number(minutes) > normalizeReasonFreeMinutes(reasonFreeMinutes);
+}
+
+// Things people type when they have no reason and know it. Matched against
+// the whole answer, not words inside it: "bored of revising, need a break"
+// is a reason; "bored" is not.
+const NON_REASONS = new Set([
+  'idk', 'i dont know', "i don't know", 'dunno', 'nothing', 'none', 'no reason',
+  'because', 'just because', 'cause', 'bc', 'whatever', 'bored', 'im bored',
+  "i'm bored", 'test', 'testing', 'reason', 'a reason', 'stuff', 'things',
+  'lol', 'ok', 'okay', 'yes', 'no', 'why not', 'just', 'random', 'na', 'n a',
+  'let me in', 'open', 'unlock', 'please', 'pls', 'want to', 'i want to'
+]);
+
+// Runs along a QWERTY row, both directions. 'erty' is left out on purpose:
+// it is inside "property", "liberty" and "poverty".
+const KEYBOARD_RUNS = [
+  'qwer', 'wert', 'rtyu', 'tyui', 'yuio', 'uiop',
+  'asdf', 'sdfg', 'dfgh', 'fghj', 'ghjk', 'hjkl',
+  'zxcv', 'xcvb', 'cvbn', 'vbnm'
+].flatMap(run => [run, [...run].reverse().join('')]);
+
+// Why a reason will not do, as a line to show under the field — or '' when
+// it will. Heuristics, not judgement: this only has to tell words from noise.
+// Whether the words are a GOOD reason is the coach's job, and only once the
+// day's intention is spent.
+function visitReasonProblem(text) {
+  const clean = String(text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!clean) return 'Say what this visit is for.';
+  const letters = clean.match(/\p{L}/gu) || [];
+  const visible = clean.replace(/\s/g, '');
+  if (letters.length < visible.length / 2) return 'Use words, not numbers or symbols.';
+  const words = clean.match(/[\p{L}\p{N}'’]+/gu) || [];
+  if (NON_REASONS.has(words.join(' ').replace(/’/g, "'"))) return "That isn't a reason. What is this visit for?";
+  if (/(\p{L})\1{3,}/u.test(clean)) return 'That looks like keyboard mash. What is this visit for?';
+
+  // Scripts without spaces between words (Chinese, Japanese, Thai) and
+  // without a/e/i/o/u can't be judged by the Latin rules below, so they only
+  // have to be more than a character or two.
+  const latin = letters.every(ch => /\p{Script=Latin}/u.test(ch));
+  if (!latin) return letters.length >= 2 ? '' : 'A few more words. What is this visit for?';
+
+  if (words.length < 2 || letters.length < 6) return 'A few more words. What is this visit for?';
+  if (new Set(words).size === 1) return 'That looks like keyboard mash. What is this visit for?';
+  if (new Set(letters).size < 5) return 'That looks like keyboard mash. What is this visit for?';
+  for (const word of words) {
+    if (!/^[a-z]+$/.test(word)) continue;
+    const mash = word.length > 25 ||
+      (word.length >= 5 && !/[aeiouy]/.test(word)) ||
+      /[bcdfghjklmnpqrstvwxz]{6,}/.test(word) ||
+      KEYBOARD_RUNS.some(run => word.includes(run));
+    if (mash) return 'That looks like keyboard mash. What is this visit for?';
+  }
+  return '';
+}

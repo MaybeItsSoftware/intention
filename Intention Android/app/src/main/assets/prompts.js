@@ -1133,6 +1133,10 @@ Judge what they are opening. A specific post with a definite answer or a narrow 
     const fromStr = formatLeaveDelay(currentValue) || 'no delay at all';
     const toStr = formatLeaveDelay(newValue) || 'no delay at all';
     changeDesc = `SHORTEN the cool-off they put in front of removing Intention, from ${fromStr} to ${toStr}. They chose that wait themselves, calmly, for a moment exactly like this one \u2014 it is a promise they made to their future self, and they are the future self. Approving this does not remove anything; it only makes the wait shorter the next time they ask to leave.`;
+  } else if (changeType === 'increase_reason_free_minutes') {
+    const fromMin = normalizeReasonFreeMinutes(currentValue);
+    const toMin = normalizeReasonFreeMinutes(newValue);
+    changeDesc = `RAISE how long a visit can be before the gate asks what it is for, from ${fromMin} to ${toMin} minutes, across every site and app. Under that length a visit opens on a tap with no reason; over it they have to write one down. Approving this means longer visits with nothing said about why \u2014 the reason is the moment they notice what they are doing.`;
   } else {
     changeDesc = `loosen their blocking settings on ${domain}.`;
   }

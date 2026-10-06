@@ -105,7 +105,7 @@ const BOOT_STORAGE_KEYS = [
   'setupComplete', 'setupCompletedAt', 'blockedDomains', 'domainLimits', 'blockedApps',
   'appLimits', 'appLabels', 'serviceReasons', 'pendingChanges', 'userContext',
   'contextProjects', 'contextReasons', 'coachInstructions', 'provider', 'model',
-  'apiKey', 'entitlement', 'leaveDelayMinutes'
+  'apiKey', 'entitlement', 'leaveDelayMinutes', 'reasonFreeMinutes'
 ];
 
 // The first read of the config, with a way round a background that is slow or
@@ -691,6 +691,7 @@ async function showSettingsView(state) {
   // are still empty looks like the rules vanished just after setup.
   renderDomains(state.blockedDomains || [], state.domainLimits || {}, state.serviceReasons || {});
   renderPendingChanges(state);
+  renderReasonFreeMinutes(state);
   refreshToday(state);
   wireAddModals();
 
@@ -1136,6 +1137,37 @@ async function requestLoosening({ isApp, appLabel, changeType, domain, newValue,
   later.focus();
 }
 
+// How long a visit can be before the gate asks what it is for. Asking sooner
+// is a tightening and saves at once; asking later is a loosening and goes the
+// way every other one does. The stepper keeps showing the rule in force until
+// it is repainted, so a loosening saved for tomorrow does not look applied.
+function renderReasonFreeMinutes(state) {
+  const host = document.getElementById('reason-free-control');
+  if (!host || !state) return;
+  const current = normalizeReasonFreeMinutes(state.reasonFreeMinutes);
+  const repaint = async () => renderReasonFreeMinutes(await getConfig());
+  host.textContent = '';
+  host.appendChild(buildIntentionStepper({
+    value: current, min: 0, max: MAX_REASON_FREE_MINUTES,
+    label: 'Minutes before a reason is needed', unit: 'min without a reason',
+    onChange: async (next) => {
+      if (next < current) {
+        await sendBg({ action: 'saveSettings', config: { reasonFreeMinutes: next } });
+        return repaint();
+      }
+      requestLoosening({
+        changeType: 'increase_reason_free_minutes',
+        domain: null,
+        currentValue: current,
+        newValue: next,
+        title: `Open visits up to ${next} min without a reason?`,
+        subtitle: 'Longer visits with nothing said about why is a loosening.',
+        onApproved: repaint
+      });
+    }
+  }));
+}
+
 // What is waiting for tomorrow, and a way to take it back. Taking one back is
 // a tightening, so it is free and immediate.
 function renderPendingChanges(state) {
@@ -1192,6 +1224,7 @@ function describePendingChange(p, labels) {
     }
     case 'disable_all': return 'Clear all blocking rules';
     case 'decrease_leave_delay': return `Cool-off: ${formatLeaveDelay(p.newValue) || 'none'}`;
+    case 'increase_reason_free_minutes': return `Visits up to ${normalizeReasonFreeMinutes(p.newValue)} min open without a reason`;
     default: return 'A change to your rules';
   }
 }

@@ -97,6 +97,64 @@ describe('the leaving cool-off', () => {
   });
 });
 
+describe('the reason-free minutes', () => {
+  it('reads as three minutes until it is set', () => {
+    expect(R.normalizeReasonFreeMinutes(undefined)).toBe(3);
+    expect(R.normalizeReasonFreeMinutes(null)).toBe(3);
+  });
+
+  it('reads anything unreadable as a reason for every visit', () => {
+    expect(R.normalizeReasonFreeMinutes('lots')).toBe(0);
+    expect(R.normalizeReasonFreeMinutes(-4)).toBe(0);
+  });
+
+  it('keeps whole minutes, capped', () => {
+    expect(R.normalizeReasonFreeMinutes(4.9)).toBe(4);
+    expect(R.normalizeReasonFreeMinutes(500)).toBe(R.MAX_REASON_FREE_MINUTES);
+  });
+
+  it('needs a reason only past the threshold', () => {
+    expect(R.visitNeedsReason(3, 3)).toBe(false);
+    expect(R.visitNeedsReason(4, 3)).toBe(true);
+    expect(R.visitNeedsReason(1, 0)).toBe(true);
+  });
+});
+
+describe('visitReasonProblem', () => {
+  it.each([
+    'Reply to my sister',
+    'check DMs',
+    'Read the event details',
+    'pay the gas bill',
+    'look up the property listing',
+    'watch the lecture on strengths',
+    'Antwort an meine Mutter',
+    '看一下老师的消息',
+  ])('lets %j through', (text) => {
+    expect(R.visitReasonProblem(text)).toBe('');
+  });
+
+  it.each([
+    ['', /Say what/],
+    ['   ', /Say what/],
+    ['asdf', /keyboard mash|more words/],
+    ['asdfgh jkl', /keyboard mash/],
+    ['qwerty stuff', /keyboard mash/],
+    ['hdjskf lsdkfj', /keyboard mash/],
+    ['aaaaaa bbbb', /keyboard mash/],
+    ['test test test', /keyboard mash/],
+    ['abab abab', /keyboard mash/],
+    ['email', /more words/],
+    ['idk', /isn't a reason/],
+    ['just because', /isn't a reason/],
+    ['no reason', /isn't a reason/],
+    ['1234 5678', /words, not numbers/],
+    ['!!!! ????', /words, not numbers/],
+  ])('refuses %j', (text, why) => {
+    expect(R.visitReasonProblem(text)).toMatch(why);
+  });
+});
+
 describe('limitEntryFor', () => {
   const stored = {
     domainLimits: { 'instagram.com': { maxGrants: 1 } },

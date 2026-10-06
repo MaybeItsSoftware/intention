@@ -290,7 +290,7 @@ async function renderCoachUI() {
 // opens left (one tap, free), spent with a coach to ask (offered, never
 // started unasked — it spends credit), and spent with no credit (the paywall,
 // because the coach is the only way past).
-const intentionVisitDraft = { reason: '', minutes: 10 };
+const intentionVisitDraft = { reason: '', minutes: 1 };
 function renderIntentionUI(intention) {
   const panel = document.getElementById('int-intention');
   const heading = document.getElementById('int-heading');
@@ -348,9 +348,11 @@ function renderIntentionUI(intention) {
       : 'You set this intention yourself. Is this one of those times?';
     let take;
     const form = createIntentionVisitForm(actionsEl, intention, intentionVisitDraft, (state) => {
-      if (take) take.disabled = !state.valid;
+      if (!take) return;
+      take.disabled = !state.valid;
+      take.textContent = intentionTakeLabel(intention, mode, state.minutes);
     });
-    take = button(isDailyTime ? 'Use this time' : mode === 'checkin' ? 'Use another open' : `Open for ${minutesEach} minutes`, 'int-solid-btn', async () => {
+    take = button(intentionTakeLabel(intention, mode, form.read().minutes), 'int-solid-btn', async () => {
       const visit = form.read();
       if (!visit.valid) return;
       take.disabled = true;

@@ -270,7 +270,8 @@ const GATE_OPENER_FALLBACKS = {
   // what happened — because those are the words the product stands behind
   // whether or not the model ever answers.
   uninstall: () => `You're about to take Intention off this device. I can't stop you and I'm not going to try. But tell me what happened first.`,
-  decrease_leave_delay: () => `You want to shorten the wait you put on removing Intention. You chose that number for a moment like this one. What's changed?`
+  decrease_leave_delay: () => `You want to shorten the wait you put on removing Intention. You chose that number for a moment like this one. What's changed?`,
+  increase_reason_free_minutes: () => `You want longer visits to open without saying what they're for. What's making the reason feel like too much?`
 };
 
 // The leaving conversation's own chrome: the exit, and the relabelled Cancel.

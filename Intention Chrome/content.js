@@ -303,34 +303,56 @@ const OVERLAY_CSS = `/* The gate and status badge's own tokens, declared on thei
   font-size: 16px;
 }
 
-#intention-root .int-visit-minutes { max-width: 140px; }
-
-#intention-root .int-visit-presets {
+#intention-root .int-visit-stepper {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: stretch;
   width: 100%;
-}
-
-#intention-root .int-visit-preset {
-  min-height: 44px;
-  padding: 8px 14px;
   border: 1px solid var(--border-input);
   border-radius: var(--radius-control);
   background: var(--paper);
+  overflow: hidden;
+}
+
+#intention-root .int-step-btn {
+  flex: 0 0 56px;
+  min-height: 48px;
+  border: 0;
+  background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 15px;
+  font-size: 22px;
+  line-height: 1;
   cursor: pointer;
 }
 
-#intention-root .int-visit-preset[aria-pressed="true"] {
-  border-color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--ink);
+#intention-root .int-step-btn:first-child { border-right: 1px solid var(--border-input); }
+
+#intention-root .int-step-btn:last-child { border-left: 1px solid var(--border-input); }
+
+#intention-root .int-step-btn:hover:not(:disabled) { background: var(--hover); }
+
+#intention-root .int-step-btn:disabled { color: var(--text-dim); cursor: default; }
+
+#intention-root .int-step-value {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
 }
 
+#intention-root .int-visit-note, #intention-root .int-visit-hint {
+  width: 100%;
+  margin: -6px 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+#intention-root .int-visit-hint { color: var(--danger-text); }
+
 @media (max-width: 520px) {
-  #intention-root .int-visit-minutes { max-width: none; }
   #intention-root .int-actions > button { flex: 1 1 100%; }
 }
 
@@ -2077,7 +2099,7 @@ function renderIntentionGateUI({ mode, domain }) {
   const messagesEl = root.querySelector("#int-messages");
   const actionsEl = root.querySelector("#int-gate-actions");
   const noteEl = root.querySelector(".int-note");
-  const visitDraft = { reason: "", minutes: 10 };
+  const visitDraft = { reason: "", minutes: 1 };
 
   renderTargetHeading(targetEl, {
     domain,
@@ -2148,10 +2170,12 @@ function renderIntentionGateUI({ mode, domain }) {
         : "You set this intention yourself. Is this one of those times?";
       let take;
       const form = createIntentionVisitForm(actionsEl, intention, visitDraft, (state) => {
-        if (take) take.disabled = !state.valid;
+        if (!take) return;
+        take.disabled = !state.valid;
+        take.textContent = intentionTakeLabel(intention, mode, state.minutes);
       });
       take = button(
-        isDailyTime ? "Use this time" : mode === "checkin" ? "Use another open" : `Open for ${minutesEach} minutes`,
+        intentionTakeLabel(intention, mode, form.read().minutes),
         "int-solid-btn",
         () => {
           const visit = form.read();

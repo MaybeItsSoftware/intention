@@ -1794,8 +1794,11 @@ async function getAccess(sender) {
 // yesterday rather than the one it replaced.
 async function getIntention(domain) {
   await applyDuePendingChanges();
-  const stored = await getStorage(['domainLimits', 'appLimits', 'activeSessions']);
-  const resolved = resolveIntention(limitEntryFor(domain, stored));
+  const stored = await getStorage(['domainLimits', 'appLimits', 'activeSessions', 'reasonFreeMinutes']);
+  const resolved = {
+    ...resolveIntention(limitEntryFor(domain, stored)),
+    reasonFreeMinutes: normalizeReasonFreeMinutes(stored.reasonFreeMinutes)
+  };
   const stats = domain ? await getStatsForDomain(domain) : { grantsToday: 0 };
   if (resolved.mode === 'dailyTime') {
     // A live pass has not yet been banked into dailyStats. Reserve its whole
@@ -1828,7 +1831,7 @@ async function getIntention(domain) {
       ))
     };
   }
-  const { opens, minutesEach } = resolved;
+  const { opens, minutesEach, reasonFreeMinutes } = resolved;
   // Opens are counted by grants, but a day can also have been spent in
   // minutes: a target switched from a daily budget to opens after its 30
   // minutes were used had one grant on the books, and so two "free" opens
@@ -1846,7 +1849,7 @@ async function getIntention(domain) {
   const byMinutes = minutesEach > 0 ? Math.ceil(Math.round(freeMinutes * 10) / 10 / minutesEach) : 0;
   const byGrants = Math.max(0, stats.grantsToday - (stats.negotiatedToday || 0));
   const opensUsed = Math.min(opens, Math.max(byGrants, byMinutes));
-  return { opens, minutesEach, opensUsed, opensLeft: Math.max(0, opens - opensUsed) };
+  return { opens, minutesEach, reasonFreeMinutes, opensUsed, opensLeft: Math.max(0, opens - opensUsed) };
 }
 
 // The two setup answers, keyed by service (see serviceKeyFor in sites.js).
@@ -1875,7 +1878,7 @@ function sanitizeServiceReasons(raw) {
 
 async function getFullConfig() {
   await applyDuePendingChanges();
-  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'leaveDelayMinutes', 'setupCompletedAt', 'pendingChanges', 'screenTimeClearPending'];
+  const keys = ['provider', 'apiKey', 'model', 'userContext', 'contextProjects', 'contextReasons', 'coachInstructions', 'blockedDomains', 'domainLimits', 'blockedApps', 'appLimits', 'appLabels', 'serviceReasons', 'setupComplete', 'entitlement', 'backendUrl', 'leaveDelayMinutes', 'reasonFreeMinutes', 'setupCompletedAt', 'pendingChanges', 'screenTimeClearPending'];
   const stored = await getStorage(keys);
   const access = await resolveAIRoute();
   return {
@@ -1903,6 +1906,7 @@ async function getFullConfig() {
     // that is not on the ladder must show as the rung below it rather than as
     // nothing selected. normalizeLeaveDelay only ever snaps down.
     leaveDelayMinutes: normalizeLeaveDelay(stored.leaveDelayMinutes),
+    reasonFreeMinutes: normalizeReasonFreeMinutes(stored.reasonFreeMinutes),
     setupCompletedAt: Number(stored.setupCompletedAt) || 0,
     screenTimeClearPending: stored.screenTimeClearPending === true,
     providers: PROVIDERS
@@ -2336,6 +2340,14 @@ async function saveSettings(partial) {
     const next = normalizeLeaveDelay(partial.leaveDelayMinutes);
     partial = { ...partial, leaveDelayMinutes: Math.max(current, next) };
   }
+  // The same one-way rule, the other way up: asking for a reason sooner is a
+  // tightening and free; asking later is 'increase_reason_free_minutes'.
+  if (partial && 'reasonFreeMinutes' in partial) {
+    const { reasonFreeMinutes: currentFree } = await getStorage(['reasonFreeMinutes']);
+    const current = normalizeReasonFreeMinutes(currentFree);
+    const next = normalizeReasonFreeMinutes(partial.reasonFreeMinutes);
+    partial = { ...partial, reasonFreeMinutes: Math.min(current, next) };
+  }
   await setStorage(partial);
   // domainLimits joins blockedDomains here because WHICH domains get a redirect
   // rule now depends on it: a host that has just been given a part rule has to
@@ -2466,7 +2478,7 @@ const APP_CHANGE_TYPES = ['remove_app', 'increase_app_limit', 'narrow_app_block_
 // since there is no per-item override to read), that the prompt must not
 // render a per-domain usage line, and that nothing may look them up in
 // appLabels.
-const GLOBAL_CHANGE_TYPES = ['disable_all', 'uninstall', 'decrease_leave_delay'];
+const GLOBAL_CHANGE_TYPES = ['disable_all', 'uninstall', 'decrease_leave_delay', 'increase_reason_free_minutes'];
 
 // The two change types whose value is a part rule ({ scope, parts }) rather
 // than a number or a string. They need naming once because the settings gate
@@ -2944,6 +2956,7 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           : `Understood. I've stepped out of the way. Go ahead and remove it. Look after yourself.`;
       }
       else if (changeType === 'decrease_leave_delay') acceptanceFallback = `Alright, I've shortened the wait on removing Intention.`;
+      else if (changeType === 'increase_reason_free_minutes') acceptanceFallback = `Alright, short visits can run longer before I ask why.`;
       else acceptanceFallback = `Okay, I'm convinced. I've made that change.`;
     }
   }
@@ -3352,6 +3365,17 @@ async function applySettingChange({ domain, changeType, newValue }) {
     return { changeType, leaveDelayMinutes: next, previousLeaveDelayMinutes: current };
   }
 
+  // Letting longer visits through without a reason. Refused unless it really
+  // is a raise, for the same no-op-approval reason as the branch above.
+  if (changeType === 'increase_reason_free_minutes') {
+    const { reasonFreeMinutes } = await getStorage(['reasonFreeMinutes']);
+    const current = normalizeReasonFreeMinutes(reasonFreeMinutes);
+    const next = normalizeReasonFreeMinutes(newValue);
+    if (next <= current) return null;
+    await setStorage({ reasonFreeMinutes: next });
+    return { changeType, reasonFreeMinutes: next, previousReasonFreeMinutes: current };
+  }
+
   return null;
 }
 
@@ -3423,8 +3447,14 @@ async function intentionGrantUnlocked({ tabId, domain, isApp, reason, minutes, a
   if (!sessionKey) return { denied: 'no session target' };
 
   const intention = await getIntention(domain);
-  const why = typeof reason === 'string' ? reason.trim().slice(0, 500) : '';
-  if (!why) return { denied: 'reason required', intention };
+  // The gate runs the same check before it enables its button; this is the
+  // copy that holds when something other than the gate asks.
+  const length = intention.mode === 'dailyTime' ? Number(minutes) : intention.minutesEach;
+  const needsReason = visitNeedsReason(length, intention.reasonFreeMinutes);
+  const why = needsReason && typeof reason === 'string' ? reason.trim().slice(0, 500) : '';
+  if (needsReason && visitReasonProblem(why)) {
+    return { denied: 'reason required', problem: visitReasonProblem(why), intention };
+  }
   if (intention.mode === 'dailyTime') {
     if (intention.dailyMinutes === 0 || intention.minutesLeft <= 0) return { denied: 'intention spent', intention };
     const requested = Number(minutes);
@@ -3471,7 +3501,8 @@ const IMMEDIATE_CHANGE_TYPES = ['edit_site_purpose', 'edit_site_legitimate', 'un
 
 const DEFERRED_CHANGE_TYPES = [
   'remove', 'remove_app', 'increase_limit', 'increase_app_limit',
-  'narrow_block_scope', 'narrow_app_block_scope', 'allow_accounts', 'allow_reddit', 'disable_all', 'decrease_leave_delay'
+  'narrow_block_scope', 'narrow_app_block_scope', 'allow_accounts', 'allow_reddit', 'disable_all', 'decrease_leave_delay',
+  'increase_reason_free_minutes'
 ];
 
 async function requestSettingChange({ changeType, domain, newValue }) {

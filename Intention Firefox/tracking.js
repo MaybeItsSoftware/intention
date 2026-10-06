@@ -95,7 +95,10 @@ const CONFIG_KEYS = [
   // silence — and syncing them would mean a stand-down earned on a Mac
   // silencing the interposition on an iPhone, which is not what either of them
   // means.
-  'leaveDelayMinutes'
+  'leaveDelayMinutes',
+  // When the gate starts asking for a reason. Same argument: set in the app,
+  // enforced by Safari's gate too.
+  'reasonFreeMinutes'
 ];
 const NATIVE_APP_ID = 'com.intention.app'; // ignored by Safari (single native host per app)
 const NATIVE_PULL_THROTTLE_MS = 30000;

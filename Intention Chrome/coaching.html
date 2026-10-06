@@ -371,30 +371,47 @@
       font: inherit;
       font-size: 16px;
     }
-    .int-visit-minutes { max-width: 140px; }
-    .int-visit-presets {
+    .int-visit-stepper {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      align-items: stretch;
       width: 100%;
-    }
-    .int-visit-preset {
-      min-height: 44px;
-      padding: 8px 14px;
       border: 1px solid var(--border-input);
       border-radius: var(--radius-control);
       background: var(--paper);
+      overflow: hidden;
+    }
+    .int-step-btn {
+      flex: 0 0 56px;
+      min-height: 48px;
+      border: 0;
+      background: transparent;
       color: var(--ink);
       font: inherit;
-      font-size: 15px;
+      font-size: 22px;
+      line-height: 1;
       cursor: pointer;
     }
-    .int-visit-preset[aria-pressed="true"] {
-      border-color: var(--ink);
-      box-shadow: inset 0 0 0 1px var(--ink);
+    .int-step-btn:first-child { border-right: 1px solid var(--border-input); }
+    .int-step-btn:last-child { border-left: 1px solid var(--border-input); }
+    .int-step-btn:hover:not(:disabled) { background: var(--hover); }
+    .int-step-btn:disabled { color: var(--text-dim); cursor: default; }
+    .int-step-value {
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink);
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
     }
+    .int-visit-note, .int-visit-hint {
+      width: 100%;
+      margin: -6px 0 0;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .int-visit-hint { color: var(--danger-text); }
     @media (max-width: 520px) {
-      .int-visit-minutes { max-width: none; }
       .int-intention-actions > button, .int-actions > button { flex: 1 1 100%; }
     }
     .int-solid-btn {
@@ -525,6 +542,7 @@
   <script src="billing.js"></script>
   <script src="report.js"></script>
   <script src="sites.js"></script>
+  <script src="rules.js"></script>
   <script src="gate-ui.js"></script>
   <script src="coaching.js"></script>
 </body>

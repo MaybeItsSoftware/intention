@@ -462,15 +462,69 @@ function sendChatMessage(message, timeoutMs = CHAT_TIMEOUT_MS) {
   });
 }
 
-// The free intention visit still asks what the visit is for. Both the page
-// overlay and the native/redirect gate use this same form before spending an
-// open. A daily time budget also asks how much of today's time to take now.
+// The free intention visit. A daily time budget picks the length with a
+// stepper that starts at one minute; a fixed-length open has its length set
+// already. Either way the reason field only appears once the visit is longer
+// than the user's reason-free minutes (rules.js), and what is typed there has
+// to be words rather than a keyboard mash. Both the page overlay and the
+// native/redirect gate use this same form before spending an open.
 function createIntentionVisitForm(container, intention, draft, onChange) {
   const fields = document.createElement('div');
   fields.className = 'int-visit-fields';
+  const reasonFree = normalizeReasonFreeMinutes(intention.reasonFreeMinutes);
+
+  let minutes = intention.minutesEach;
+  let maxMinutes = minutes;
+  let paintStepper = () => {};
+  if (intention.mode === 'dailyTime') {
+    maxMinutes = Number(intention.visitMinutesMax) > 0
+      ? Math.min(intention.minutesLeft, intention.visitMinutesMax)
+      : intention.minutesLeft;
+    minutes = Math.min(maxMinutes, Math.max(1, Math.floor(Number(draft.minutes)) || 1));
+
+    // One minute at a time up to five, then fives: the short visits are the
+    // ones worth fine control, and thirty taps to reach half an hour is not.
+    const up = m => Math.min(maxMinutes, m < 5 ? m + 1 : m - (m % 5) + 5);
+    const down = m => Math.max(1, m <= 5 ? m - 1 : m % 5 ? m - (m % 5) : m - 5);
+
+    const stepper = document.createElement('div');
+    stepper.className = 'int-visit-stepper';
+    stepper.setAttribute('role', 'group');
+    stepper.setAttribute('aria-label', 'Visit length');
+    const less = document.createElement('button');
+    less.type = 'button';
+    less.className = 'int-step-btn';
+    less.textContent = '\u2212';
+    less.setAttribute('aria-label', 'Shorter');
+    const value = document.createElement('output');
+    value.className = 'int-step-value';
+    value.setAttribute('aria-live', 'polite');
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'int-step-btn';
+    more.textContent = '+';
+    more.setAttribute('aria-label', 'Longer');
+    stepper.appendChild(less);
+    stepper.appendChild(value);
+    stepper.appendChild(more);
+    fields.appendChild(stepper);
+
+    paintStepper = () => {
+      value.textContent = `${minutes} min`;
+      less.disabled = minutes <= 1;
+      more.disabled = minutes >= maxMinutes;
+    };
+    less.addEventListener('click', () => { minutes = down(minutes); changed(); });
+    more.addEventListener('click', () => { minutes = up(minutes); changed(); });
+  }
+
+  const note = document.createElement('p');
+  note.className = 'int-visit-note';
+  fields.appendChild(note);
+
   const reasonLabel = document.createElement('label');
   reasonLabel.className = 'int-visit-label';
-  reasonLabel.textContent = 'What are you here for?';
+  reasonLabel.textContent = 'What is this visit for?';
   const reasonInput = document.createElement('input');
   reasonInput.className = 'int-visit-input int-visit-reason';
   reasonInput.type = 'text';
@@ -480,75 +534,49 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
   reasonLabel.appendChild(reasonInput);
   fields.appendChild(reasonLabel);
 
-  let minutesInput = null;
-  let markPreset = () => {};
-  if (intention.mode === 'dailyTime') {
-    const maxMinutes = Number(intention.visitMinutesMax) > 0
-      ? Math.min(intention.minutesLeft, intention.visitMinutesMax)
-      : intention.minutesLeft;
-    const minutesLabel = document.createElement('label');
-    minutesLabel.className = 'int-visit-label';
-    minutesLabel.textContent = 'Minutes for this visit';
-    minutesInput = document.createElement('input');
-    minutesInput.className = 'int-visit-input int-visit-minutes';
-    minutesInput.type = 'number';
-    minutesInput.min = '1';
-    minutesInput.max = String(maxMinutes);
-    minutesInput.step = '1';
-    minutesInput.value = String(Math.min(maxMinutes, Math.max(1, Number(draft.minutes) || 10)));
-    minutesLabel.appendChild(minutesInput);
-    fields.appendChild(minutesLabel);
-
-    // One tap for the usual lengths: typing a number into a phone's keypad
-    // is the fiddliest part of the gate, and most visits are one of these.
-    // Only lengths that fit in what is left are offered, plus the rest of it.
-    const presets = [...new Set([5, 10, 15, 30].filter(m => m < maxMinutes).concat(maxMinutes))];
-    if (presets.length > 1) {
-      const row = document.createElement('div');
-      row.className = 'int-visit-presets';
-      row.setAttribute('role', 'group');
-      row.setAttribute('aria-label', 'Quick lengths');
-      const buttons = [];
-      const mark = () => {
-        for (const b of buttons) {
-          b.setAttribute('aria-pressed', String(Number(minutesInput.value) === b.minutes));
-        }
-      };
-      for (const m of presets) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'int-visit-preset';
-        b.minutes = m;
-        b.textContent = m === maxMinutes && m > 30 ? `All ${m} min` : `${m} min`;
-        b.addEventListener('click', () => {
-          minutesInput.value = String(m);
-          changed();
-        });
-        buttons.push(b);
-        row.appendChild(b);
-      }
-      markPreset = mark;
-      mark();
-      fields.appendChild(row);
-    }
-  }
+  const hint = document.createElement('p');
+  hint.className = 'int-visit-hint';
+  hint.setAttribute('aria-live', 'polite');
+  fields.appendChild(hint);
 
   const read = () => {
-    const reason = reasonInput.value.trim();
-    const minutes = minutesInput ? Number(minutesInput.value) : intention.minutesEach;
-    const validMinutes = !minutesInput || (Number.isInteger(minutes) && minutes >= 1 && minutes <= Number(minutesInput.max));
-    return { reason, minutes, valid: !!reason && validMinutes };
+    const needsReason = visitNeedsReason(minutes, reasonFree);
+    const reason = needsReason ? reasonInput.value.trim() : '';
+    const problem = needsReason ? visitReasonProblem(reason) : '';
+    const validMinutes = Number.isInteger(minutes) && minutes >= 1 && minutes <= maxMinutes;
+    return { reason, minutes, needsReason, problem, valid: validMinutes && !problem };
+  };
+  const paint = () => {
+    const state = read();
+    paintStepper();
+    reasonLabel.hidden = !state.needsReason;
+    // Only complain once something has been typed. An empty field already
+    // says what it wants, and the disabled button says the rest.
+    hint.textContent = state.needsReason && reasonInput.value.trim() ? state.problem : '';
+    hint.hidden = !hint.textContent;
+    note.textContent = state.needsReason
+      ? `Over ${reasonFree} min needs a reason.`
+      : reasonFree > 0 && intention.mode === 'dailyTime'
+        ? `Up to ${reasonFree} min without a reason.`
+        : '';
+    note.hidden = !note.textContent;
+    return state;
   };
   const changed = () => {
     draft.reason = reasonInput.value;
-    if (minutesInput) draft.minutes = minutesInput.value;
-    markPreset();
-    onChange(read());
+    draft.minutes = minutes;
+    onChange(paint());
   };
   reasonInput.addEventListener('input', changed);
-  if (minutesInput) minutesInput.addEventListener('input', changed);
+  paint();
   container.appendChild(fields);
-  return { read, reasonInput, minutesInput };
+  return { read, reasonInput };
+}
+
+// The take button's words, which follow the stepper.
+function intentionTakeLabel(intention, mode, minutes) {
+  if (intention.mode === 'dailyTime') return `Unlock for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  return mode === 'checkin' ? 'Use another open' : `Open for ${intention.minutesEach} minutes`;
 }
 
 // The conversation itself: a thinking bubble, a request, and a reply typed

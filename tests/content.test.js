@@ -376,7 +376,7 @@ describe('when the background never answers', () => {
         domainLimits: { 'instagram.com': { intentionMode: 'dailyTime', dailyTimeMinutes: 20 } }
       });
       expect(intention(dom)).toMatchObject({ mode: 'dailyTime', dailyMinutes: 20, minutesLeft: 20 });
-      expect(dom.created.some(el => el.className === 'int-visit-preset')).toBe(true);
+      expect(dom.created.some(el => el.className === 'int-visit-stepper')).toBe(true);
     });
 
     it('falls back to the built-in defaults when nothing is configured', async () => {
@@ -436,41 +436,68 @@ describe('when the background never answers', () => {
       });
       await vi.advanceTimersByTimeAsync(10000);
       const take = dom.created.find(el => el.className === 'int-solid-btn');
+      const [less, more] = dom.created.filter(el => el.className === 'int-step-btn');
+      for (let i = 0; i < 10; i++) if (!more.disabled) more._on.click[0]();
+      expect(dom.created.find(el => el.className === 'int-step-value').textContent).toBe('7 min');
+      expect(more.disabled).toBe(true);
+      less._on.click[0]();
+      expect(take.textContent).toBe('Unlock for 5 minutes');
+      expect(take.disabled).toBe(true);
       const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
-      const minutes = dom.created.find(el => (el.className || '').includes('int-visit-minutes'));
       reason.value = 'Reply to a message';
       reason._on.input[0]();
-      minutes.value = '8';
-      minutes._on.input[0]();
-      expect(take.disabled).toBe(true);
-      minutes.value = '3';
-      minutes._on.input[0]();
       press(take);
-      expect(sent[0]).toMatchObject({ reason: 'Reply to a message', minutes: 3 });
+      expect(sent[0]).toMatchObject({ reason: 'Reply to a message', minutes: 5 });
     });
   });
 
-  it('offers one-tap visit lengths that fit in the time left', async () => {
+  it('unlocks for a minute on a tap, and asks why only past the reason-free minutes', async () => {
     vi.useFakeTimers();
     const sent = [];
     const dom = loadContent({
       storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
       sendMessage: (message, cb) => {
-        if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { mode: 'dailyTime', dailyMinutes: 30, minutesUsed: 18, minutesLeft: 12, opens: 0, opensUsed: 0 } });
+        if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { mode: 'dailyTime', dailyMinutes: 30, minutesUsed: 18, minutesLeft: 12, opens: 0, opensUsed: 0, reasonFreeMinutes: 3 } });
         if (message.action === 'intentionGrant') { sent.push(message); cb({ grantedSession: { intervalMinutes: message.minutes } }); }
       }
     });
     await vi.advanceTimersByTimeAsync(10000);
-    const presets = dom.created.filter(el => el.className === 'int-visit-preset');
-    expect(presets.map(b => b.textContent)).toEqual(['5 min', '10 min', '12 min']);
+    const take = dom.created.find(el => el.className === 'int-solid-btn');
+    const value = dom.created.find(el => el.className === 'int-step-value');
+    const reasonLabel = dom.created.find(el => el.className === 'int-visit-label');
+    const [less, more] = dom.created.filter(el => el.className === 'int-step-btn');
+    expect(value.textContent).toBe('1 min');
+    expect(less.disabled).toBe(true);
+    expect(take.textContent).toBe('Unlock for 1 minute');
+    expect(take.disabled).toBe(false);
+    expect(reasonLabel.hidden).toBe(true);
+
+    more._on.click[0]();
+    more._on.click[0]();
+    expect(take.textContent).toBe('Unlock for 3 minutes');
+    expect(reasonLabel.hidden).toBe(true);
+    more._on.click[0]();
+    expect(reasonLabel.hidden).toBe(false);
+    expect(take.disabled).toBe(true);
+
+    // Steps go by fives past five.
+    more._on.click[0]();
+    more._on.click[0]();
+    expect(value.textContent).toBe('10 min');
+    less._on.click[0]();
+    expect(value.textContent).toBe('5 min');
+
     const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
-    reason.value = 'Reply to a message';
+    const hint = dom.created.find(el => el.className === 'int-visit-hint');
+    reason.value = 'sdfghj kdjf';
     reason._on.input[0]();
-    presets[0]._on.click[0]();
-    expect(presets[0].getAttribute('aria-pressed')).toBe('true');
-    expect(presets[1].getAttribute('aria-pressed')).toBe('false');
-    press(dom.created.find(el => el.className === 'int-solid-btn'));
-    expect(sent[0]).toMatchObject({ minutes: 5 });
+    expect(take.disabled).toBe(true);
+    expect(hint.textContent).toMatch(/keyboard mash/);
+
+    less._on.click[0]();
+    less._on.click[0]();
+    press(take);
+    expect(sent[0]).toMatchObject({ minutes: 3, reason: '' });
     vi.useRealTimers();
   });
 
