@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/MaybeItsSoftware/intention/compare/v1.1.2...v1.2.0) (2026-10-06)
+
+### Features
+
+* **gate:** unlock a minute at a time, and ask why only past a threshold ([14980c0](https://github.com/MaybeItsSoftware/intention/commit/14980c065be597a6fb8bb0fa38f6e269f1032b93))
+
 ## [1.1.2](https://github.com/MaybeItsSoftware/intention/compare/v1.1.1...v1.1.2) (2026-10-03)
 
 ### Bug Fixes
