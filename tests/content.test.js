@@ -892,6 +892,24 @@ describe('a pass granted for one page', () => {
     expect(text).not.toContain('This page only');
     expect(text).toContain('Reason: research');
   });
+
+  // Safari quit and reopened: the restored tab is under a live pass and the
+  // check-in alarm is gone, so the page itself has to notice the clock.
+  for (const path of ['background', 'storage']) {
+    it(`puts the check-in up when a site pass runs out with no alarm (${path})`, async () => {
+      vi.useFakeTimers();
+      const session = { ...siteSession(), startTime: Date.now() - 11.5 * 60000 };
+      const dom = withPass({ session, answer: path === 'background' ? 'background' : null,
+        sessionKey: 'tab:7:youtube.com' });
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(badged(dom)).toBe(true);
+      expect(gated(dom)).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(badged(dom)).toBe(false);
+      expect(gated(dom)).toBe(true);
+    });
+  }
 });
 
 // The navigation nobody sees: no request, no commit, no re-injected content

@@ -2336,7 +2336,19 @@ function renderStatusBadge(session) {
     timeEl.textContent = `⏱ ${timeStr}${boundary}${tail}`;
   }
   update();
-  const intervalId = setInterval(update, 1000);
+  // The badge's own tick is also what ends a site pass on the page. The
+  // check-in alarm was the only other thing that could, and it does not
+  // survive Safari quitting: reopened, the restored tab came back under a live
+  // pass with nothing left to end it, and the page stayed open for as long as
+  // nobody hard-navigated. Checked on the tick rather than in the first
+  // update() above, which runs before this badge is the one teardown names.
+  const intervalId = setInterval(() => {
+    if (!passIsLive(session)) {
+      showPassExpired(session);
+      return;
+    }
+    update();
+  }, 1000);
   document.body.appendChild(badge);
 
   // The enforcement half of the badge. Armed only for a scoped pass, so an

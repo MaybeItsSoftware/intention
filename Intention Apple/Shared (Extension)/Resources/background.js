@@ -911,6 +911,12 @@ chrome.runtime.onInstalled.addListener((details) => {
     chrome.runtime.openOptionsPage();
   }
 });
+// A browser quit drops pending alarms (Safari always; Chrome may), and with
+// them every running pass's check-in. Banks what ran out while the browser was
+// closed and re-arms the rest — the same catch-up the native hosts ask for.
+chrome.runtime.onStartup?.addListener(() => {
+  reconcileSessions().catch(e => console.warn(INT_LOG, 'reconcileSessions on startup:', e));
+});
 syncBlockingRules();
 // Carries any pass written under the pre-(tab, domain) key format across, so a
 // grant in flight when the extension updated isn't stranded. Idempotent, and a
