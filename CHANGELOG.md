@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/MaybeItsSoftware/intention/compare/v1.2.0...v1.3.0) (2026-10-09)
+
+### Features
+
+* **coach:** run the hosted coach on OpenAI and refresh the OpenAI models ([143325c](https://github.com/MaybeItsSoftware/intention/commit/143325c3cd52b844a2f82f20514fbaf8ccf1aed9))
+
 ## [1.2.0](https://github.com/MaybeItsSoftware/intention/compare/v1.1.2...v1.2.0) (2026-10-06)
 
 ### Features
