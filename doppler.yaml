@@ -1,0 +1,4 @@
+setup:
+  - project: intention
+    config: dev
+    path: server/

@@ -14,6 +14,13 @@ cp .env.template .env   # fill in the secrets below
 npm start               # or: npm run dev
 ```
 
+Secrets live in Doppler (project `intention`: `dev` locally, `prd` synced to
+Railway). Run `doppler setup` once from the repo root — `doppler.yaml` scopes
+`server/` to `dev` — then `npm run dev:doppler` instead of keeping a `.env`.
+Doppler's variables win over any leftover `.env` (Node never lets
+`--env-file` override the real environment), but delete it anyway so a stale
+key can't fill a gap.
+
 ## What it does
 
 1. **Verifies a purchase.** The app sends the receipt its store gave it — a
