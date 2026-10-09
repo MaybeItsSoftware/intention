@@ -80,9 +80,9 @@ export const config = {
 
   // The LLM the hosted coach runs on, under our key.
   llm: {
-    provider: process.env.INTENTION_LLM_PROVIDER || 'anthropic',
+    provider: process.env.INTENTION_LLM_PROVIDER || 'openai',
     apiKey: required('INTENTION_LLM_API_KEY'),
-    model: process.env.INTENTION_LLM_MODEL || 'claude-sonnet-5',
+    model: process.env.INTENTION_LLM_MODEL || 'gpt-5.6-terra',
     maxTokens: Number(process.env.INTENTION_LLM_MAX_TOKENS || 1024),
     // USD per million tokens — approximate published provider pricing,
     // reviewed by hand occasionally rather than fetched live. Used to turn a
@@ -90,7 +90,13 @@ export const config = {
     // Cache rates mirror Anthropic's prompt-caching pricing: reads at 10% of
     // the input rate, writes at 125% — billing them at the flat input rate
     // would overcharge users for exactly the calls caching makes cheap.
+    // OpenAI entries carry no cache rates: callOpenAI reports cached input as
+    // plain input, so users pay the full input rate for it (see llm.js).
     pricing: {
+      'gpt-5.6-terra': { inputPerMillionUsd: 2, outputPerMillionUsd: 12 },
+      'gpt-5.6-luna': { inputPerMillionUsd: 0.2, outputPerMillionUsd: 1.2 },
+      'gpt-5.6-sol': { inputPerMillionUsd: 4, outputPerMillionUsd: 20 },
+      'gpt-6.1-sol': { inputPerMillionUsd: 2, outputPerMillionUsd: 10 },
       'claude-sonnet-5': { inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 },
       'claude-haiku-4.5': { inputPerMillionUsd: 1, outputPerMillionUsd: 5, cacheReadPerMillionUsd: 0.1, cacheWritePerMillionUsd: 1.25 },
       default: { inputPerMillionUsd: 3, outputPerMillionUsd: 15, cacheReadPerMillionUsd: 0.3, cacheWritePerMillionUsd: 3.75 }

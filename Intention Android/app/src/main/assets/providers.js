@@ -77,9 +77,9 @@ const PROVIDERS = {
   },
   openai: {
     label: 'OpenAI',
-    defaultModel: 'gpt-4o',
-    models: ['gpt-4o', 'gpt-4o-mini', 'o1'],
-    modelPlaceholder: 'gpt-4o / gpt-4o-mini / o1'
+    defaultModel: 'gpt-5.6-terra',
+    models: ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.6-sol', 'gpt-6.1-sol'],
+    modelPlaceholder: 'gpt-5.6-terra / gpt-5.6-luna / gpt-5.6-sol'
   },
   groq: {
     label: 'Groq',
@@ -350,6 +350,12 @@ async function callOpenAICompatible({ baseUrl, apiKey, model, system, messages, 
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.schema }
     }));
+    // OpenAI's GPT-5 and later refuse function tools on /chat/completions
+    // (400) at any reasoning effort but 'none'. Older models reject the field
+    // outright, and Groq's gpt-oss has no 'none' — so OpenAI's own host only.
+    if (baseUrl === 'https://api.openai.com/v1' && /^gpt-([5-9]|\d{2})/.test(model)) {
+      body.reasoning_effort = 'none';
+    }
   }
   const res = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
     method: 'POST',

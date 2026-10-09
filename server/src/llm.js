@@ -125,6 +125,9 @@ async function callOpenAI({ system, messages, tools }, options) {
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.schema }
     }));
+    // GPT-5 and later refuse function tools on /chat/completions (400) at any
+    // reasoning effort but 'none'. Older models reject the field outright.
+    if (/^gpt-([5-9]|\d{2})/.test(body.model)) body.reasoning_effort = 'none';
   }
 
   const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {

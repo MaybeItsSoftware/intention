@@ -17,6 +17,10 @@ import { join } from 'node:path';
 
 process.env.INTENTION_TOKEN_SECRET = 'test-secret-do-not-use';
 process.env.INTENTION_LLM_API_KEY = 'test-llm-key';
+// Pinned rather than left to the default (OpenAI): the cache-billing tests
+// exercise Anthropic's cache read/write rates, which OpenAI pricing lacks.
+process.env.INTENTION_LLM_PROVIDER = 'anthropic';
+process.env.INTENTION_LLM_MODEL = 'claude-sonnet-5';
 process.env.NODE_ENV = 'development';
 process.env.INTENTION_ALLOW_UNVERIFIED_RECEIPTS = '1';
 // The Google refund webhook now fails closed without this, since it deducts

@@ -153,7 +153,19 @@ describe('callLLM dispatch', () => {
     const { ctx } = loadProviders({ fetch });
     await ctx.callLLM({ provider: 'openai', apiKey: 'k', system: 's', messages: MESSAGES });
     expect(fetch.calls[0].url).toContain('api.openai.com');
-    expect(lastBody(fetch).model).toBe('gpt-4o'); // PROVIDERS.openai.defaultModel
+    expect(lastBody(fetch).model).toBe('gpt-5.6-terra'); // PROVIDERS.openai.defaultModel
+  });
+
+  it('turns reasoning off for GPT-5+ tool calls on OpenAI only', async () => {
+    const TOOLS = [{ name: 't', description: 'd', schema: { type: 'object', properties: {} } }];
+    const fetch = makeMockFetch({ json: { choices: [{ message: { content: 'x' } }] } });
+    const { ctx } = loadProviders({ fetch });
+    await ctx.callLLM({ provider: 'openai', apiKey: 'k', system: 's', messages: MESSAGES, tools: TOOLS });
+    expect(lastBody(fetch).reasoning_effort).toBe('none');
+    await ctx.callLLM({ provider: 'openai', apiKey: 'k', model: 'gpt-4o', system: 's', messages: MESSAGES, tools: TOOLS });
+    expect(lastBody(fetch)).not.toHaveProperty('reasoning_effort');
+    await ctx.callLLM({ provider: 'groq', apiKey: 'k', system: 's', messages: MESSAGES, tools: TOOLS });
+    expect(lastBody(fetch)).not.toHaveProperty('reasoning_effort');
   });
 
   it('dispatches groq to the groq base url', async () => {
