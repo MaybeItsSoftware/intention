@@ -183,7 +183,7 @@ object SessionOverlay {
                 val session = json.optJSONObject(keys.next()) ?: continue
                 if (!session.isNull("endedAt")) continue
                 val domain = session.optString("domain")
-                if (domain != foregroundTarget || domain == finishing) continue
+                if (!LinkedServices.sameService(domain, foregroundTarget) || domain == finishing) continue
                 val live = LiveSession(
                     domain = domain,
                     reason = session.optString("reason"),

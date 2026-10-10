@@ -104,6 +104,17 @@ closeBtn.textContent = mode === 'checkin'
   : (isApp ? 'Close app' : (window.intentionApps ? 'Not now' : 'Close tab'));
 closeBtn.classList.add('int-block');
 
+// Pressing Send must not take the keyboard away. Left to itself the press moves
+// focus to the button, the keyboard drops, the page grows back underneath the
+// finger and the bar jumps — so the next tap (the follow-up, or Close) lands
+// on whatever slid under it. Keeping focus in the field keeps the layout still
+// and the keyboard up for the reply that usually comes next. mousedown, not
+// pointerdown: moving focus is mousedown's default action, and a tap still
+// synthesises one.
+sendBtn.addEventListener('mousedown', (e) => {
+  if (document.activeElement === inputEl) e.preventDefault();
+});
+
 // Keep .int-column's bottom padding in sync with the bar's real rendered
 // height (font swap, text wrap, and safe-area insets can all change it).
 function updateBarHeightVar() {

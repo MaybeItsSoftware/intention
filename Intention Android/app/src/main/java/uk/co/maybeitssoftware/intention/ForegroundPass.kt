@@ -33,7 +33,8 @@ object ForegroundPass {
                 val domain = session.optString("domain")
                 if (!PassClock.isLive(start, minutes, paused, pausedAt, now) ||
                     (wallExpiresAt > 0L && now >= wallExpiresAt)) continue
-                val inFront = domain == foregroundTarget
+                // A site's pass is in front in its app too — see LinkedServices.
+                val inFront = LinkedServices.sameService(domain, foregroundTarget)
                 if (inFront && pausedAt > 0L) {
                     val totalPaused = paused + (now - pausedAt).coerceAtLeast(0L)
                     session.put("pausedDurationMs", totalPaused)

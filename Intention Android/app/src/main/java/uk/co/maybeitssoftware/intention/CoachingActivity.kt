@@ -15,6 +15,7 @@ import android.webkit.WebView
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -140,6 +141,21 @@ class CoachingActivity : AppCompatActivity() {
             setContentView(root)
         }
 
+        // The keyboard. Edge-to-edge turns adjustResize off, so the WebView
+        // kept its full height and the keyboard covered the bottom of the
+        // gate — the composer, Send, the close button, the reason field and
+        // the Unlock button under it — leaving the user to type blind and
+        // hunt for a button. Padding by the IME inset shrinks the page to the
+        // space above the keyboard instead, as MainActivity does. Only the IME
+        // and the cutout: the system bars are hidden on this screen.
+        val content = findViewById<View>(android.R.id.content)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            view.setPadding(cutout.left, cutout.top, cutout.right, maxOf(cutout.bottom, ime.bottom))
+            insets
+        }
+
         // Initialize background helper
         BackgroundJsHelper.init(applicationContext)
 
@@ -232,6 +248,20 @@ class CoachingActivity : AppCompatActivity() {
                 )
             ).apply { setLayerInset(1, 0, 0, 0, dp(1f).coerceAtLeast(1)) }
         }
+    }
+
+    // singleInstance + SINGLE_TOP: a second gate request while this one is up
+    // arrives here instead of building a new screen. It used to be dropped,
+    // so a link that went from the browser into the app left the site's gate
+    // standing in front of the app — with a decline that opened a blank tab in
+    // a browser the user had already left. Show the gate for what is actually
+    // in front; the same target asking again changes nothing.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val next = intent.getStringExtra("domain") ?: return
+        if (next == domain && intent.getStringExtra("mode") == this.intent.getStringExtra("mode")) return
+        setIntent(intent)
+        recreate()
     }
 
     override fun onBackPressed() {

@@ -45,6 +45,16 @@ class IntentionAccessibilityService : AccessibilityService() {
         // content events from a playing PiP surface can't machine-gun the
         // active media session.
         private const val PIP_PAUSE_THROTTLE_MS = 1_000L
+        // How long a blocked site is left on screen before it is gated, when
+        // that site's app is installed. Following a link to it (from a chat,
+        // a mail, a search result) loads it in the browser or a Custom Tab
+        // first and then hands it to the app; gating straight away put the
+        // coach in front of the browser, which then could not start the app —
+        // Android stops a covered app launching activities — so the user met
+        // the site's gate, then the app's, or a pass for a page they never
+        // meant to be on. This is long enough for the hand-off and no longer:
+        // if the browser is still on the site when it runs out, it is gated.
+        private const val APP_HANDOFF_WAIT_MS = 1_500L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -207,6 +217,8 @@ class IntentionAccessibilityService : AccessibilityService() {
     // Which blocked packages have already eaten their one pause for the
     // current PiP appearance — see checkPipBypass.
     private val pipPausedOnce = mutableSetOf<String>()
+    // The site gate held back by APP_HANDOFF_WAIT_MS, if one is waiting.
+    private var pendingSiteGate: Runnable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -297,6 +309,7 @@ class IntentionAccessibilityService : AccessibilityService() {
         unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
         cancelExpiryRecheck()
+        cancelPendingSiteGate()
         // The pass timer is a window this service added to the WindowManager,
         // so it does not go away with the service: left behind it would sit on
         // the user's screen with nothing left to tick it. Both teardown paths
@@ -498,9 +511,56 @@ class IntentionAccessibilityService : AccessibilityService() {
             scheduleExpiryRecheck(expiresAt)
         } else if ((hostChanged || dismissalLapsed(packageName, matchedDomain)) &&
             !isDismissed(packageName, matchedDomain)) {
-            Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
-            launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
+            if (linkedAppInstalled(matchedDomain)) {
+                Log.d(TAG, "Website is blocked: $host (matched $matchedDomain). Waiting for a hand-off to its app.")
+                gateSiteAfterHandoff(matchedDomain, packageName)
+            } else {
+                Log.d(TAG, "Website is blocked: $host (matched $matchedDomain), no active session. Launching Coach!")
+                launchCoachingOverlay(matchedDomain, isApp = false, label = matchedDomain, browserPackage = packageName)
+            }
         }
+    }
+
+    private fun linkedAppInstalled(domain: String): Boolean {
+        val app = LinkedServices.appForSite(domain) ?: return false
+        return try {
+            packageManager.getApplicationInfo(app, 0).enabled
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // See APP_HANDOFF_WAIT_MS. When the wait is over the gate goes up only if
+    // the browser is still in front and still on the site: if the link went to
+    // the app, the app's own window change has already been dealt with — and
+    // gated, unless a pass for either covers it. Coming back to the browser
+    // later is a window change of its own, which drops the host dedupe and so
+    // evaluates the tab afresh; nothing is lost by standing down here.
+    private fun gateSiteAfterHandoff(domain: String, browserPackage: String) {
+        cancelPendingSiteGate()
+        val gate = Runnable {
+            pendingSiteGate = null
+            val root = rootInActiveWindow
+            if (root?.packageName?.toString() != browserPackage) return@Runnable
+            val urlBarIds = BROWSER_URL_BAR_IDS[browserPackage] ?: return@Runnable
+            // An unreadable bar (hidden while scrolling) is still the page it
+            // was: fail closed on the last host rather than letting it through.
+            val host = findBrowserUrlText(root, browserPackage, urlBarIds)
+                ?.let { if (isBlankPage(it)) return@Runnable else extractHost(it) }
+                ?: lastSeenHost[browserPackage]
+                ?: return@Runnable
+            if (findBlockedDomain(host) != domain) return@Runnable
+            if (sessionExpiresAt(domain) != null || isDismissed(browserPackage, domain)) return@Runnable
+            Log.d(TAG, "$domain stayed in $browserPackage after the hand-off wait. Launching Coach!")
+            launchCoachingOverlay(domain, isApp = false, label = domain, browserPackage = browserPackage)
+        }
+        pendingSiteGate = gate
+        handler.postDelayed(gate, APP_HANDOFF_WAIT_MS)
+    }
+
+    private fun cancelPendingSiteGate() {
+        pendingSiteGate?.let { handler.removeCallbacks(it) }
+        pendingSiteGate = null
     }
 
     // The coach covering a playing video looks, to the player, like a
@@ -788,7 +848,8 @@ class IntentionAccessibilityService : AccessibilityService() {
                 val sessionKey = keys.next()
                 val session = json.getJSONObject(sessionKey)
                 val domain = session.optString("domain")
-                if (domain == key) {
+                // A site and its app share a pass — see LinkedServices.
+                if (LinkedServices.sameService(domain, key)) {
                     val startTime = session.optLong("startTime", 0)
                     val intervalMinutes = session.optLong("intervalMinutes", 0)
                     val paused = session.optLong("pausedDurationMs", 0L)
