@@ -33,14 +33,14 @@ Updates to the Chrome Web Store are automated via the release workflow using the
 4. **Get Refresh Token:** Retrieve the OAuth Refresh Token using Google's OAuth playground or curl, authorizing it for scope `https://www.googleapis.com/auth/chromewebstore`.
 
 #### GitHub Repository Secrets
-Add these secrets in your GitHub repository settings under **Settings → Secrets and variables → Actions**:
+Add these secrets to the `release` environment under **Settings → Environments → release** (every publish job runs in it):
 
 *   `CHROME_EXTENSION_ID`: The unique ID of your Chrome Web Store listing.
 *   `CHROME_CLIENT_ID`: Your Google Developer OAuth Client ID.
 *   `CHROME_CLIENT_SECRET`: Your Google Developer OAuth Client Secret.
 *   `CHROME_REFRESH_TOKEN`: The authorized OAuth Refresh Token.
 
-The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself) once secrets are configured.
+The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself), and publishes the commit that release tagged. A missing secret fails the run.
 
 ---
 
@@ -55,12 +55,12 @@ Updates to Firefox Add-ons are automated via the release workflow using Mozilla'
    - Generate your credentials: **JWT Issuer** and **JWT Secret**.
 
 #### GitHub Repository Secrets
-Add these secrets to your GitHub repository:
+Add these secrets to the `release` environment (**Settings → Environments → release**):
 
 *   `AMO_JWT_ISSUER`: Your AMO JWT Issuer key.
 *   `AMO_JWT_SECRET`: Your AMO JWT Secret token.
 
-The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself) once secrets are configured.
+The storefront publishing triggers automatically when the `Automated Release` workflow completes successfully (`workflow_run`, not the tag push itself), and publishes the commit that release tagged. A missing secret fails the run.
 
 ---
 
@@ -106,7 +106,7 @@ Both lanes work identically locally (secrets from `.env`) and in CI (secrets fro
 
 #### CI: `publish-apple.yml`
 
-Runs both lanes on a macOS GitHub Actions runner (`macos-15`), triggered the same way as Chrome/Firefox/Android (`workflow_run` off `auto-release.yml`, plus manual `workflow_dispatch`). Needs these **repo secrets** (**Settings → Secrets and variables → Actions**) — same names/values as the `.env` vars above, plus one more for git access:
+Runs both lanes on a macOS GitHub Actions runner (`macos-15`), triggered the same way as Chrome/Firefox/Android (`workflow_run` off `auto-release.yml`, plus manual `workflow_dispatch`). Needs these secrets in the **`release` environment** (**Settings → Environments → release**) — same names/values as the `.env` vars above, plus one more for git access:
 
 | Secret | Purpose |
 |---|---|
@@ -114,7 +114,7 @@ Runs both lanes on a macOS GitHub Actions runner (`macos-15`), triggered the sam
 | `MATCH_PASSWORD` | Decrypts the `match-certs` repo |
 | `MATCH_GIT_SSH_KEY` | SSH private key (deploy key) with access to `MaybeItsSoftware/match-certs`, loaded via `webfactory/ssh-agent` |
 
-Skips gracefully (with a `::warning::`, not a failed run) if any secret is missing — same pattern as the other three publish workflows.
+Fails the run if any secret is missing (lenient only on a manual run with `allow_missing_secrets` ticked) — same pattern as the other three publish workflows. A manual run asks for the release tag (`vX.Y.Z`) to publish and never publishes a branch.
 
 **Gotchas already worked out** (so nobody has to re-discover them):
 - Fastlane's `platform` block must be named `:mac`, not `:macos` — pass `platform: "macos"` as a string param to `match`/`build_app` instead.
@@ -146,11 +146,11 @@ cd "Intention Android"
 #### Play Store Signing & Publishing
 To automate Play Store submissions:
 1. **Create Upload Keystore:** Generate a signing key using keytool or Android Studio.
-2. **Store Keystore in Secrets:** Base64 encode your `.jks` or `.keystore` file and store it in GitHub Secrets as `ANDROID_KEYSTORE_BASE64`, alongside key aliases and passwords (`ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`).
+2. **Store Keystore in Secrets:** Base64 encode your `.jks` or `.keystore` file and store it in the `release` environment as `ANDROID_KEYSTORE_BASE64`, alongside key aliases and passwords (`ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`).
 3. **Configure Fastlane Supply:** 
    Initialize Fastlane in the Android project to automatically upload build artifacts (AAB) to Google Play tracks (Internal, Alpha, Beta, Production).
    - Generate a Service Account JSON key from your Google Play Console / Google Cloud Console.
-   - Save the key file content as `PLAY_SERVICE_ACCOUNT_JSON` in GitHub Secrets.
+   - Save the key file content as `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` in the `release` environment.
 
 ---
 
@@ -160,19 +160,22 @@ To automate Play Store submissions:
 graph TD
     A[Git Push / PR / Merge to main] --> B{Branch / Trigger}
     B -- PR or Push to main --> C[CI Workflow]
-    B -- Push/Merge to main --> D[Automated Release Workflow]
+    C -- workflow_run: passed on a push to main --> D[Automated Release Workflow]
     D -- workflow_run completed --> E[Store Publish Workflows]
     
     subgraph CI Workflow
         C --> C1[npm ci]
-        C1 --> C2[npm test - Vitest]
-        C2 --> C3[Validate JSON manifests]
-        C3 --> C4[Check JS syntax]
-        C4 --> C5[Verify cross-platform sync]
+        C1 --> C2[ESLint + Vitest with coverage]
+        C2 --> C3[Validate manifests, JS syntax, web-ext lint]
+        C3 --> C4[Platform files + cross-platform sync]
+        C --> C5[Smoke tests - Chromium]
+        C --> C6[Android unit tests + debug/release builds]
+        C --> C7[Apple macOS + iOS compiles]
     end
     
     subgraph Automated Release Workflow
-        D --> D1[npm ci]
+        D --> D0[main still at the CI-tested commit?]
+        D0 --> D1[npm ci]
         D1 --> D2[semantic-release]
         D2 --> D3[bump-version.sh & build.sh]
         D3 --> D4[Create GitHub Release & Upload Zips]
@@ -193,4 +196,4 @@ graph TD
 1. **Never Edit Platform Copies of Shared Files:**
    `shared/` is the single source of truth; its files must remain byte-identical across the platform directories (Chrome, Firefox, Safari wrapper, Android assets), and CI/CD validation fails if they drift. Edit `shared/`, then run `npm run sync` (or `./build.sh`, which includes it) to propagate to all four platforms.
 2. **Never Commit Secrets:**
-   Ensure `env.txt` and developer configuration files are kept in `.gitignore`. Store all release credentials and signing certificates inside secure GitHub Secrets.
+   Ensure `env.txt` and developer configuration files are kept in `.gitignore`. Store all release credentials and signing certificates as secrets of the `release` GitHub environment, which only the publish jobs can read.

@@ -18,8 +18,8 @@ Do these once, before the first submission of each platform.
 ## Release flow
 
 1. **Commit changes using Conventional Commits**: To enable auto-versioning, commit messages must follow the Conventional Commits syntax (e.g., `feat: login screen`, `fix: cookie parser`, or `feat!: remove legacy API` for breaking changes).
-2. **Merge/Push to `main`**: Pushing or merging code into the `main` branch automatically triggers the [auto-release.yml](file:///.github/workflows/auto-release.yml) workflow.
-3. **Automated Release**: The CI runner:
+2. **Merge/Push to `main`**: Pushing or merging code into the `main` branch runs `ci.yml` (lint, unit tests, smoke tests, platform-file and sync checks, Android and Apple builds). When that CI run passes, it triggers the [auto-release.yml](file:///.github/workflows/auto-release.yml) workflow (`workflow_run`). A red CI run never releases.
+3. **Automated Release**: Only if `main` still points at the commit that CI run tested (otherwise the newer commit's CI run releases instead), the CI runner:
    - Evaluates Conventional Commits since the last release tag.
    - Bumps the version using SemVer rules.
    - Updates files using `scripts/bump-version.sh`.
@@ -31,7 +31,9 @@ Do these once, before the first submission of each platform.
    - **`publish-android.yml`** — publishes a Google Play internal release, *if* configured.
    - **`publish-apple.yml`** — uploads signed iOS + macOS builds to App Store Connect, *if* configured. Like Chrome, this only primes the build — it does not attach it to a version or submit for review; do that manually when ready.
    
-   If secrets are missing, these workflows log warnings and skip gracefully. You can run any store workflow by hand via the Actions tab.
+   Each one publishes exactly the commit the release tagged, not whatever `main` holds by the time it runs. If its secrets are missing, the workflow **fails** (a red run, naming the missing secrets) rather than reporting success after publishing nothing. Store credentials live in the `release` GitHub environment (see [GitHub settings](#github-settings) below).
+
+   You can run any store workflow by hand from the Actions tab to re-publish an existing release: it asks for the release tag (`vX.Y.Z`) and checks that tag out. It will not publish a branch. Tick `allow_missing_secrets` for a deliberate dry run without credentials.
 
    > [!NOTE]
    > **Automated Store Publishing:**
@@ -41,7 +43,7 @@ Do these once, before the first submission of each platform.
 
 ## Chrome Web Store: automated publishing
 
-`publish-chrome.yml` needs these repo secrets (**Settings → Secrets and variables → Actions**):
+`publish-chrome.yml` needs these secrets in the `release` environment (**Settings → Environments → release**):
 
 | Secret | How to get it |
 |---|---|
@@ -74,7 +76,7 @@ bundle exec fastlane ios beta   # archive -> build/ios/Intention.ipa   -> upload
 bundle exec fastlane mac beta   # archive -> build/macos/Intention.pkg -> upload to App Store Connect
 ```
 
-`publish-apple.yml` needs these repo secrets (**Settings → Secrets and variables → Actions**); local runs read the same variable names from the repo root `.env` instead. See [DEVOPS.md](DEVOPS.md#3-apple-app-store-macos--ios-safari-wrapper) for exactly how to get them and what each lane does under the hood:
+`publish-apple.yml` needs these secrets in the `release` environment (**Settings → Environments → release**); local runs read the same variable names from the repo root `.env` instead. See [DEVOPS.md](DEVOPS.md#3-apple-app-store-macos--ios-safari-wrapper) for exactly how to get them and what each lane does under the hood:
 
 | Secret | Purpose |
 |---|---|
@@ -82,7 +84,7 @@ bundle exec fastlane mac beta   # archive -> build/macos/Intention.pkg -> upload
 | `MATCH_PASSWORD` | Decrypts the shared `MaybeItsSoftware/match-certs` cert/profile repo (same repo other maybeitssoftware apps use) |
 | `MATCH_GIT_SSH_KEY` | SSH deploy key with access to `match-certs` — CI-only; a local run uses your own SSH identity instead |
 
-If secrets are missing, `publish-apple.yml` logs a warning and skips gracefully, like the other store workflows. On CI, `match` runs in `readonly` mode automatically (via `setup_ci`) so a workflow run can never create or revoke certs/profiles — only a local run can do that, the first time a new bundle ID needs a profile.
+If secrets are missing, `publish-apple.yml` fails the run (lenient only for a manual run with `allow_missing_secrets`), like the other store workflows. On CI, `match` runs in `readonly` mode automatically (via `setup_ci`) so a workflow run can never create or revoke certs/profiles — only a local run can do that, the first time a new bundle ID needs a profile.
 
 After a successful upload, the build takes a few minutes to finish processing in App Store Connect before you can attach it to a version and submit for review — that part stays manual at [App Store Connect](https://appstoreconnect.apple.com).
 
@@ -90,7 +92,7 @@ To regenerate the Xcode wrapper from the latest Chrome sources after a big chang
 
 ## Google Play: automated publishing
 
-`publish-android.yml` builds a signed `.aab` in CI and pushes it to the **internal** track (change the `track:` input in the workflow to `alpha`, `beta`, or `production` once you're past internal testing). It needs these repo secrets:
+`publish-android.yml` builds a signed `.aab` in CI and pushes it to the **internal** track (change the `track:` input in the workflow to `alpha`, `beta`, or `production` once you're past internal testing). It needs these secrets in the `release` environment:
 
 | Secret | How to get it |
 |---|---|
@@ -197,9 +199,18 @@ In Play Console, select Intention → **Monetise with Play → Promo codes → C
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | push/PR to `main` | Manifest/version validation, JS syntax, cross-platform file sync, `web-ext lint` |
-| `auto-release.yml` | push to `main` | Calculates next version, runs tests, bumps versions, zips Chrome + Firefox, tags the commit, and creates a GitHub Release |
-| `publish-chrome.yml` | `Automated Release` completion (or manual) | Uploads a draft to the Chrome Web Store (not submitted for review), if secrets are configured; skips gracefully otherwise |
-| `publish-firefox.yml` | `Automated Release` completion (or manual) | Submits to AMO, if secrets are configured; skips gracefully otherwise |
-| `publish-android.yml` | `Automated Release` completion (or manual) | Publishes a Google Play internal release, if secrets are configured; skips gracefully otherwise |
-| `publish-apple.yml` | `Automated Release` completion (or manual) | Builds + uploads signed iOS/macOS binaries to App Store Connect via Fastlane + match (not submitted for review). **Fails loudly** if secrets are missing on a release-triggered run (lenient only for manual `workflow_dispatch`), so a dead release channel cannot look healthy |
+| `ci.yml` | push/PR to `main` | ESLint, unit tests with coverage, manifest/version validation, JS syntax, `web-ext lint`, platform-file and cross-platform sync checks, Chromium smoke tests, Android unit tests + debug and release (R8) builds, Apple macOS + iOS compiles |
+| `auto-release.yml` | `CI` passing on a push to `main` (or manual, which requires a passing CI run for `main`'s current commit) | Calculates next version, bumps versions, zips Chrome + Firefox, tags the commit, and creates a GitHub Release |
+| `publish-chrome.yml` | `Automated Release` completion (or manual, for a given `vX.Y.Z` tag) | Uploads a draft of the released commit to the Chrome Web Store (not submitted for review). **Fails** if secrets are missing |
+| `publish-firefox.yml` | `Automated Release` completion (or manual, for a given `vX.Y.Z` tag) | Submits the released commit to AMO (listed, so public). **Fails** if secrets are missing |
+| `publish-android.yml` | `Automated Release` completion (or manual, for a given `vX.Y.Z` tag) | Publishes the released commit as a Google Play internal release. **Fails** if secrets are missing |
+| `publish-apple.yml` | `Automated Release` completion (or manual, for a given `vX.Y.Z` tag) | Builds + uploads signed iOS/macOS binaries of the released commit to App Store Connect via Fastlane + match (not submitted for review). **Fails** if secrets are missing |
+
+Every store workflow is lenient about missing secrets only on a manual run with `allow_missing_secrets` ticked, so a dead release channel cannot look healthy. Third-party actions are pinned to commit SHAs (with the version in a trailing comment); bump them deliberately, resolving the new tag's SHA with `gh api repos/OWNER/REPO/git/ref/tags/TAG`.
+
+### GitHub settings
+
+These live in the repository settings, not in the workflows, so they are listed here:
+
+- **Branch protection on `main`** — require these status checks before merging: `Lint, test and validate`, `Smoke tests (Chromium)`, `Android compiles`, `Apple compiles`. Releases are already gated on CI passing; this stops a red commit landing on `main` in the first place.
+- **`release` environment** (Settings → Environments) — every publish job runs in it, so the store credentials belong there rather than in repository secrets: `CHROME_EXTENSION_ID`, `CHROME_CLIENT_ID`, `CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`, `AMO_JWT_ISSUER`, `AMO_JWT_SECRET`, `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_PASSWORD`, `MATCH_GIT_SSH_KEY`. Restrict its deployment branches to `main` and tags matching `v*`. `RELEASE_TOKEN` stays a repository secret: `auto-release.yml` uses it and is not a publish job.

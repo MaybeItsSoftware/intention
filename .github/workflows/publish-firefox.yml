@@ -1,15 +1,33 @@
 name: Publish to Firefox Add-ons (AMO)
 
-# Auto-submits to AMO on every vX.Y tag push, provided AMO_* secrets are
-# configured (see DEPLOYMENT.md). Skips gracefully — without failing the
-# run — if secrets are missing.
+# Submits the listed (public) AMO version for every release Automated Release
+# cuts, using the AMO_* secrets (see DEPLOYMENT.md). FAILS the run if those
+# secrets are missing, so a release channel that is publishing nothing cannot
+# keep reporting success — use the allow_missing_secrets input for a
+# deliberate dry run.
+#
+# A manual run publishes an existing release tag, never a branch: Firefox is
+# the one public listing, and a dispatch from an arbitrary branch used to ship
+# whatever it held, untested.
 
 on:
   workflow_run:
     workflows: ["Automated Release"]
     types: [completed]
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z)"
+        type: string
+        required: true
+      allow_missing_secrets:
+        description: "Skip (rather than fail) when AMO secrets are unset"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   check-release:
@@ -18,57 +36,75 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       released: ${{ steps.check.outputs.released }}
+      tag: ${{ steps.check.outputs.tag }}
       sha: ${{ steps.check.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Was the commit Release just left on main tagged as a release?
+      - name: Which release is this?
         id: check
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/resolve-release
+        with:
+          tag: ${{ inputs.tag }}
 
   firefox:
     name: Publish to Firefox Add-ons (AMO)
     needs: check-release
     if: needs.check-release.outputs.released == 'true'
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.check-release.outputs.sha }}
+          persist-credentials: false
 
       - name: Check secrets configured
         id: check
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          EVENT_NAME: ${{ github.event_name }}
+          ALLOW_MISSING: ${{ inputs.allow_missing_secrets }}
         run: |
-          if [[ -n "$AMO_JWT_ISSUER" && -n "$AMO_JWT_SECRET" ]]; then
+          MISSING=""
+          for name in AMO_JWT_ISSUER AMO_JWT_SECRET; do
+            [[ -n "${!name}" ]] || MISSING="$MISSING $name"
+          done
+
+          if [[ -z "$MISSING" ]]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::AMO secrets not configured — skipping publish. See DEPLOYMENT.md."
+            exit 0
           fi
+
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$ALLOW_MISSING" == "true" ]]; then
+            echo "::warning::Skipping publish, secrets not configured:$MISSING"
+            exit 0
+          fi
+
+          # Red, not a warning: a skipped publish that reports success looks
+          # identical to a healthy release channel.
+          echo "::error::AMO secrets not configured, so ${{ needs.check-release.outputs.tag }} did NOT reach Firefox Add-ons. Missing:$MISSING. See DEPLOYMENT.md."
+          exit 1
 
       - name: Setup Node.js
         if: steps.check.outputs.configured == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          cache: npm
 
+      # Exactly the lockfile's versions — `npm install` could resolve a
+      # different web-ext (or anything under it) from the one CI ran.
       - name: Install deploy tooling
         if: steps.check.outputs.configured == 'true'
-        run: npm install
+        run: npm ci
 
       - name: Lint, sign, and submit to AMO
         if: steps.check.outputs.configured == 'true'

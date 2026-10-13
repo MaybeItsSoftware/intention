@@ -1,48 +1,109 @@
 name: Automated Release
 
-# Every push to main cuts a release, which is right when main only moves for
-# work that is ready to ship — and wrong when a batch of it lands at once and
-# the release should wait. workflow_dispatch is the way to hold it: disable
-# this workflow, push, then enable it and run it here when you actually want
-# the version out. Without a manual trigger the only way back is another push
-# to main, which means an empty commit for no reason but the trigger.
+# Every green CI run on main cuts a release, which is right when main only
+# moves for work that is ready to ship — and wrong when a batch of it lands at
+# once and the release should wait. workflow_dispatch is the way to hold it:
+# disable this workflow, push, then enable it and run it here when you actually
+# want the version out. Without a manual trigger the only way back is another
+# push to main, which means an empty commit for no reason but the trigger.
+#
+# Gated on CI rather than on a push. This used to run on the push itself and
+# check nothing but `npm test`, so a commit that failed ESLint, the smoke
+# tests, the platform-file check or the Android/Apple compiles was released —
+# and published to every store, Firefox publicly — in parallel with the CI run
+# that was busy saying it was broken. Now a release only starts from a CI run
+# that passed, on a push to main in this repository, and only if that run
+# tested the commit main still points at (see "Release only what CI tested").
+#
+# This stays a separate workflow, rather than a job at the end of ci.yml,
+# because the four publish-*.yml workflows chain off it by name with
+# workflow_run; and the release commit semantic-release pushes carries
+# [skip ci], so it does not set CI off and come back round here.
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch: {}
 
 permissions:
   contents: write
   issues: write
   pull-requests: write
+  # To ask whether CI passed on the commit a manual run would release.
+  actions: read
+
+# Two semantic-release runs at once would race each other for the next tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Automated Release
     runs-on: ubuntu-latest
+    # `branches: [main]` above matches a fork's PR from its own `main` too, so
+    # the event and the repository are checked as well as the conclusion.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
 
     steps:
+      # main rather than the tested SHA directly: semantic-release releases a
+      # branch, and refuses to from a detached HEAD or one main has moved past.
+      # The next step is what pins it to the commit CI actually passed.
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: main
           persist-credentials: false
 
+      # A release from a CI run is only allowed when main still points at the
+      # commit that run tested. If main has moved on, this run stands down and
+      # the CI run for the newer commit releases it (and everything before it)
+      # once it passes. A manual run has no CI run attached, so it looks one up
+      # for main's current commit and refuses without a green one.
+      - name: Release only what CI tested
+        id: tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+            if [[ "$HEAD_SHA" != "$TESTED_SHA" ]]; then
+              echo "::notice::main has moved on from $TESTED_SHA (now $HEAD_SHA); the CI run for the newer commit will release it."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            PASSED=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main \
+              --event push --commit "$HEAD_SHA" --status success --limit 1 --json databaseId --jq 'length')
+            if [[ "$PASSED" != "1" ]]; then
+              echo "::error::No successful CI run for main's current commit $HEAD_SHA. Wait for CI (or re-run it), then try again."
+              exit 1
+            fi
+          fi
+          echo "Releasing $HEAD_SHA, which CI passed."
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
+        if: steps.tested.outputs.release == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: 'npm'
 
       - name: Install dependencies
+        if: steps.tested.outputs.release == 'true'
         run: |
           npm ci
 
-      - name: Verify build and test
-        run: |
-          npm test
-
       - name: Run semantic-release
+        if: steps.tested.outputs.release == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: npx semantic-release

@@ -1,0 +1,85 @@
+name: Resolve the release to publish
+description: >-
+  Works out which vX.Y.Z tag a publish workflow should ship, and the commit it
+  points at. Needs the repository checked out with tags (fetch-depth: 0).
+
+# Shared by the four publish-*.yml workflows, which used to each answer this
+# with `git rev-parse HEAD` — and for a workflow_run trigger HEAD is whatever
+# main is at the moment the job starts, not the commit that was released. If
+# anything landed on main in between, the store got an untagged, unreleased
+# build carrying the previous version number.
+#
+# Two ways in:
+#   - workflow_run of "Automated Release": the release commit semantic-release
+#     made is a direct child of the commit that release run was started for
+#     (github.event.workflow_run.head_sha, which auto-release.yml has already
+#     checked is the commit CI passed). So the tag to ship is the one on that
+#     commit or on its child. No such tag means that run released nothing.
+#   - workflow_dispatch: the caller names the tag. Never a branch — a manual
+#     run is for re-publishing something that was released, not for shipping
+#     whatever a branch happens to hold, untested.
+
+inputs:
+  tag:
+    description: The tag a manual run asked for (workflow_dispatch only).
+    required: false
+    default: ''
+
+outputs:
+  released:
+    description: "'true' when there is a release to publish."
+    value: ${{ steps.resolve.outputs.released }}
+  tag:
+    description: The vX.Y.Z tag being published.
+    value: ${{ steps.resolve.outputs.tag }}
+  sha:
+    description: The commit that tag points at — check this out to publish.
+    value: ${{ steps.resolve.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find the release tag
+      id: resolve
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        REQUESTED_TAG: ${{ inputs.tag }}
+        RELEASE_BASE: ${{ github.event.workflow_run.head_sha }}
+      run: |
+        set -euo pipefail
+        SEMVER='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+        if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+          if [[ ! "$REQUESTED_TAG" =~ $SEMVER ]]; then
+            echo "::error::A manual publish needs a release tag of the form vX.Y.Z (got '$REQUESTED_TAG')."
+            exit 1
+          fi
+          if ! SHA=$(git rev-parse --verify --quiet "refs/tags/$REQUESTED_TAG^{commit}"); then
+            echo "::error::No tag $REQUESTED_TAG in this repository."
+            exit 1
+          fi
+          echo "Publishing $REQUESTED_TAG ($SHA), as requested."
+          { echo "released=true"; echo "tag=$REQUESTED_TAG"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if [[ -z "$RELEASE_BASE" ]]; then
+          echo "::error::No workflow_run head_sha to resolve a release from."
+          exit 1
+        fi
+
+        # Newest first, so the match found is the release this run made.
+        while read -r TAG; do
+          [[ "$TAG" =~ $SEMVER ]] || continue
+          COMMIT=$(git rev-parse "$TAG^{commit}")
+          PARENT=$(git rev-parse --verify --quiet "$COMMIT^" || true)
+          if [[ "$COMMIT" == "$RELEASE_BASE" || "$PARENT" == "$RELEASE_BASE" ]]; then
+            echo "Release run for $RELEASE_BASE produced $TAG ($COMMIT)."
+            { echo "released=true"; echo "tag=$TAG"; echo "sha=$COMMIT"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        done < <(git tag --list 'v*' --sort=-v:refname)
+
+        echo "No release tag on $RELEASE_BASE or its release commit — that release run shipped nothing."
+        { echo "released=false"; echo "tag="; echo "sha="; } >> "$GITHUB_OUTPUT"

@@ -89,7 +89,14 @@ export default [
       'Intention Chrome/**',
       'Intention Firefox/**',
       'Intention Apple/**',
-      'Intention Android/**',
+      // Android's build output is ignored wholesale; its sources by file
+      // rather than by directory, because a negation cannot reach back inside
+      // an ignored directory — and Android's own chrome.* shim, which is not a
+      // copy of anything and so is linted nowhere else, has to be let back in.
+      'Intention Android/**/build/**',
+      'Intention Android/.gradle/**',
+      'Intention Android/**/*.js',
+      '!Intention Android/app/src/main/assets/android-bridge.js',
       'tests/harness/**'
     ]
   },
@@ -133,6 +140,23 @@ export default [
       }]
     }
   })),
+
+  // ---- Android's chrome.* shim ---------------------------------------------
+  //
+  // Runs first in the Android WebViews and defines the `chrome` the shared
+  // pages then use, so it sees only the page and the native bridge.
+  {
+    files: ['Intention Android/app/src/main/assets/android-bridge.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: {
+        ...globals.browser,
+        AndroidInterface: 'readonly'
+      }
+    },
+    rules: CORRECTNESS
+  },
 
   // ---- server/: real ES modules on Node ------------------------------------
   {

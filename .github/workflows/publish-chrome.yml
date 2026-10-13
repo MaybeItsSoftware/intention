@@ -1,17 +1,32 @@
 name: Publish to Chrome Web Store
 
-# Uploads a draft build to the Chrome Web Store on every vX.Y tag push,
-# provided CHROME_* secrets are configured (see DEPLOYMENT.md). This only
-# primes the new version in the dashboard — it does not submit it for
-# review; do that manually when ready. Skips gracefully — without failing
-# the run — if secrets are missing.
+# Uploads a draft build to the Chrome Web Store for every release Automated
+# Release cuts, using the CHROME_* secrets (see DEPLOYMENT.md). This only
+# primes the new version in the dashboard — it does not submit it for review;
+# do that manually when ready. FAILS the run if the secrets are missing, so a
+# release channel that is publishing nothing cannot keep reporting success —
+# use the allow_missing_secrets input for a deliberate dry run.
+#
+# A manual run publishes an existing release tag, never a branch.
 
 on:
   workflow_run:
     workflows: ["Automated Release"]
     types: [completed]
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z)"
+        type: string
+        required: true
+      allow_missing_secrets:
+        description: "Skip (rather than fail) when Chrome Web Store secrets are unset"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   check-release:
@@ -20,34 +35,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       released: ${{ steps.check.outputs.released }}
+      tag: ${{ steps.check.outputs.tag }}
       sha: ${{ steps.check.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Was the commit Release just left on main tagged as a release?
+      - name: Which release is this?
         id: check
-        run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "released=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "released=false" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/resolve-release
+        with:
+          tag: ${{ inputs.tag }}
 
   chrome:
     name: Publish to Chrome Web Store
     needs: check-release
     if: needs.check-release.outputs.released == 'true'
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.check-release.outputs.sha }}
+          persist-credentials: false
 
       - name: Check secrets configured
         id: check
@@ -56,13 +69,30 @@ jobs:
           CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
           CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
           CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          ALLOW_MISSING: ${{ inputs.allow_missing_secrets }}
         run: |
-          if [[ -n "$CHROME_EXTENSION_ID" && -n "$CHROME_CLIENT_ID" && -n "$CHROME_CLIENT_SECRET" && -n "$CHROME_REFRESH_TOKEN" ]]; then
+          MISSING=""
+          for name in CHROME_EXTENSION_ID CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN; do
+            [[ -n "${!name}" ]] || MISSING="$MISSING $name"
+          done
+
+          if [[ -z "$MISSING" ]]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Chrome Web Store secrets not configured — skipping publish. See DEPLOYMENT.md."
+            exit 0
           fi
+
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$ALLOW_MISSING" == "true" ]]; then
+            echo "::warning::Skipping publish, secrets not configured:$MISSING"
+            exit 0
+          fi
+
+          # Red, not a warning: a skipped publish that reports success looks
+          # identical to a healthy release channel.
+          echo "::error::Chrome Web Store secrets not configured, so ${{ needs.check-release.outputs.tag }} did NOT reach the Chrome Web Store. Missing:$MISSING. See DEPLOYMENT.md."
+          exit 1
 
       - name: Zip Chrome extension
         if: steps.check.outputs.configured == 'true'
@@ -70,7 +100,7 @@ jobs:
 
       - name: Upload to Chrome Web Store (draft only, not submitted for review)
         if: steps.check.outputs.configured == 'true'
-        uses: mnao305/chrome-extension-upload@v6.0.0
+        uses: mnao305/chrome-extension-upload@fdfe79400af990f5145a319e834aee64907ccff4 # v6.0.0
         with:
           file-path: intention-chrome.zip
           extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
