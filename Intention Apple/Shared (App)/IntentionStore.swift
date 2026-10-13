@@ -64,9 +64,14 @@ actor IntentionStore {
         updatesTask = Task.detached(priority: .background) {
             for await update in Transaction.updates {
                 guard case .verified(let transaction) = update else { continue }
-                if await IntentionStore.shared.verifyWithBackend(receipt: update.jwsRepresentation) {
+                switch await IntentionStore.shared.verifyWithBackend(receipt: update.jwsRepresentation) {
+                case .credited:
                     await transaction.finish()
                     await IntentionStore.shared.noteCredited(update.jwsRepresentation)
+                case .rejected:
+                    await transaction.finish()
+                case .unavailable:
+                    break
                 }
             }
         }
@@ -140,9 +145,16 @@ actor IntentionStore {
         guard let product = product else {
             return ["status": "failed", "error": "That top-up isn't available right now."]
         }
+        // No account id, no sale. The id is what the balance is keyed by, and
+        // a purchase stamped with one that never made it into the Keychain
+        // would credit a balance this device can never name again — paid for,
+        // and gone on the next launch.
+        guard let accountToken = stableAccountToken() else {
+            return ["status": "failed", "error": "Couldn't read your account from the Keychain. Unlock your device and try again."]
+        }
 
         do {
-            let result = try await product.purchase(options: [.appAccountToken(stableAccountToken())])
+            let result = try await product.purchase(options: [.appAccountToken(accountToken)])
             switch result {
             case .success(let verification):
                 switch verification {
@@ -151,9 +163,13 @@ actor IntentionStore {
                     // Only finish once the credit is durably recorded — if
                     // this fails (offline, server hiccup), leave it
                     // unfinished; the next start()/restore() sweep will
-                    // retry it via Transaction.unfinished.
-                    if await verifyWithBackend(receipt: jws) {
+                    // retry it via Transaction.unfinished. A definitive "no"
+                    // from the server is finished too (see VerifyOutcome).
+                    switch await verifyWithBackend(receipt: jws) {
+                    case .credited, .rejected:
                         await transaction.finish()
+                    case .unavailable:
+                        break
                     }
                     return ["status": "purchased", "platform": "apple", "receipt": jws]
                 case .unverified(_, let error):
@@ -197,9 +213,14 @@ actor IntentionStore {
             guard case .verified(let transaction) = result,
                   IntentionProduct.all.contains(transaction.productID) else { continue }
             let jws = result.jwsRepresentation
-            if await verifyWithBackend(receipt: jws) {
+            switch await verifyWithBackend(receipt: jws) {
+            case .credited:
                 await transaction.finish()
                 lastRecovered = jws
+            case .rejected:
+                await transaction.finish()
+            case .unavailable:
+                break
             }
         }
         return lastRecovered
@@ -291,8 +312,14 @@ actor IntentionStore {
     // carries no appAccountToken of its own — this is what gives that grant a
     // balance to land in, and it is the same value every bought transaction
     // already carries, so both end up in one balance.
+    //
+    // No token at all when the Keychain can't be read (billing.js reads a
+    // missing one as "none"), rather than a fresh one that was never saved.
     func accountToken() -> [String: Any] {
-        return ["token": stableAccountToken().uuidString]
+        guard let token = stableAccountToken() else {
+            return ["error": "Couldn't read the account id from the Keychain."]
+        }
+        return ["token": token.uuidString]
     }
 
     // MARK: - Status
@@ -306,7 +333,30 @@ actor IntentionStore {
 
     // MARK: - Backend verification
 
-    private func verifyWithBackend(receipt: String) async -> Bool {
+    // What the server made of a transaction, because "not credited" covers
+    // two different things that want opposite handling. A transient failure
+    // (offline, 5xx, 429, a proxy's 404) must leave the transaction unfinished
+    // so the next sweep retries it. A definitive rejection must NOT: StoreKit
+    // re-delivers an unfinished transaction on every launch for ever, and one
+    // the server will never accept (refunded, another app's, the wrong
+    // environment) used to be re-sent on every one of them.
+    enum VerifyOutcome {
+        case credited
+        case rejected
+        case unavailable
+    }
+
+    // The server's answers about the receipt itself. 404, 405 and 408 are not
+    // on the list: they say the request never reached the verifier (a
+    // misrouted host, a proxy), not that the receipt is bad, and finishing on
+    // them would throw paid-for credit away over a deployment mistake.
+    nonisolated private static let definitiveRejections: Set<Int> = [400, 401, 402, 403, 409, 410, 422]
+
+    private func verifyWithBackend(receipt: String) async -> VerifyOutcome {
+        // Sent with every verify, and the only thing that gives a redeemed
+        // code a balance to land in — so without it this is a retry later,
+        // not a request the server would turn down as definitive.
+        guard let accountToken = stableAccountToken() else { return .unavailable }
         var request = URLRequest(url: defaultBackendURL.appendingPathComponent("v1/entitlement/verify"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -316,15 +366,23 @@ actor IntentionStore {
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "platform": "apple",
             "receipt": receipt,
-            "accountToken": stableAccountToken().uuidString
+            "accountToken": accountToken.uuidString
         ])
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return false }
-            await persistEntitlement(from: data, receipt: receipt)
-            return true
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 200 {
+                await persistEntitlement(from: data, receipt: receipt)
+                return .credited
+            }
+            if Self.definitiveRejections.contains(status) {
+                NSLog("[Intention] backend rejected a transaction (HTTP %d), finishing it: %@",
+                      status, String(data: data, encoding: .utf8) ?? "")
+                return .rejected
+            }
+            return .unavailable
         } catch {
-            return false
+            return .unavailable
         }
     }
 
@@ -402,6 +460,9 @@ actor IntentionStore {
     // that tells them so.
     @discardableResult
     private func recoverBalance() async -> Bool {
+        // A Keychain that can't be read right now is not "nothing to recover":
+        // ask again next launch rather than stamping a miss.
+        guard let accountToken = stableAccountToken() else { return false }
         var request = URLRequest(url: defaultBackendURL.appendingPathComponent("v1/entitlement/recover"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -412,7 +473,7 @@ actor IntentionStore {
         // rather than us guessing one here.
         request.httpBody = try? JSONSerialization.data(withJSONObject: [
             "platform": "apple",
-            "accountToken": stableAccountToken().uuidString
+            "accountToken": accountToken.uuidString
         ])
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -525,30 +586,98 @@ actor IntentionStore {
     // `appAccountToken`. Keychain (iCloud-synced) so it survives a reinstall
     // on any device signed into the same Apple ID — a paid balance deserves
     // that continuity.
-    private func stableAccountToken() -> UUID {
-        let service = "uk.co.maybeitssoftware.intention.accountToken"
-        let query: [String: Any] = [
+    //
+    // Returns nil rather than guess. Any read failure used to fall through to
+    // minting a fresh UUID — including errSecInteractionNotAllowed, which is
+    // just "the device is locked" — and the add's result was ignored, so an
+    // id that was never saved could still be stamped on a purchase as its
+    // appAccountToken: the credit landed in a balance no later launch could
+    // name. Now a new id is only minted when the Keychain says there is none,
+    // and only returned once it is actually stored.
+    nonisolated private static let accountTokenService = "uk.co.maybeitssoftware.intention.accountToken"
+    private var accountTokenAccessibilityChecked = false
+
+    private func stableAccountToken() -> UUID? {
+        let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrSynchronizable as String: true,
-            kSecReturnData as String: true
+            kSecAttrService as String: Self.accountTokenService,
+            kSecAttrSynchronizable as String: true
         ]
-        var item: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-           let data = item as? Data,
-           let uuidString = String(data: data, encoding: .utf8),
-           let uuid = UUID(uuidString: uuidString) {
+
+        switch readAccountToken(item) {
+        case .found(let uuid):
+            migrateAccountTokenAccessibility(item)
             return uuid
+        case .failed(let status):
+            NSLog("[Intention] Keychain read of the account id failed (%d)", status)
+            return nil
+        case .missing:
+            break
         }
 
         let newToken = UUID()
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrSynchronizable as String: true,
-            kSecValueData as String: newToken.uuidString.data(using: .utf8)!
-        ]
-        SecItemAdd(addQuery as CFDictionary, nil)
-        return newToken
+        var add = item
+        add[kSecValueData as String] = Data(newToken.uuidString.utf8)
+        // Readable after the first unlock since boot, not only while unlocked,
+        // so a StoreKit transaction landing while the screen is locked
+        // (Transaction.updates, an Ask-to-Buy approval) can still be verified.
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(add as CFDictionary, nil)
+        switch status {
+        case errSecSuccess:
+            accountTokenAccessibilityChecked = true
+            return newToken
+        case errSecDuplicateItem:
+            // Another path (or iCloud Keychain, syncing one down) got there
+            // first. Theirs is the id; ours was never stored.
+            if case .found(let uuid) = readAccountToken(item) { return uuid }
+            return nil
+        default:
+            NSLog("[Intention] Keychain could not store a new account id (%d)", status)
+            return nil
+        }
+    }
+
+    private enum AccountTokenRead {
+        case found(UUID)
+        case missing
+        case failed(OSStatus)
+    }
+
+    private func readAccountToken(_ item: [String: Any]) -> AccountTokenRead {
+        var query = item
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let uuidString = String(data: data, encoding: .utf8),
+                  let uuid = UUID(uuidString: uuidString) else {
+                // Present but not one of ours — nothing can be keyed by it, so
+                // replacing it loses nothing. Deleted so the add can proceed.
+                SecItemDelete(item as CFDictionary)
+                return .missing
+            }
+            return .found(uuid)
+        case errSecItemNotFound:
+            return .missing
+        default:
+            return .failed(status)
+        }
+    }
+
+    // Items stored by earlier builds took the default accessibility (only
+    // while unlocked). Moved over once per launch; a failure just leaves the
+    // old accessibility in place, which is no worse than before.
+    private func migrateAccountTokenAccessibility(_ item: [String: Any]) {
+        guard !accountTokenAccessibilityChecked else { return }
+        accountTokenAccessibilityChecked = true
+        let update: [String: Any] = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock]
+        let status = SecItemUpdate(item as CFDictionary, update as CFDictionary)
+        if status != errSecSuccess {
+            NSLog("[Intention] could not update the account id's Keychain accessibility (%d)", status)
+        }
     }
 }

@@ -67,9 +67,14 @@ final class BackgroundJSHost: NSObject {
 
         let hostedWebView = WKWebView(frame: .zero, configuration: configuration)
         hostedWebView.navigationDelegate = self
+        // Debug builds only: in a shipped build an inspector on this page is
+        // a console with full read/write on the App Group store — the coach's
+        // own bookkeeping included. Same reasoning as ViewController's.
+#if DEBUG
         if #available(iOS 16.4, macOS 13.3, *) {
             hostedWebView.isInspectable = true
         }
+#endif
         webView = hostedWebView
 
         guard let url = Bundle.main.url(forResource: "background", withExtension: "html") else {

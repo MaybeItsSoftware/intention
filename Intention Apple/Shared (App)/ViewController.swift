@@ -67,9 +67,15 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
         super.viewDidLoad()
 
         self.webView.navigationDelegate = self
+        // Debug builds only. An inspectable web view in a shipped build hands
+        // anyone with a Mac and a cable a console on this page — and this page
+        // can post grantPass (and every other bridge action) to intentionNative
+        // directly, lifting the app shields without ever meeting the coach.
+#if DEBUG
         if #available(iOS 16.4, macOS 13.3, *) {
             self.webView.isInspectable = true
         }
+#endif
 
         // The storyboard's webview carries only a design-time frame, so pin it
         // explicitly or options.html never gets a real, correctly-sized
@@ -172,19 +178,31 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
     // options.html is loaded from the bundle and this web view has no chrome of
     // its own — no back button, no address bar. A tapped link would replace the
     // settings UI with a web page the user has no way back from, so anything
-    // off-app is handed to the real browser instead. Only link taps: the page's
-    // own loads and the bridge's navigations fall through untouched.
+    // off-app is handed to the real browser instead.
+    //
+    // Every top-level navigation, not only link taps. This page carries the
+    // native bridge, and a script-driven load (location.href, a form post, a
+    // redirect) used to fall through to .allow — putting a remote page in the
+    // one frame that can post grantPass and purchase messages to
+    // intentionNative. The main frame only ever holds the bundled pages, so
+    // anything that isn't file: is cancelled, and http(s) goes to the browser.
+    // Subframes are left alone; the bridge refuses them separately (see
+    // userContentController(_:didReceive:)).
     func webView(_ webView: WKWebView,
                  decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard navigationAction.navigationType == .linkActivated,
-              let url = navigationAction.request.url,
-              let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
+        // No target frame is a new window (target="_blank", window.open), which
+        // would have nowhere to go in this chrome-less view anyway.
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        guard isMainFrame, let url = navigationAction.request.url, !url.isFileURL else {
             decisionHandler(.allow)
             return
         }
         decisionHandler(.cancel)
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            NSLog("[Intention] blocked a top-level navigation to %@", url.absoluteString)
+            return
+        }
 #if os(macOS)
         NSWorkspace.shared.open(url)
 #else
@@ -268,6 +286,16 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "intentionNative" else { return }
+        // Only the bundled page itself speaks for the app. The handler is
+        // reachable from every frame, so a frame holding anything other than
+        // our own file: content — an embedded remote page, say — must not be
+        // able to grant a pass or start a purchase.
+        let frame = message.frameInfo
+        guard frame.isMainFrame,
+              frame.request.url?.isFileURL == true || frame.securityOrigin.protocol == "file" else {
+            NSLog("[Intention] ignored a bridge message from a frame that isn't the bundled page")
+            return
+        }
         handleBridgeMessage(message.body)
     }
 
@@ -558,8 +586,16 @@ class ViewController: PlatformViewController, WKNavigationDelegate, WKScriptMess
             invokeBridgeCallback(callbackId, result: ["ok": true, "selectionCount": 0])
         case "getAppUsageReport":
             let days = (dict["days"] as? Int) ?? Int(dict["days"] as? Double ?? 30)
-            manager.requestUsageReport(from: self, days: days > 0 ? days : 30) { [weak self] minutesByDate in
-                self?.invokeBridgeCallback(callbackId, result: ["minutesByDate": minutesByDate])
+            // `status` and `writtenAt` ride alongside the minutes so the page
+            // can say "no report from Screen Time" or "as of …" instead of
+            // showing an empty map as zero use. Older pages read only
+            // minutesByDate and are unaffected.
+            manager.requestUsageReport(from: self, days: days > 0 ? days : 30) { [weak self] minutesByDate, status, writtenAt in
+                self?.invokeBridgeCallback(callbackId, result: [
+                    "minutesByDate": minutesByDate,
+                    "status": status.rawValue,
+                    "writtenAt": writtenAt.map { $0.timeIntervalSince1970 * 1000 } as Any
+                ])
             }
         default:
             invokeBridgeCallback(callbackId, result: ["error": "unknown screenTime action: \(action)"])

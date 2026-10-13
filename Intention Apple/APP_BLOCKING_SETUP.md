@@ -47,7 +47,9 @@ granted pass with no card and no build error to say so.
   (Shield Extension) and its button closes the app (Shield Action Extension).
 - Grant a pass via the coach, background Intention, and confirm the apps
   re-shield after the pass ends without reopening Intention (Monitor
-  Extension; passes under 15 minutes still rely on the next foreground).
+  Extension). Try a 5-minute pass too: its schedule is backdated so the
+  interval still spans the 15-minute floor but ends on the pass end, and it
+  should re-shield at 5 minutes, not 15.
 - While that pass runs, lock the device: the Lock Screen should show the pass
   card with a clock counting up, the granted length beside it and the purpose
   underneath, and the Dynamic Island should hold the same clock. Nothing of
@@ -85,9 +87,13 @@ granted pass with no card and no build error to say so.
   instead. Both are torn down by `reapplyIfPassExpired()` on foreground and by
   `clearAllBlocking()`.
 - Re-shield: `DeviceActivityMonitorExtension.intervalDidEnd` (background) and
-  `AppBlockingManager.reapplyIfPassExpired()` on app foreground (backup —
-  DeviceActivity schedules have a ~15 minute floor, shorter passes rely on
-  the foreground check).
+  `AppBlockingManager.reapplyIfPassExpired()` on app foreground (backup).
+  DeviceActivity schedules have a ~15 minute floor, so a shorter pass's
+  schedule starts in the past (end − 15 min) and ends on the pass end; if
+  Screen Time refuses that, it falls back to a 15-minute interval with a
+  `warningTime` the Monitor treats as the end. Pass expiry is judged by
+  `PassClock`, which also checks a monotonic clock so moving the device
+  clock back doesn't stretch a pass.
 - Shield UI: `ShieldConfigurationExtension` renders the "blocked by
   Intention" copy; `ShieldActionExtension` closes the app (iOS offers no way
   to open Intention from a shield).

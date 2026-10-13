@@ -25,23 +25,28 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         reshield()
     }
 
-    // A pass shorter than DeviceActivity's 15-minute minimum is scheduled for
-    // 15 with a warning set to fire when the pass itself ends (see grantPass
-    // in AppBlockingManager). Checked against the stored end rather than
+    // Only reached on the fallback schedule — a pass shorter than
+    // DeviceActivity's 15-minute minimum whose backdated schedule Screen Time
+    // refused (see startPassMonitoring in AppBlockingManager) — where the
+    // warning is set to land when the pass itself ends. Checked rather than
     // trusted blindly: a warning can arrive a little early, and re-shielding
-    // with time still on the pass would cut it short.
+    // with time still on the pass would cut it short. Checked with PassClock
+    // rather than the stored end against Date(), so a clock set back mid-pass
+    // can't talk this out of re-shielding.
     override func intervalWillEndWarning(for activity: DeviceActivityName) {
         super.intervalWillEndWarning(for: activity)
         guard activity == DeviceActivityName("intentionPass") else { return }
-        let endsAt = UserDefaults(suiteName: AppGroupConfig.identifier)?
-            .double(forKey: "screenTimePassEndsAt") ?? 0
-        guard endsAt <= Date().timeIntervalSince1970 + 30 else { return }
+        if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier),
+           let remaining = PassClock.remaining(in: defaults),
+           remaining > 30 {
+            return
+        }
         reshield()
     }
 
     private func reshield() {
         let defaults = UserDefaults(suiteName: AppGroupConfig.identifier)
-        defaults?.removeObject(forKey: "screenTimePassEndsAt")
+        if let defaults { PassClock.clear(in: defaults) }
 
         guard let data = defaults?.data(forKey: "screenTimeSelection"),
               let selection = try? JSONDecoder().decode(FamilyActivitySelection.self, from: data) else { return }

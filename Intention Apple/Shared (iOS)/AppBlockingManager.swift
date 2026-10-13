@@ -32,7 +32,6 @@ final class AppBlockingManager {
 
     static let passActivityName = DeviceActivityName("intentionPass")
     private static let selectionKey = "screenTimeSelection"
-    private static let passEndsAtKey = "screenTimePassEndsAt"
 
     private let store = ManagedSettingsStore()
     private init() {}
@@ -127,7 +126,7 @@ final class AppBlockingManager {
         store.shield.applicationCategories = nil
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {
             defaults.removeObject(forKey: Self.selectionKey)
-            defaults.removeObject(forKey: Self.passEndsAtKey)
+            PassClock.clear(in: defaults)
         }
         // Nothing is blocked any more, so any pass that was running has been
         // ended early — take its Lock Screen card and its expiry notice with it
@@ -137,12 +136,15 @@ final class AppBlockingManager {
 
     // MARK: - Timed pass (coach-granted)
 
+    /// When the running pass ends, in terms of the clock as it reads now, or
+    /// nil if there is none. Asks PassClock rather than comparing the stored
+    /// end with Date(), so a clock set back mid-pass can't stretch it — see
+    /// the note on PassClock in AppGroupConfig.swift.
     var passEndsAt: Date? {
-        guard let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) else { return nil }
-        let t = defaults.double(forKey: Self.passEndsAtKey)
-        guard t > 0 else { return nil }
-        let date = Date(timeIntervalSince1970: t)
-        return date > Date() ? date : nil
+        guard let defaults = UserDefaults(suiteName: AppGroupConfig.identifier),
+              let remaining = PassClock.remaining(in: defaults),
+              remaining > 0 else { return nil }
+        return Date().addingTimeInterval(remaining)
     }
 
     /// Returns false, leaving everything shielded, when Screen Time will not
@@ -156,30 +158,6 @@ final class AppBlockingManager {
         let mins = max(1, min(240, minutes))
         let startedAt = Date()
         let endsAt = startedAt.addingTimeInterval(TimeInterval(mins * 60))
-        // DeviceActivity enforces a minimum interval of 15 minutes, so the
-        // schedule end is clamped. A shorter pass is ended by the schedule's
-        // warning instead: iOS calls intervalWillEndWarning `warningTime`
-        // before the interval ends, and a warning of (15 - mins) minutes lands
-        // exactly when the pass does. Without it a 5-minute pass left the apps
-        // open for 15. intervalDidEnd stays as the backstop, and
-        // reapplyIfPassExpired() still catches anything missed when the app is
-        // next opened.
-        let scheduleMins = max(15, mins)
-        let warningTime = scheduleMins > mins
-            ? DateComponents(minute: scheduleMins - mins)
-            : nil
-        let now = startedAt
-        let end = now.addingTimeInterval(TimeInterval(scheduleMins * 60))
-        let calendar = Calendar.current
-        // Full date components (not just h/m/s) so a pass that crosses
-        // midnight doesn't produce an intervalEnd "earlier" than its start.
-        let components: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
-        let schedule = DeviceActivitySchedule(
-            intervalStart: calendar.dateComponents(components, from: now),
-            intervalEnd: calendar.dateComponents(components, from: end),
-            repeats: false,
-            warningTime: warningTime
-        )
         let center = DeviceActivityCenter()
         center.stopMonitoring([Self.passActivityName])
         // Registered before anything is lifted. A schedule Screen Time turns
@@ -187,17 +165,28 @@ final class AppBlockingManager {
         // swallowed by try? after the shields were already off — leaving the
         // apps open with nothing to close them until Intention was next opened.
         do {
-            try center.startMonitoring(Self.passActivityName, during: schedule)
+            try Self.startPassMonitoring(center: center, startedAt: startedAt, endsAt: endsAt, mins: mins)
         } catch {
             NSLog("Intention: could not schedule the end of a pass, so it was not granted: \(error)")
+            // The stopMonitoring above has already taken the end schedule off
+            // any pass that was running, so that pass cannot be left lifted
+            // with nothing to close it: end it here, shields back on. The
+            // worker still has it open, and the next grant or its own expiry
+            // settles that — fail closed rather than open.
+            endPass()
             return false
         }
 
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {
-            defaults.set(endsAt.timeIntervalSince1970, forKey: Self.passEndsAtKey)
+            PassClock.record(startedAt: startedAt, endsAt: endsAt, in: defaults)
         }
         store.shield.applications = nil
         store.shield.applicationCategories = nil
+
+        // A previous pass's "your pass is over" notice may still be pending —
+        // the Live Activity path below never schedules one, so nothing else
+        // replaces it, and left alone it fires in the middle of this pass.
+        PassExpiryNotifier.shared.cancel()
 
         // Show the user their own pass running. Until this, iOS gave a granted
         // pass no face at all — the shields simply lifted and the only way to
@@ -220,6 +209,62 @@ final class AppBlockingManager {
         return true
     }
 
+    /// Registers the DeviceActivity schedule whose intervalDidEnd re-shields
+    /// at `endsAt`.
+    ///
+    /// DeviceActivity will not take an interval shorter than 15 minutes, but
+    /// the interval may start in the past. So the schedule always ENDS at the
+    /// pass's end, and a shorter pass's interval is backdated to start 15
+    /// minutes before that: intervalDidEnd then fires exactly when the pass
+    /// does. That replaced a warningTime trick (a 15-minute schedule warning
+    /// at the pass's end), which failed open — a warning that arrived more
+    /// than a little early was ignored, and nothing re-armed it, so the pass
+    /// quietly ran to the full 15.
+    ///
+    /// If Screen Time turns the backdated schedule down, the old shape is the
+    /// fallback rather than no pass at all; the Monitor extension's warning
+    /// handler still re-shields on it, and reapplyIfPassExpired() catches
+    /// whatever it misses on the next foreground.
+    ///
+    /// Components carry the time zone, so the end is an instant rather than a
+    /// local wall-clock reading that a time-zone change would move.
+    private static func startPassMonitoring(center: DeviceActivityCenter, startedAt: Date, endsAt: Date, mins: Int) throws {
+        let minimum: TimeInterval = 15 * 60
+        let calendar = Calendar.current
+        // Full date components (not just h/m/s) so a pass that crosses
+        // midnight doesn't produce an intervalEnd "earlier" than its start.
+        let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
+        func components(_ date: Date) -> DateComponents {
+            var c = calendar.dateComponents(fields, from: date)
+            c.calendar = calendar
+            c.timeZone = calendar.timeZone
+            return c
+        }
+
+        let start = min(startedAt, endsAt.addingTimeInterval(-minimum))
+        do {
+            try center.startMonitoring(passActivityName, during: DeviceActivitySchedule(
+                intervalStart: components(start),
+                intervalEnd: components(endsAt),
+                repeats: false
+            ))
+            return
+        } catch {
+            // A pass of 15 minutes or more was never backdated, so there is
+            // nothing different to retry with.
+            guard start < startedAt else { throw error }
+            NSLog("Intention: Screen Time refused a backdated pass schedule, falling back to a warning: \(error)")
+        }
+
+        let scheduleEnd = startedAt.addingTimeInterval(minimum)
+        try center.startMonitoring(passActivityName, during: DeviceActivitySchedule(
+            intervalStart: components(startedAt),
+            intervalEnd: components(scheduleEnd),
+            repeats: false,
+            warningTime: DateComponents(minute: 15 - mins)
+        ))
+    }
+
     /// Ends a granted pass before its time: "I'm finished". iOS cannot see the
     /// user leave a blocked app, so on this platform finishing has to be said
     /// rather than inferred. Same teardown as the pass lapsing — shields back,
@@ -228,7 +273,9 @@ final class AppBlockingManager {
     /// pass in the shared worker (endSession), which is where its minutes live.
     func endPass() {
         DeviceActivityCenter().stopMonitoring([Self.passActivityName])
-        UserDefaults(suiteName: AppGroupConfig.identifier)?.removeObject(forKey: Self.passEndsAtKey)
+        if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) {
+            PassClock.clear(in: defaults)
+        }
         applyShields()
         endPassTimerUI()
     }
@@ -245,9 +292,14 @@ final class AppBlockingManager {
     func reapplyIfPassExpired() {
         guard passEndsAt == nil else { return }
         if let defaults = UserDefaults(suiteName: AppGroupConfig.identifier),
-           defaults.double(forKey: Self.passEndsAtKey) > 0 {
-            defaults.removeObject(forKey: Self.passEndsAtKey)
+           PassClock.hasRecord(in: defaults) {
+            PassClock.clear(in: defaults)
             DeviceActivityCenter().stopMonitoring([Self.passActivityName])
+            // PassClock can call a pass over while the wall clock still says
+            // otherwise (it was set back), and the card and the notice both
+            // go by the wall clock — so take them down outright here rather
+            // than leaving them to it.
+            endPassTimerUI()
         }
         // The Live Activity has been showing "pass ended" since its staleDate
         // passed, but only a process of ours can actually take the card down —
@@ -287,16 +339,38 @@ final class AppBlockingManager {
     private static let usageWrittenAtKey = "iosAppUsageWrittenAt"
     private static let usageReportContext = DeviceActivityReport.Context(rawValue: "intentionTotalMinutes")
 
-    func requestUsageReport(from presenter: UIViewController, days: Int = 30, completion: @escaping ([String: Double]) -> Void) {
+    // How long to wait for the report extension. A 30-day query over a whole
+    // category is real work, and the old 3 seconds gave up before most
+    // devices could have answered. Not much longer than this, though: the
+    // options page's usage log waits on the answer before it renders at all.
+    private static let usagePollInterval: TimeInterval = 0.25
+    private static let usagePollAttempts = 40 // 10 seconds
+
+    /// Where a usage report came from, passed to the page as `status` so it can
+    /// tell "no usage" from "no answer" — both used to arrive as an empty map.
+    enum UsageReportStatus: String {
+        /// Freshly computed for this request.
+        case fresh
+        /// The extension didn't answer in time; this is the last report it did
+        /// write, as of `writtenAt`.
+        case stale
+        /// The extension didn't answer and has never written one.
+        case unavailable
+        /// No apps are selected, so there is nothing to report on.
+        case noSelection
+    }
+
+    func requestUsageReport(from presenter: UIViewController, days: Int = 30,
+                            completion: @escaping (_ minutesByDate: [String: Double], _ status: UsageReportStatus, _ writtenAt: Date?) -> Void) {
         guard let selection = Self.loadSelection(),
               !(selection.applicationTokens.isEmpty && selection.categoryTokens.isEmpty) else {
-            completion([:])
+            completion([:], .noSelection, nil)
             return
         }
 
         let end = Date()
         guard let start = Calendar.current.date(byAdding: .day, value: -days, to: end) else {
-            completion([:])
+            completion([:], .unavailable, nil)
             return
         }
 
@@ -316,31 +390,39 @@ final class AppBlockingManager {
         presenter.view.insertSubview(hosting.view, at: 0)
         hosting.didMove(toParent: presenter)
 
-        Self.pollForFreshUsage(after: requestedAt, attemptsLeft: 15) { result in
+        Self.pollForFreshUsage(after: requestedAt, attemptsLeft: Self.usagePollAttempts) { result, status, writtenAt in
             hosting.willMove(toParent: nil)
             hosting.view.removeFromSuperview()
             hosting.removeFromParent()
-            completion(result)
+            completion(result, status, writtenAt)
         }
     }
 
-    private static func pollForFreshUsage(after requestedAt: Date, attemptsLeft: Int, completion: @escaping ([String: Double]) -> Void) {
+    private static func pollForFreshUsage(after requestedAt: Date, attemptsLeft: Int,
+                                          completion: @escaping ([String: Double], UsageReportStatus, Date?) -> Void) {
         guard let defaults = UserDefaults(suiteName: AppGroupConfig.identifier) else {
-            completion([:])
+            completion([:], .unavailable, nil)
             return
         }
         let writtenAt = defaults.double(forKey: usageWrittenAtKey)
-        if writtenAt > requestedAt.timeIntervalSince1970,
-           let data = defaults.data(forKey: usageDateKey),
-           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
-            completion(decoded)
+        let stored = defaults.data(forKey: usageDateKey)
+            .flatMap { try? JSONDecoder().decode([String: Double].self, from: $0) }
+        if writtenAt > requestedAt.timeIntervalSince1970, let stored {
+            completion(stored, .fresh, Date(timeIntervalSince1970: writtenAt))
             return
         }
         guard attemptsLeft > 0 else {
-            completion([:])
+            // Out of time. Hand back the last report the extension managed,
+            // labelled as such, rather than an empty map that reads as "you
+            // used none of your blocked apps".
+            if writtenAt > 0, let stored {
+                completion(stored, .stale, Date(timeIntervalSince1970: writtenAt))
+            } else {
+                completion([:], .unavailable, nil)
+            }
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + usagePollInterval) {
             pollForFreshUsage(after: requestedAt, attemptsLeft: attemptsLeft - 1, completion: completion)
         }
     }
