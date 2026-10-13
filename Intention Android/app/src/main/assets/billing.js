@@ -113,19 +113,44 @@ function sendBilling(method, arg, { timeoutMs = 0 } = {}) {
 
 // Resolves { available, products: [{ id, title, description, price, period,
 // type }] }. `price` is already localized and formatted by the store.
-function fetchStoreProducts() {
-  return sendBilling('products', undefined, { timeoutMs: BRIDGE_QUERY_TIMEOUT_MS });
+//
+// Cached for the life of the page once the store has actually listed
+// something. Every paywall render asks for this — Settings re-renders after
+// each purchase, the app-active event, the wizard's access step on every
+// back/forward — and each ask is a round trip through the bridge to Play or
+// StoreKit for a list that does not change while the page is open. A failed or
+// empty answer is not kept, so a store that was briefly unreachable is asked
+// again next time rather than remembered as having nothing for sale.
+let storeProductsCache = null;
+
+async function fetchStoreProducts() {
+  if (storeProductsCache) return storeProductsCache;
+  const result = await sendBilling('products', undefined, { timeoutMs: BRIDGE_QUERY_TIMEOUT_MS });
+  if (result && Array.isArray(result.products) && result.products.length) storeProductsCache = result;
+  return result;
 }
 
 // Resolves { status: 'purchased' | 'cancelled' | 'pending' | 'failed',
 // receipt?, error? }. `receipt` is whatever the backend needs to verify with
 // the store: Apple's signed transaction (JWS), or Play's purchase token.
-function purchaseProduct(productId) {
-  return sendBilling('purchase', productId);
+//
+// Each of the store hand-offs below can mint or move the account id the
+// balance is keyed by, so the cached answer to `accountToken` is dropped when
+// they come back — whatever they say.
+async function purchaseProduct(productId) {
+  try {
+    return await sendBilling('purchase', productId);
+  } finally {
+    invalidateAccountTokenCache();
+  }
 }
 
-function restorePurchases() {
-  return sendBilling('restore');
+async function restorePurchases() {
+  try {
+    return await sendBilling('restore');
+  } finally {
+    invalidateAccountTokenCache();
+  }
 }
 
 // Opens the platform's own code-redemption sheet — App Store promo codes via
@@ -133,15 +158,48 @@ function restorePurchases() {
 // same shape a purchase does once the granted transaction has been picked up.
 // Nothing about this leaves the store's own flow: there is no code field of
 // ours, and no way to redeem anything here that the store didn't issue.
-function redeemStoreCode() {
-  return sendBilling('redeem');
+async function redeemStoreCode() {
+  try {
+    return await sendBilling('redeem');
+  } finally {
+    invalidateAccountTokenCache();
+  }
+}
+
+// One bridge answer to `accountToken`, shared by storeAccountToken and
+// storeAccountRestored below and kept for the life of the page. A single
+// settings render used to ask for it twice (the restored flag, then again for
+// the recovery question), and every re-render asked again, for an id that only
+// changes when a purchase, restore or redemption mints one — which is what
+// invalidateAccountTokenCache is called after. Only a real answer is kept: a
+// missed deadline or a missing bridge is asked again next time.
+let accountTokenAnswer = null;
+
+function readAccountTokenAnswer() {
+  if (accountTokenAnswer) return accountTokenAnswer;
+  const pending = sendBilling('accountToken', undefined, { timeoutMs: BRIDGE_QUERY_TIMEOUT_MS })
+    .then((result) => {
+      if (!result || result.available === false) {
+        if (accountTokenAnswer === pending) accountTokenAnswer = null;
+      }
+      return result;
+    }, (e) => {
+      if (accountTokenAnswer === pending) accountTokenAnswer = null;
+      throw e;
+    });
+  accountTokenAnswer = pending;
+  return pending;
+}
+
+function invalidateAccountTokenCache() {
+  accountTokenAnswer = null;
 }
 
 // The device-local UUID a balance is keyed by. A redeemed code carries no
 // account token of its own (it never went through our purchase flow), so this
 // is what gives the grant a balance to land in.
 async function storeAccountToken() {
-  const result = await sendBilling('accountToken', undefined, { timeoutMs: BRIDGE_QUERY_TIMEOUT_MS });
+  const result = await readAccountTokenAnswer();
   return (result && result.token) || '';
 }
 
@@ -155,7 +213,7 @@ async function storeAccountToken() {
 // treat that as "say nothing" rather than as `false` — the fresh-install notice
 // it drives would otherwise appear on Apple, where it is not true.
 async function storeAccountRestored() {
-  const result = await sendBilling('accountToken', undefined, { timeoutMs: BRIDGE_QUERY_TIMEOUT_MS });
+  const result = await readAccountTokenAnswer();
   return result && typeof result.restored === 'boolean' ? result.restored : undefined;
 }
 
@@ -169,7 +227,12 @@ async function postBackend(backendUrl, path, body, token) {
   const base = (backendUrl || DEFAULT_INTENTION_BACKEND_URL).replace(/\/+$/, '');
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
-  const res = await fetch(`${base}${path}`, {
+  // Bounded with providers.js's fetchWithTimeout, like every other network call
+  // a page makes. These requests sit behind a button the user is watching
+  // ("Restore", "Buy") and behind the paywall render; a backend that accepts the
+  // connection and never answers used to leave both spinning for good, with the
+  // purchase's pending-receipt fallback never reached because nothing threw.
+  const res = await fetchWithTimeout(`${base}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body)
@@ -211,6 +274,25 @@ async function verifyRequestBody(platform, receipt) {
   return body;
 }
 
+// What a purchase the backend could not confirm leaves behind: the receipt and
+// a flag saying it still needs confirming, and nothing else. It is written as a
+// PATCH (background.js's mergeEntitlement) by both paywalls — Settings and the
+// gate — because by the time verification fails the store has already taken
+// the money and the native side has consumed the purchase, so this receipt is
+// the only proof left; and because the person buying is often topping up an
+// existing balance whose token must survive the failure. reconcileEntitlement
+// (options-access.js) and refreshEntitlement below retry it on the next load.
+function pendingReceiptPatch(platform, receipt, error) {
+  return {
+    source: platform,
+    receipt,
+    pendingVerification: true,
+    lastError: String((error && error.message) || error || '')
+  };
+}
+
+const PENDING_VERIFICATION_MESSAGE = "Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically. Reopen Settings to retry.";
+
 // Whether this entitlement still carries proof we can put back to the store.
 // A consumable's receipt is finished at purchase as far as the STORE is
 // concerned, but our backend re-checks it and re-mints from it happily, so the
@@ -249,7 +331,15 @@ const RECOVERY_ROUTES = ['hosted', 'locked'];
 async function refreshEntitlement(entitlement, backendUrl, { route = null } = {}) {
   if (!entitlement || (!entitlement.token && !entitlement.receipt)) return entitlement || null;
   try {
-    const data = entitlement.token
+    // A receipt still waiting to be confirmed goes to /verify even when a token
+    // is held. The pending-receipt write is a merge (pendingReceiptPatch), so a
+    // top-up that failed to verify sits beside the older token that the balance
+    // was spent from — and /refresh on that token would report the old balance,
+    // clear the pending flag and never credit the purchase. /verify is
+    // idempotent server-side, so asking it about a receipt it already credited
+    // costs nothing.
+    const verifyReceipt = entitlement.pendingVerification && hasReverifiableReceipt(entitlement);
+    const data = entitlement.token && !verifyReceipt
       ? await postBackend(backendUrl, '/v1/entitlement/refresh', { token: entitlement.token })
       : await postBackend(backendUrl, '/v1/entitlement/verify',
           await verifyRequestBody(entitlement.source, entitlement.receipt));

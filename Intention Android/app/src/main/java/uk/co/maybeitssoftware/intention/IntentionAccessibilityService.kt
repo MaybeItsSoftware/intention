@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -45,6 +46,16 @@ class IntentionAccessibilityService : AccessibilityService() {
         // content events from a playing PiP surface can't machine-gun the
         // active media session.
         private const val PIP_PAUSE_THROTTLE_MS = 1_000L
+        // Floor between picture-in-picture SCANS, whatever they find. The
+        // scan is a window-list IPC plus a root fetch per window, and it runs
+        // ahead of every accessibility event; throttled only after a pause,
+        // it ran at full event rate the rest of the time — which is nearly
+        // all of the time.
+        private const val PIP_SCAN_INTERVAL_MS = 1_000L
+        // A wall-clock jump smaller than this is measurement noise (the two
+        // clocks are read a moment apart) or a network nudge too small to
+        // matter, and passes are left exactly where they are.
+        private const val CLOCK_JUMP_MIN_MS = 2_000L
         // How long a blocked site is left on screen before it is gated, when
         // that site's app is installed. Following a link to it (from a chat,
         // a mail, a search result) loads it in the browser or a Custom Tab
@@ -177,6 +188,9 @@ class IntentionAccessibilityService : AccessibilityService() {
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                // Targets read as null while the screen is off; do not let
+                // that be remembered as "a quiet app" once it is back on.
+                lastActivePackage = null
                 ForegroundPass.sync(applicationContext, null)
                 SessionOverlay.hide(applicationContext)
                 cancelExpiryRecheck()
@@ -187,6 +201,35 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
     private var screenReceiverRegistered = false
+    // Passes are wall-clock timestamps, so setting the clock back used to
+    // extend every live one by however far it went (see
+    // ForegroundPass.afterClockChange). The jump is measured against
+    // elapsedRealtime, which no clock change moves: the difference between
+    // the two before and after is exactly how far the wall clock was set.
+    // Registered at runtime with the other receivers — TIME_SET reaches
+    // manifest receivers too, but with this service off there is no blocking
+    // for a pass to get round.
+    private var clockOffsetSeen = wallClockOffset()
+    private val clockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val offset = wallClockOffset()
+            val jump = offset - clockOffsetSeen
+            clockOffsetSeen = offset
+            val measured = if (kotlin.math.abs(jump) >= CLOCK_JUMP_MIN_MS) jump else 0L
+            Log.d(TAG, "Clock changed (${intent.action}), moved ${measured}ms")
+            ForegroundPass.afterClockChange(applicationContext, measured)
+            // The dismissal graces are wall-clock deadlines too: moved with
+            // the clock, or winding it back would stretch a one-minute grace
+            // into a free hour on a blocked site.
+            if (measured != 0L) {
+                for (key in dismissedUntil.keys.toList()) {
+                    dismissedUntil[key] = (dismissedUntil[key] ?: continue) + measured
+                }
+            }
+            recheckForeground()
+        }
+    }
+    private var clockReceiverRegistered = false
     // An app installed after setup that is the same service as a blocked site
     // (Instagram, with instagram.com blocked) would be a way round the block,
     // so the background joins it to the blocklist on install — see
@@ -211,9 +254,17 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
     }
     private var installReceiverRegistered = false
-    private var lastInstallSweepAt = 0L
+    private var lastInstallSweepAt: Long? = null
     private var lastForegroundPackage: String? = null
     private var lastPipPauseAt = 0L
+    private var lastPipScanAt = 0L
+    // The active window as of the last event that looked: its package, the
+    // target it resolved to, and when a browser's address bar was last read
+    // for it. What lets a content event from the same quiet app skip the
+    // window fetch entirely — see onAccessibilityEvent.
+    private var lastActivePackage: String? = null
+    private var lastActiveTarget: String? = null
+    private var lastTargetReadAt = 0L
     // Which blocked packages have already eaten their one pause for the
     // current PiP appearance — see checkPipBypass.
     private val pipPausedOnce = mutableSetOf<String>()
@@ -239,6 +290,17 @@ class IntentionAccessibilityService : AccessibilityService() {
             })
             installReceiverRegistered = true
         }
+        if (!clockReceiverRegistered) {
+            clockOffsetSeen = wallClockOffset()
+            registerReceiver(clockReceiver, IntentFilter().apply {
+                addAction(Intent.ACTION_TIME_CHANGED)
+                addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            })
+            clockReceiverRegistered = true
+        }
+        // A clock wound back while this service was not running is caught
+        // here, on the timestamps alone: a pass that starts in the future ends.
+        ForegroundPass.afterClockChange(applicationContext, 0L)
         val root = rootInActiveWindow
         val target = foregroundTarget(root?.packageName?.toString(), root)
         ForegroundPass.sync(applicationContext, target)
@@ -272,8 +334,8 @@ class IntentionAccessibilityService : AccessibilityService() {
     // arrived after setup as the app of a blocked site. At most every ten
     // minutes — the screen comes on far more often than apps get installed.
     private fun sweepInstalledApps() {
-        val now = System.currentTimeMillis()
-        if (now - lastInstallSweepAt < INSTALL_SWEEP_INTERVAL_MS) return
+        val now = SystemClock.elapsedRealtime()
+        lastInstallSweepAt?.let { if (now - it < INSTALL_SWEEP_INTERVAL_MS) return }
         lastInstallSweepAt = now
         val apps = org.json.JSONArray()
         try {
@@ -335,7 +397,13 @@ class IntentionAccessibilityService : AccessibilityService() {
             unregisterReceiver(installReceiver)
             installReceiverRegistered = false
         }
+        if (clockReceiverRegistered) {
+            unregisterReceiver(clockReceiver)
+            clockReceiverRegistered = false
+        }
     }
+
+    private fun wallClockOffset(): Long = System.currentTimeMillis() - SystemClock.elapsedRealtime()
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
@@ -346,31 +414,22 @@ class IntentionAccessibilityService : AccessibilityService() {
         // Before anything package-specific: a blocked app may be living on in
         // a picture-in-picture window regardless of which app this event is
         // from, so the check can't sit behind the per-package filtering below.
+        // It throttles itself to once a second.
         checkPipBypass()
 
         val packageName = event.packageName?.toString() ?: return
 
-        // Update the pass before checking it, and remove its floating window
-        // as soon as a different app comes to the foreground.
-        val activeRoot = rootInActiveWindow ?: getRootFromEvent(event)
-        val activePackage = activeRoot?.packageName?.toString() ?: packageName
-        val target = foregroundTarget(activePackage, activeRoot)
-        ForegroundPass.sync(applicationContext, target)
-        SessionOverlay.sync(applicationContext, target)
-        if (target == null) {
-            cancelExpiryRecheck()
-        } else if (target != expiryArmedFor) {
-            // Back on a target after anything else had the screen — the shade,
-            // a dialog, another app. That cancelled the timer above, and an app
-            // like Instagram is one long activity that may never send another
-            // window-state change to re-arm it, leaving the cut-off to an alarm
-            // Android 13+ is free to deliver late. Re-arm once per return.
-            // Marked even when there is no live pass, so a gated target is not
-            // re-read from prefs on every content event; a grant arrives with
-            // a window-state change of its own, which schedules the timer.
-            val expiresAt = sessionExpiresAt(target)
-            if (expiresAt != null) scheduleExpiryRecheck(expiresAt, target) else expiryArmedFor = target
-        }
+        // Most events are content changes from whatever is already in front,
+        // and most of the time that is an app nobody blocked. When the last
+        // look found exactly that — same package, no target, not a browser
+        // whose page could change under it — there is nothing new to learn,
+        // so skip the window fetch and the pass bookkeeping; both were done
+        // when it came to the front. A different package's event always looks
+        // afresh, which is how a return from the shade is still noticed.
+        val quiet = eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            packageName == lastActivePackage && lastActiveTarget == null &&
+            !BROWSER_URL_BAR_IDS.containsKey(packageName)
+        if (!quiet) updateForeground(event, packageName)
 
         // Skip our own app packages
         if (packageName == this.packageName) return
@@ -443,6 +502,67 @@ class IntentionAccessibilityService : AccessibilityService() {
         checkWebsiteBlock(event, packageName, urlBarIds)
     }
 
+    // Update the pass before checking it, and remove its floating window as
+    // soon as a different app comes to the foreground.
+    private fun updateForeground(event: AccessibilityEvent, packageName: String) {
+        val activeRoot = rootInActiveWindow ?: getRootFromEvent(event)
+        val activePackage = activeRoot?.packageName?.toString() ?: packageName
+        // A browser's address bar is read at most every CONTENT_CHECK_THROTTLE_MS
+        // on content events, as checkWebsiteBlock already was: a scrolling page
+        // emits them by the dozen, and the bar cannot have changed host in the
+        // meantime without a window change or the next read noticing.
+        val now = SystemClock.elapsedRealtime()
+        val target = if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            activePackage == lastActivePackage && BROWSER_URL_BAR_IDS.containsKey(activePackage) &&
+            now - lastTargetReadAt < CONTENT_CHECK_THROTTLE_MS
+        ) {
+            lastActiveTarget
+        } else {
+            lastTargetReadAt = now
+            foregroundTarget(activePackage, activeRoot)
+        }
+        lastActivePackage = activePackage
+        lastActiveTarget = target
+        ForegroundPass.sync(applicationContext, target)
+        SessionOverlay.sync(applicationContext, target)
+        if (target == null) {
+            cancelExpiryRecheck()
+        } else if (target != expiryArmedFor) {
+            // Back on a target after anything else had the screen — the shade,
+            // a dialog, another app. That cancelled the timer above, and an app
+            // like Instagram is one long activity that may never send another
+            // window-state change to re-arm it, leaving the cut-off to an alarm
+            // Android 13+ is free to deliver late. Re-arm once per return.
+            val expiresAt = sessionExpiresAt(target)
+            if (expiresAt != null) {
+                scheduleExpiryRecheck(expiresAt, target)
+            } else if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                target == activePackage) {
+                // Back on a blocked APP with no pass, and only content events
+                // to say so. If its pass ran out while the shade or the other
+                // split-screen pane had focus, the cut-off found nothing of
+                // ours in front and stood down — and Instagram, one long
+                // activity, may never send the window-state change the gate
+                // below waits for. So gate it here, through the same path the
+                // expiry timer takes (part rules and all). Once per return:
+                // the mark below stops the next content event asking again,
+                // the coach coming up clears it, and CoachingActivity's
+                // onNewIntent drops a repeat for the same target. A window
+                // state change is left to the gate below, so it is not raised
+                // twice; a browser is left to checkWebsiteBlock, whose
+                // hand-off wait (APP_HANDOFF_WAIT_MS) this must not jump.
+                recheckForeground()
+                expiryArmedFor = target
+            } else {
+                // Marked even when there is no live pass, so a gated target
+                // is not re-read from prefs on every content event; a grant
+                // arrives with a window-state change of its own, which
+                // schedules the timer.
+                expiryArmedFor = target
+            }
+        }
+    }
+
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility Service Interrupted")
     }
@@ -484,7 +604,9 @@ class IntentionAccessibilityService : AccessibilityService() {
     }
 
     private fun checkWebsiteBlock(event: AccessibilityEvent, packageName: String, urlBarIds: List<String>) {
-        val now = System.currentTimeMillis()
+        // elapsedRealtime: a throttle stamped in wall time is one winding the
+        // clock back pushes into the future, silencing this browser for hours.
+        val now = SystemClock.elapsedRealtime()
         val lastCheck = lastContentCheckAt[packageName] ?: 0L
         if (now - lastCheck < CONTENT_CHECK_THROTTLE_MS) return
 
@@ -580,7 +702,11 @@ class IntentionAccessibilityService : AccessibilityService() {
     // answered with a pause, while unrelated music next to a parked PiP
     // window costs at most one wrongly-eaten pause per resume.
     private fun checkPipBypass() {
-        val now = System.currentTimeMillis()
+        // elapsedRealtime, not the wall clock: winding the clock back must
+        // not be a way to switch this check off.
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPipScanAt < PIP_SCAN_INTERVAL_MS) return
+        lastPipScanAt = now
         if (now - lastPipPauseAt < PIP_PAUSE_THROTTLE_MS) return
 
         val pipPackages = windows
@@ -631,6 +757,8 @@ class IntentionAccessibilityService : AccessibilityService() {
     // the next app switch or navigation.
     fun recheckForeground() {
         cancelExpiryRecheck()
+        // Whatever the last event concluded is stale now; the next one looks.
+        lastActivePackage = null
         val root = rootInActiveWindow
         val foreground = root?.packageName?.toString() ?: lastForegroundPackage
         // Expiry is the pass timer's most important moment. This runs when a
@@ -787,38 +915,13 @@ class IntentionAccessibilityService : AccessibilityService() {
         return text.takeIf { it.contains(".") }
     }
 
-    private fun findBlockedDomain(host: String): String? {
-        val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val blockedDomainsStr = prefs.getString("blockedDomains", "[]") ?: "[]"
-        try {
-            // blockedDomains is stored as a JSON string of array: ["instagram.com", ...]
-            val array = org.json.JSONArray(blockedDomainsStr)
-            for (i in 0 until array.length()) {
-                val d = array.getString(i)
-                if (host == d || host.endsWith(".$d")) return d
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking blocked domains: ", e)
-        }
-        return null
-    }
+    // blockedDomains/blockedApps are JSON arrays in prefs; SharedState parses
+    // each once per stored value rather than once per accessibility event.
+    private fun findBlockedDomain(host: String): String? =
+        SharedState.blockedDomains(this).firstOrNull { d -> host == d || host.endsWith(".$d") }
 
-    private fun isAppBlocked(packageName: String): Boolean {
-        val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val blockedAppsStr = prefs.getString("blockedApps", "[]") ?: "[]"
-        try {
-            // blockedApps is stored as a JSON string of array: ["com.instagram.android", ...]
-            val array = org.json.JSONArray(blockedAppsStr)
-            for (i in 0 until array.length()) {
-                if (packageName == array.getString(i)) {
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error checking blocked apps: ", e)
-        }
-        return false
-    }
+    private fun isAppBlocked(packageName: String): Boolean =
+        packageName in SharedState.blockedApps(this)
 
     // Returns the latest future expiration time of any active session for
     // this app/domain, or null if there is no unexpired session.
@@ -832,8 +935,6 @@ class IntentionAccessibilityService : AccessibilityService() {
     // (their reason feeds the check-in prompt), so "expired" and "never had
     // one" have to be told apart — see justExpired.
     private fun latestSessionExpiry(key: String): Long? {
-        val prefs = getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         var latest: Long? = null
         try {
             // activeSessions is a JSON object keyed "tab:<id>:<domain>" in the
@@ -842,7 +943,8 @@ class IntentionAccessibilityService : AccessibilityService() {
             // `domain` field rather than parsing keys, so it is unaffected by
             // the key format -- keep it that way.
             // {"target:instagram.com": {"domain": "instagram.com", "startTime": 12345, "intervalMinutes": 10}}
-            val json = JSONObject(activeSessionsStr)
+            // Parsed once per stored value and shared — read it, never write it.
+            val json = SharedState.activeSessions(this)
             val keys = json.keys()
             while (keys.hasNext()) {
                 val sessionKey = keys.next()

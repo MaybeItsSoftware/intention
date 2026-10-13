@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,6 +27,11 @@ class BootReceiver : BroadcastReceiver() {
         // Some OEM skins send these instead of BOOT_COMPLETED for a "fast boot".
         private const val ACTION_QUICKBOOT_POWERON = "android.intent.action.QUICKBOOT_POWERON"
         private const val ACTION_HTC_QUICKBOOT_POWERON = "com.htc.intent.action.QUICKBOOT_POWERON"
+        // The QUICKBOOT actions are not protected broadcasts — any installed
+        // app can send them — so they are believed only this soon after the
+        // device actually started. A real fast boot delivers them within a
+        // minute or two; a forged one later on is ignored.
+        private const val QUICKBOOT_WINDOW_MS = 10 * 60_000L
         // Upper bound on how long the broadcast is held open. A receiver gets
         // roughly ten seconds before the system treats it as stuck, and the work
         // here is a local page load plus a couple of SharedPreferences writes.
@@ -36,9 +42,13 @@ class BootReceiver : BroadcastReceiver() {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             // Alarms are also cancelled when the package is replaced.
-            Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {}
             ACTION_QUICKBOOT_POWERON,
-            ACTION_HTC_QUICKBOOT_POWERON -> {}
+            ACTION_HTC_QUICKBOOT_POWERON ->
+                if (SystemClock.elapsedRealtime() > QUICKBOOT_WINDOW_MS) {
+                    Log.w(TAG, "Ignoring ${intent.action} long after boot")
+                    return
+                }
             else -> return
         }
         Log.d(TAG, "Reconciling sessions after ${intent.action}")

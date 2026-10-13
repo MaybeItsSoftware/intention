@@ -70,8 +70,11 @@
             android:exported="false" />
 
         <!-- BOOT_COMPLETED and MY_PACKAGE_REPLACED are protected broadcasts only
-             the system can send, so exporting the receiver doesn't widen who can
-             reach it. -->
+             the system can send. The two QUICKBOOT_POWERON actions are NOT: they
+             are OEM fast-boot extras, and any app on the device can send them to
+             an exported receiver. BootReceiver therefore only acts on them in the
+             first minutes after a boot, and what it does is idempotent anyway
+             (a reconcile of stored sessions), so a forged one is harmless. -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

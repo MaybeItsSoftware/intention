@@ -898,9 +898,52 @@ const ACCOUNT_SERVICES = [
   }
 ];
 
+// THE host normaliser. Every question of the form "is this host on that
+// domain?" goes through here first, in the worker, the page and the options
+// screen alike, because two spellings of one host are two different strings:
+//
+//   * Case. URL parsing lowercases a hostname, but a host handed over as text
+//     (a message field, a stored entry) has been through nothing.
+//   * The trailing dot. `www.youtube.com.` is the fully-qualified spelling of
+//     `www.youtube.com`: the browser resolves it, loads the same site, and
+//     reports `location.hostname` WITH the dot. A suffix test against
+//     `youtube.com` then fails — `.com.` does not end in `.com` — and every
+//     matcher that compared raw strings let the whole site through ungated by
+//     the addition of one character to the address bar.
+//
+// More than one trailing dot does not resolve anywhere, but stripping them all
+// costs nothing and means no spelling can be shorter than the one it matches.
+function normalizeHost(host) {
+  return String(host == null ? '' : host).trim().toLowerCase().replace(/\.+$/, '');
+}
+
+// Is `host` the blocked `domain` or a subdomain of it? Both sides normalised,
+// so a stored entry and a live hostname cannot disagree over a dot or a case.
+function hostOnDomain(host, domain) {
+  const h = normalizeHost(host);
+  const d = normalizeHost(domain);
+  return !!h && !!d && (h === d || h.endsWith(`.${d}`));
+}
+
+// Which entry of the blocklist this host falls under, or null.
+//
+// The MOST SPECIFIC one, not the first. Entries can overlap — "reddit.com"
+// and "old.reddit.com" both on the list, each with its own rules — and the
+// first-match answer depended on nothing but the order they were added in, so
+// old.reddit.com was judged by reddit.com's limits, part rule and pass. The
+// longest matching entry is the one the user wrote about this host.
+function matchBlockedDomain(host, blockedDomains) {
+  if (!Array.isArray(blockedDomains)) return null;
+  let best = null;
+  for (const domain of blockedDomains) {
+    if (typeof domain !== 'string' || !hostOnDomain(host, domain)) continue;
+    if (best == null || normalizeHost(domain).length > normalizeHost(best).length) best = domain;
+  }
+  return best;
+}
+
 function hostIsOneOf(host, hosts) {
-  const h = String(host || '').toLowerCase().replace(/\.$/, '');
-  return hosts.some(d => h === d || h.endsWith(`.${d}`));
+  return hosts.some(d => hostOnDomain(host, d));
 }
 
 // The service a blocked target (a domain) or a page host belongs to, or null.
@@ -1330,9 +1373,10 @@ const SCOPE_HOSTS_TO_VERIFY = ['instagram.com', 'tiktok.com'];
 
 // Host-suffix match. `x.com` covers `www.x.com` and `mobile.x.com` but not
 // `notx.com`, which is the same rule the blocklist itself uses.
+// Normalised like every other host test (normalizeHost), so the FQDN spelling
+// of a supported host still gets that host's key rather than a generic one.
 function scopeHostMatches(host, list) {
-  const clean = String(host == null ? '' : host).toLowerCase();
-  return list.some(entry => clean === entry || clean.endsWith(`.${entry}`));
+  return list.some(entry => hostOnDomain(host, entry));
 }
 
 // Query parameters that are never part of a page's identity: they record where
@@ -1679,6 +1723,33 @@ function pageScopeFor(urlStr, pageCtx) {
   } catch (e) {
     return null;
   }
+}
+
+// Did this pass start in the future — i.e. has the clock been put back since
+// it was granted?
+//
+// A pass is "startTime + its minutes", both read off the wall clock, so
+// setting the clock back an hour handed a running pass an extra hour. A grant
+// stamps startTime with Date.now() in the same breath as it writes it, so a
+// start that is now ahead of the clock can only mean the clock moved, and the
+// pass is treated as over rather than stretched. The tolerance absorbs the
+// small corrections a network time sync makes on its own — ending a fresh pass
+// because NTP nudged the clock back a second would be a pass the user lost
+// for nothing. Asked by background.js's activeSession and content.js's
+// passIsLive alike, so the page and the worker cannot disagree about it.
+//
+// `seenAt` widens the same test to rollbacks smaller than the pass has run.
+// The worker stamps it whenever it finds the pass live (stampSessionSeen in
+// background.js), so a clock that now reads earlier than a moment the pass
+// was already seen alive has gone back, by however little. It is per pass,
+// which is what keeps it from punishing the next one: a pass granted after
+// the rollback has no stamp from before it.
+const PASS_CLOCK_SKEW_MS = 2 * 60 * 1000;
+function passStartedInFuture(session, now = Date.now()) {
+  const start = Number(session && session.startTime);
+  const seen = Number(session && session.seenAt) || 0;
+  const latest = Math.max(Number.isFinite(start) ? start : 0, seen);
+  return latest > 0 && latest > now + PASS_CLOCK_SKEW_MS;
 }
 
 // Does a granted pass still apply to this URL?

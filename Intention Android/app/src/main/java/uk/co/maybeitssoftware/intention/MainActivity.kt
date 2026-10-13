@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
         // (returnToSetupIfAsked).
         val stepsText = TextView(this).apply {
             text = "1.  Tap the button below and agree\n\n" +
-                "2.  Find Intention in the list (sometimes under \"Downloaded apps\") and turn it on\n\n" +
+                "2.  Find Intention in the list (on Samsung it's under \"Installed apps\", on others sometimes \"Downloaded apps\") and turn it on\n\n" +
                 "3.  Tap \"Allow\". Intention reopens by itself"
             setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
             textSize = 16f
@@ -288,7 +288,8 @@ class MainActivity : AppCompatActivity() {
         // Connect to Play Billing up front so the paywall has prices ready by
         // the time onboarding reaches it.
         BillingManager.init(applicationContext)
-        BillingManager.onBackgroundCredit = { announceAppActive(it) }
+        backgroundCredit = { announceAppActive(it) }
+        BillingManager.onBackgroundCredit = backgroundCredit
 
         // Set up bridge
         webView.addJavascriptInterface(WebAppInterface(this, webView) {
@@ -670,6 +671,19 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             webView.evaluateJavascript("window.dispatchEvent($event)", null)
         }
+    }
+
+    // BillingManager is an object and outlives this activity; the handler it
+    // holds captures this activity, its WebView and all. Dropped on the way
+    // out, so a destroyed activity is neither kept alive nor sent a credit to
+    // a page that is gone — but only if it is still ours: a newer instance's
+    // onCreate (a rotation, a recreate) may already have put its own there.
+    private var backgroundCredit: ((org.json.JSONObject) -> Unit)? = null
+
+    override fun onDestroy() {
+        if (BillingManager.onBackgroundCredit === backgroundCredit) BillingManager.onBackgroundCredit = null
+        backgroundCredit = null
+        super.onDestroy()
     }
 
     override fun onResume() {

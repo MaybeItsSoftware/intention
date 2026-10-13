@@ -172,12 +172,11 @@ object SessionOverlay {
     // be asynchronous, and this runs on every foreground change.
     fun liveSession(context: Context, foregroundTarget: String?): LiveSession? {
         if (foregroundTarget == null) return null
-        val prefs = context.getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
-        val activeSessionsStr = prefs.getString("activeSessions", "{}") ?: "{}"
         val now = System.currentTimeMillis()
         var newest: LiveSession? = null
         try {
-            val json = JSONObject(activeSessionsStr)
+            // Parsed once per stored value and shared — read it, never write it.
+            val json = SharedState.activeSessions(context)
             val keys = json.keys()
             while (keys.hasNext()) {
                 val session = json.optJSONObject(keys.next()) ?: continue

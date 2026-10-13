@@ -81,6 +81,10 @@ dependencies {
     // Google Play Billing — Intention Pro, the subscription that powers the
     // built-in coach (BillingManager.kt).
     implementation("com.android.billingclient:billing-ktx:8.0.0")
+    // Block Store — keeps the billing account id across an uninstall and
+    // reinstall, which Auto Backup does not do for a same-day reinstall
+    // (BillingManager.restoreAccountIdFromBlockStore).
+    implementation("com.google.android.gms:play-services-auth-blockstore:16.4.0")
 
     // Local JVM tests for the pure halves of the blocking decisions — the
     // ones a wrong answer in silently unblocks something. org.json is the real

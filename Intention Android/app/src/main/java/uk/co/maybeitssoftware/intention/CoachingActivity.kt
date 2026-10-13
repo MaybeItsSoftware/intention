@@ -13,6 +13,7 @@ import android.view.View
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.TextView
+import androidx.activity.addCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -156,6 +157,15 @@ class CoachingActivity : AppCompatActivity() {
             insets
         }
 
+        // Back must not drop the user onto the blocked app behind the coach:
+        // it sends them home instead. A callback rather than an onBackPressed
+        // override, because with targetSdk 36 Android 16 no longer calls
+        // onBackPressed at all — predictive back finishes the activity, the
+        // blocked app is back in front, and the service gates it again: a loop
+        // of Back presses that never gets anywhere. The dispatcher is what the
+        // system does still consult.
+        onBackPressedDispatcher.addCallback(this) { goHome() }
+
         // Initialize background helper
         BackgroundJsHelper.init(applicationContext)
 
@@ -262,11 +272,6 @@ class CoachingActivity : AppCompatActivity() {
         if (next == domain && intent.getStringExtra("mode") == this.intent.getStringExtra("mode")) return
         setIntent(intent)
         recreate()
-    }
-
-    override fun onBackPressed() {
-        // Overriding back button to prevent bypassing the coach: send them to home screen
-        goHome()
     }
 
     // Another app's specific tab can't be closed via any public Android API,

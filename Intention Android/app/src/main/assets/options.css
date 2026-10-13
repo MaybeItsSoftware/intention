@@ -2713,5 +2713,28 @@ button.history-more:hover { background: none; color: var(--ink); }
   line-height: 1.6;
 }
 
+/* Private windows the browser has not been told to gate (browser builds only).
+   Caution rather than failure, so the same warning tint as the access status
+   above — calm, and nothing to press: the switch lives in the browser. */
+.incognito-note {
+  border: 1px solid var(--warning-line);
+  border-radius: var(--radius-control);
+  background: var(--warning-fill);
+  color: var(--warning-text);
+  padding: 12px 14px;
+}
+
+.incognito-note[hidden] { display: none; }
+
+.incognito-note p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.incognito-note p + p { margin-top: 8px; }
+
+.setup-page .incognito-note { margin-top: 18px; }
+
 /* The app-for-a-blocked-site reminder under the Blocked apps list (Android). */
 #android-app-reminder { margin: 16px 0 10px; }

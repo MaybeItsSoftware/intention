@@ -221,13 +221,27 @@ object BackgroundJsHelper {
 
     fun setSharedStorage(context: Context, itemsJson: String) {
         val prefs = context.getSharedPreferences("intention_prefs", Context.MODE_PRIVATE)
+        // Under SharedState.lock: this runs on the JS bridge thread, and
+        // ForegroundPass read-modify-writes activeSessions on the main thread.
+        // Without the shared lock its write could land on top of — and so
+        // undo — a session this call had just saved.
+        synchronized(SharedState.lock) { writeSharedStorage(prefs, itemsJson) }
+    }
+
+    private fun writeSharedStorage(prefs: android.content.SharedPreferences, itemsJson: String) {
         val editor = prefs.edit()
         try {
             val json = JSONObject(itemsJson)
             val iter = json.keys()
             while (iter.hasNext()) {
                 val key = iter.next()
-                val value = json.get(key)
+                var value = json.get(key)
+                // The background's copy can be older than a pause stamp
+                // ForegroundPass wrote since it read; keep the native fields.
+                if (key == SharedState.KEY_ACTIVE_SESSIONS && value is JSONObject) {
+                    value = JSONObject(SharedState.mergeNativeSessionFields(
+                        prefs.getString(key, null), value.toString()))
+                }
                 // Strings are stored quoted so they survive the round trip.
                 // Without it, decodeStoredValue has to guess, and a setting
                 // whose text happens to read as "true" or "1.5" comes back as

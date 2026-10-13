@@ -2,6 +2,7 @@ package uk.co.maybeitssoftware.intention
 
 import android.app.Activity
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -20,11 +21,16 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
+import com.google.android.gms.auth.blockstore.Blockstore
+import com.google.android.gms.auth.blockstore.RetrieveBytesRequest
+import com.google.android.gms.auth.blockstore.StoreBytesData
+import com.google.android.gms.tasks.Tasks
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
  * Google Play Billing wrapper for coaching credit — the consumable top-up
@@ -67,8 +73,26 @@ object BillingManager : PurchasesUpdatedListener {
     // is a constant with a comment rather than a literal in two places.
     private const val BILLING_PREFS = "intention_billing"
 
+    // The Block Store key the account id is mirrored under. Block Store keeps
+    // it across an uninstall and reinstall on the same device (and carries it
+    // to a new one), which is the gap Auto Backup leaves: Auto Backup only
+    // runs about once a day and restores only at install, so a same-day
+    // reinstall — every Play internal-testing reinstall, for a start — minted
+    // a fresh id and orphaned the paid balance. Renaming this string orphans
+    // every balance it was protecting.
+    private const val BLOCKSTORE_ACCOUNT_KEY = "uk.co.maybeitssoftware.intention.billing_account_id"
+    private const val BLOCKSTORE_TIMEOUT_SECONDS = 5L
+    @Volatile private var blockStoreSynced = false
+    // Set on a fresh install whose Block Store lookup failed rather than came
+    // back empty; see stableAccountId.
+    private const val PREF_BLOCKSTORE_UNCONFIRMED = "account_id_blockstore_unconfirmed"
+    private val accountIdLock = Any()
+    @Volatile private var settledAccountId: String? = null
+
     // How long redeem() waits for a Play-side grant to show up (~2 minutes).
     private const val REDEEM_POLL_INTERVAL_MS = 2_000L
+    // Connect and read limits on the backend verify; see verifyWithBackend.
+    private const val VERIFY_TIMEOUT_MS = 15_000
     private const val REDEEM_POLL_ATTEMPTS = 60
 
     private var billingClient: BillingClient? = null
@@ -94,6 +118,13 @@ object BillingManager : PurchasesUpdatedListener {
     fun init(context: Context) {
         appContext = context.applicationContext
         if (billingClient != null) return
+        // Settle the account id off the main thread before anything asks for
+        // it, so the Block Store lookup (which has to block) never happens on
+        // the UI thread. launchFlow runs on the main thread and would
+        // otherwise mint a fresh id when the app is opened straight into the
+        // paywall.
+        val ctx = context.applicationContext
+        Thread { stableAccountId(ctx) }.start()
         val pendingPurchasesParams = PendingPurchasesParams.newBuilder()
             .enableOneTimeProducts()
             .build()
@@ -206,11 +237,17 @@ object BillingManager : PurchasesUpdatedListener {
         product: ProductDetails,
         callback: (JSONObject) -> Unit
     ) {
+        // Null only in the first seconds of a fresh install, while init()'s
+        // worker asks Block Store whether a previous install left an id.
+        // Buying under a stand-in id would put the credit where neither
+        // install can find it.
+        val accountId = peekAccountId(activity)
+            ?: return callback(failed("Still getting ready. Try again in a moment."))
         pendingPurchaseCallback = callback
         val params = BillingFlowParams.newBuilder()
             // A consumable's purchase token isn't stable across repeat buys —
             // this is what the backend keys the credit balance by instead.
-            .setObfuscatedAccountId(stableAccountId(activity))
+            .setObfuscatedAccountId(accountId)
             .setProductDetailsParamsList(
                 listOf(
                     BillingFlowParams.ProductDetailsParams.newBuilder()
@@ -267,16 +304,14 @@ object BillingManager : PurchasesUpdatedListener {
                 .setProductType(BillingClient.ProductType.INAPP)
                 .build()
             client.queryPurchasesAsync(params) { result, purchases ->
-                val purchase = purchases.firstOrNull {
-                    it.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                        it.products.any { p -> p in PRODUCT_IDS }
-                }
-                if (result.responseCode != BillingClient.BillingResponseCode.OK || purchase == null) {
+                val owed = if (result.responseCode == BillingClient.BillingResponseCode.OK)
+                    creditable(purchases) else emptyList()
+                if (owed.isEmpty()) {
                     callback(JSONObject().put("status", "none")
                         .put("error", "No pending purchase found."))
                     return@queryPurchasesAsync
                 }
-                creditThenConsume(purchase) { callback(purchaseResult(purchase)) }
+                creditAll(owed, callback)
             }
         }
     }
@@ -389,17 +424,41 @@ object BillingManager : PurchasesUpdatedListener {
                 .setProductType(BillingClient.ProductType.INAPP)
                 .build()
             client.queryPurchasesAsync(params) { result, purchases ->
-                val purchase = purchases.firstOrNull {
-                    it.purchaseState == Purchase.PurchaseState.PURCHASED &&
-                        it.products.any { p -> p in PRODUCT_IDS }
-                }
-                if (result.responseCode != BillingClient.BillingResponseCode.OK || purchase == null) {
+                val owed = if (result.responseCode == BillingClient.BillingResponseCode.OK)
+                    creditable(purchases) else emptyList()
+                if (owed.isEmpty()) {
                     pollForRedeemedPurchase(attempt + 1, callback)
                     return@queryPurchasesAsync
                 }
-                creditThenConsume(purchase) { callback(purchaseResult(purchase)) }
+                creditAll(owed, callback)
             }
         }, REDEEM_POLL_INTERVAL_MS)
+    }
+
+    // Every bought-and-unconsumed purchase of ours, not just the first. Taking
+    // firstOrNull meant one purchase the backend kept refusing — a revoked
+    // token, a product it no longer knows — sat at the head of the list and
+    // stood in front of every purchase behind it, on every sweep, for good.
+    private fun creditable(purchases: List<Purchase>): List<Purchase> =
+        purchases.filter {
+            it.purchaseState == Purchase.PurchaseState.PURCHASED &&
+                it.products.any { p -> p in PRODUCT_IDS }
+        }
+
+    // Credits each in turn — one at a time, so two verifies never race for
+    // the same balance — and answers once, after the last, with that one's
+    // result: the same shape a single restored purchase always answered
+    // with, and the web layer only needs it to know to refresh the balance.
+    // A purchase the backend refused stays unconsumed for the next sweep,
+    // as before; it just no longer holds the others back.
+    private fun creditAll(owed: List<Purchase>, callback: (JSONObject) -> Unit) {
+        fun next(index: Int) {
+            val purchase = owed[index]
+            creditThenConsume(purchase) {
+                if (index + 1 < owed.size) next(index + 1) else callback(purchaseResult(purchase))
+            }
+        }
+        next(0)
     }
 
     /**
@@ -433,12 +492,28 @@ object BillingManager : PurchasesUpdatedListener {
 
     private fun verifyWithBackend(purchase: Purchase, productId: String, onResult: (Boolean) -> Unit) {
         Thread {
+            var connection: HttpURLConnection? = null
             val ok = try {
                 val url = URL("$DEFAULT_BACKEND_URL/v1/entitlement/verify")
-                val connection = url.openConnection() as HttpURLConnection
+                connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.doOutput = true
+                // Without these a backend that accepts the connection and then
+                // says nothing holds this thread — and the purchase's
+                // "pending" — forever. Unconsumed is the safe failure: the
+                // next restore() sweep tries again.
+                connection.connectTimeout = VERIFY_TIMEOUT_MS
+                connection.readTimeout = VERIFY_TIMEOUT_MS
                 connection.setRequestProperty("Content-Type", "application/json")
+                // A device that recovered its balance by code holds a live
+                // token for that balance, while its own account id still names
+                // the empty one it minted on reinstall. The backend lets a
+                // valid same-platform bearer name the subject a top-up lands
+                // in (see bearerSubjectFor in server/src/app.js), and ignores
+                // one that is stale or forged — so sending it whenever there
+                // is one costs nothing, and without it the top-up they just
+                // paid for went to the empty balance.
+                entitlementToken()?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
                 val body = JSONObject()
                     .put("platform", "google")
                     // Only *used* by the backend when the purchase has no
@@ -457,9 +532,26 @@ object BillingManager : PurchasesUpdatedListener {
             } catch (e: Exception) {
                 Log.w(TAG, "Backend verify failed: ${e.message}")
                 false
+            } finally {
+                connection?.disconnect()
             }
             onResult(ok)
         }.start()
+    }
+
+    // The entitlement token background.js saved (saveEntitlement), read
+    // straight out of the storage it shares with this process — objects are
+    // kept there as plain JSON (BackgroundJsHelper.setSharedStorage).
+    private fun entitlementToken(): String? {
+        val context = appContext ?: return null
+        return try {
+            val raw = context.getSharedPreferences(SharedState.PREFS, Context.MODE_PRIVATE)
+                .getString("entitlement", null) ?: return null
+            val entitlement = org.json.JSONTokener(raw).nextValue() as? JSONObject ?: return null
+            entitlement.optString("token").trim().takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // Both consumes and acknowledges in one call — required for a consumable
@@ -476,21 +568,142 @@ object BillingManager : PurchasesUpdatedListener {
         }
     }
 
+    /**
+     * The id without blocking: what is settled or already in prefs, else null
+     * while init()'s worker is still asking Block Store. For the main thread,
+     * which must never wait on that lookup.
+     */
+    private fun peekAccountId(context: Context): String? =
+        settledAccountId ?: context.getSharedPreferences(BILLING_PREFS, Context.MODE_PRIVATE)
+            .getString("account_id", null)
+
+    /**
+     * Blocks for up to a few Block Store lookups on a fresh install, so it is
+     * never called on the main thread — launchFlow uses peekAccountId. The
+     * lock is not held by anyone who already has an answer: settledAccountId
+     * is set before the Block Store mirror below does its own I/O.
+     */
     private fun stableAccountId(context: Context): String {
-        val prefs = context.getSharedPreferences(BILLING_PREFS, Context.MODE_PRIVATE)
-        prefs.getString("account_id", null)?.let { return it }
-        val newId = UUID.randomUUID().toString()
-        // Stamped only when the id is minted, never on a read, and never
-        // back-filled onto an id that predates this field. Back-filling would
-        // set it to "now" for someone who has had the same id for months and
-        // so make accountTokenRestored() below call their perfectly good
-        // account freshly minted forever after. An id with no stamp is the
-        // honest "we cannot tell" case and is treated as such.
-        prefs.edit()
-            .putString("account_id", newId)
-            .putLong("account_id_minted_at", System.currentTimeMillis())
-            .apply()
-        return newId
+        settledAccountId?.let { return it }
+        synchronized(accountIdLock) {
+            settledAccountId?.let { return it }
+            val prefs = context.getSharedPreferences(BILLING_PREFS, Context.MODE_PRIVATE)
+            prefs.getString("account_id", null)?.let { existing ->
+                settledAccountId = existing
+                mirrorToBlockStore(context, prefs, existing, prefs.getLong("account_id_minted_at", 0L))
+                return existing
+            }
+            var lookup = lookUpBlockStore(context)
+            if (lookup is BlockStoreLookup.Unknown) lookup = lookUpBlockStore(context)
+            if (lookup is BlockStoreLookup.Found) {
+                // Carries the ORIGINAL install's stamp, exactly as an Auto
+                // Backup restore does, so accountTokenRestored() answers from
+                // the same timestamp comparison either way. An id that
+                // predates the stamp comes back without one and stays "cannot
+                // tell".
+                val edit = prefs.edit().putString("account_id", lookup.id)
+                if (lookup.mintedAt > 0L) edit.putLong("account_id_minted_at", lookup.mintedAt)
+                edit.apply()
+                blockStoreSynced = true
+                settledAccountId = lookup.id
+                return lookup.id
+            }
+            val newId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            // Stamped only when the id is minted, never on a read, and never
+            // back-filled onto an id that predates this field. Back-filling
+            // would set it to "now" for someone who has had the same id for
+            // months and so make accountTokenRestored() below call their
+            // perfectly good account freshly minted forever after. An id with
+            // no stamp is the honest "we cannot tell" case and is treated as
+            // such.
+            val edit = prefs.edit()
+                .putString("account_id", newId)
+                .putLong("account_id_minted_at", now)
+            // Block Store couldn't be read, which is not the same as empty: it
+            // may still hold a previous install's id, and writing this one
+            // over it would orphan that balance for good — the one thing this
+            // exists to prevent. Hold the write until a lookup proves it empty.
+            if (lookup is BlockStoreLookup.Unknown) edit.putBoolean(PREF_BLOCKSTORE_UNCONFIRMED, true)
+            edit.apply()
+            settledAccountId = newId
+            if (lookup is BlockStoreLookup.Empty) saveToBlockStore(context, newId, now)
+            return newId
+        }
+    }
+
+    // Mirrored once per process rather than once ever: it back-fills every id
+    // that predates Block Store, and a persisted "done" flag would ride Auto
+    // Backup onto a new device whose Block Store is empty and stop the write
+    // ever happening there. An id minted while Block Store was unreadable is
+    // only written once a lookup finds the slot empty (or already ours); if it
+    // holds a different id, that one is left alone for a future reinstall.
+    private fun mirrorToBlockStore(context: Context, prefs: SharedPreferences, id: String, mintedAt: Long) {
+        if (blockStoreSynced) return
+        if (!prefs.getBoolean(PREF_BLOCKSTORE_UNCONFIRMED, false)) {
+            saveToBlockStore(context, id, mintedAt)
+            return
+        }
+        when (val lookup = lookUpBlockStore(context)) {
+            is BlockStoreLookup.Empty -> {
+                prefs.edit().remove(PREF_BLOCKSTORE_UNCONFIRMED).apply()
+                saveToBlockStore(context, id, mintedAt)
+            }
+            is BlockStoreLookup.Found -> {
+                if (lookup.id == id) prefs.edit().remove(PREF_BLOCKSTORE_UNCONFIRMED).apply()
+                blockStoreSynced = true
+            }
+            is BlockStoreLookup.Unknown -> Unit
+        }
+    }
+
+    private sealed class BlockStoreLookup {
+        data class Found(val id: String, val mintedAt: Long) : BlockStoreLookup()
+        object Empty : BlockStoreLookup()
+        // Play services missing, slow or erroring: says nothing about the slot.
+        object Unknown : BlockStoreLookup()
+    }
+
+    /** What a previous install of this app left in Block Store. Blocks. */
+    private fun lookUpBlockStore(context: Context): BlockStoreLookup {
+        if (Looper.myLooper() == Looper.getMainLooper()) return BlockStoreLookup.Unknown
+        return try {
+            val request = RetrieveBytesRequest.Builder()
+                .setKeys(listOf(BLOCKSTORE_ACCOUNT_KEY))
+                .build()
+            val response = Tasks.await(
+                Blockstore.getClient(context).retrieveBytes(request),
+                BLOCKSTORE_TIMEOUT_SECONDS, TimeUnit.SECONDS
+            )
+            val bytes = response.blockstoreDataMap[BLOCKSTORE_ACCOUNT_KEY]?.bytes
+                ?: return BlockStoreLookup.Empty
+            val stored = JSONObject(String(bytes, Charsets.UTF_8))
+            val id = stored.optString("id").takeIf { it.isNotBlank() }
+                ?: return BlockStoreLookup.Empty
+            BlockStoreLookup.Found(id, stored.optLong("mintedAt", 0L))
+        } catch (e: Exception) {
+            Log.w(TAG, "Block Store lookup failed: ${e.message}")
+            BlockStoreLookup.Unknown
+        }
+    }
+
+    private fun saveToBlockStore(context: Context, id: String, mintedAt: Long) {
+        try {
+            val stored = JSONObject().put("id", id)
+            if (mintedAt > 0L) stored.put("mintedAt", mintedAt)
+            val data = StoreBytesData.Builder()
+                .setBytes(stored.toString().toByteArray(Charsets.UTF_8))
+                .setKey(BLOCKSTORE_ACCOUNT_KEY)
+                // Also carried to a new phone when the user restores from
+                // their Google backup.
+                .setShouldBackupToCloud(true)
+                .build()
+            Blockstore.getClient(context).storeBytes(data)
+                .addOnSuccessListener { blockStoreSynced = true }
+                .addOnFailureListener { e -> Log.w(TAG, "Block Store save failed: ${e.message}") }
+        } catch (e: Exception) {
+            Log.w(TAG, "Block Store unavailable: ${e.message}")
+        }
     }
 
     /**

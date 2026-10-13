@@ -109,6 +109,9 @@ function isNetworkError(e) {
 }
 
 const PROVIDER_FETCH_TIMEOUT_MS = 30000;
+// The hosted coach is a provider call with our backend in front of it, so it
+// has to outlast the backend's own 60s upstream deadline plus the hop.
+const HOSTED_CHAT_TIMEOUT_MS = 75000;
 
 // AbortController-based timeout so a hung provider connection fails fast
 // instead of leaving the chat UI waiting forever. The resulting error's
@@ -221,14 +224,18 @@ async function callIntentionHosted({ accessToken, backendUrl, model, system, mes
   if (tools && tools.length) {
     body.tools = tools.map(t => ({ name: t.name, description: t.description, schema: t.schema }));
   }
-  const res = await fetch(`${base}/v1/chat`, {
+  // Bounded like the BYOK calls, but longer: the backend gives its own upstream
+  // call 60s (server/src/llm.js), and cutting the page off first would bill a
+  // reply nobody waited for. Without any deadline a stalled connection left the
+  // gate spinning on "thinking" forever with no error to retry from.
+  const res = await fetchWithTimeout(`${base}/v1/chat`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'authorization': `Bearer ${accessToken}`
     },
     body: JSON.stringify(body)
-  });
+  }, HOSTED_CHAT_TIMEOUT_MS);
   let data = null;
   try { data = await res.json(); } catch (e) {}
   if (!res.ok) {
@@ -394,10 +401,13 @@ async function callGemini({ apiKey, model, system, messages, tools }) {
       }))
     }];
   }
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  // The key goes in Google's x-goog-api-key header, not the `?key=` query
+  // parameter the docs lead with: a URL ends up in proxy and network logs that a
+  // header doesn't, and it is the user's own billable key.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const res = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(body)
   });
   if (!res.ok) await throwHttpError(res, 'Gemini');
