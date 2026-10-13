@@ -72,7 +72,8 @@
       "data_collection_permissions": {
         "required": [
           "browsingActivity",
-          "personalCommunications"
+          "personalCommunications",
+          "websiteContent"
         ]
       }
     },

@@ -1,4 +1,21 @@
 const INT_LOG = '[Intention]';
+
+// coaching.html has to be web-accessible (it is where a blocked site is
+// redirected to), and that also means any page can put it in an iframe. A
+// framed gate is a clickjacking surface: an invisible "Close tab" or opens
+// button under someone else's cursor spends a pass or closes a tab they never
+// meant to, and the duplicate check below would focus other tabs on a
+// stranger's behalf. A real gate is always a whole tab — the extensions
+// redirect the tab itself, and the Android/iOS apps load this page top-level in
+// their own WebView, where window.top is the page — so a framed copy has no
+// legitimate use. Blank it and stop: throwing ends this script before a single
+// message is sent to the background. Comparing window.top is allowed across
+// origins; only reading its properties is not.
+if (window.top !== window.self) {
+  document.documentElement.innerHTML = '';
+  throw new Error('Intention: the gate will not run inside a frame.');
+}
+
 console.log(INT_LOG, 'coaching.js loaded');
 
 // Parse domain from query parameter. On Android, the coaching overlay is also
@@ -167,10 +184,35 @@ async function showPaywall() {
     chrome.runtime.sendMessage({ action: 'saveEntitlement', entitlement }, resolve);
   });
 
+  // The merge counterpart of `persist`, for the failure path below.
+  const patch = (entitlement) => new Promise(resolve => {
+    chrome.runtime.sendMessage({ action: 'mergeEntitlement', entitlement }, resolve);
+  });
+
   const afterUnlock = async (entitlement) => {
     await persist(entitlement);
     // Back to a working gate: reload so the coach opens with a clean history.
     window.location.reload();
+  };
+
+  // By the time the store answers 'purchased' the money is taken and the
+  // native side has already credited and consumed the purchase, so the receipt
+  // in hand is the only proof left. These used to call verifyPurchase bare: a
+  // backend that was down or slow threw, nothing was saved, and a paying user
+  // stayed locked out until the 24-hour recovery check happened to find the
+  // balance. Now a failed verify keeps the receipt as pending — merged over
+  // whatever is stored, the same as options-access.js's verifyAndStore — and
+  // the next access check in Settings retries it.
+  const verifyAndUnlock = async (result) => {
+    const platform = result.platform || (window.intentionApps ? 'google' : 'apple');
+    let entitlement;
+    try {
+      entitlement = await verifyPurchase({ platform, receipt: result.receipt, backendUrl: config?.backendUrl });
+    } catch (e) {
+      await patch(pendingReceiptPatch(platform, result.receipt, e));
+      throw new Error(PENDING_VERIFICATION_MESSAGE);
+    }
+    await afterUnlock(entitlement);
   };
 
   await renderPaywall(paywallEl, {
@@ -179,23 +221,19 @@ async function showPaywall() {
     onPurchase: async (productId) => {
       const result = await purchaseProduct(productId);
       if (!result || result.status === 'cancelled') return;
+      // Ask-to-Buy and Play's slow payment methods answer 'pending': nothing
+      // has failed, it is waiting on someone else. Reporting that as "didn't
+      // complete" sent people back to buy it a second time.
+      if (result.status === 'pending') {
+        throw new Error('Your purchase is pending approval. It will unlock automatically once approved.');
+      }
       if (result.status !== 'purchased') throw new Error(result.error || "The purchase didn't complete.");
-      const entitlement = await verifyPurchase({
-        platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
-        receipt: result.receipt,
-        backendUrl: config?.backendUrl
-      });
-      await afterUnlock(entitlement);
+      await verifyAndUnlock(result);
     },
     onRestore: async () => {
       const result = await restorePurchases();
       if (!result || !result.receipt) throw new Error(result?.error || 'No pending purchase found.');
-      const entitlement = await verifyPurchase({
-        platform: result.platform || (window.intentionApps ? 'google' : 'apple'),
-        receipt: result.receipt,
-        backendUrl: config?.backendUrl
-      });
-      await afterUnlock(entitlement);
+      await verifyAndUnlock(result);
     }
     // Deliberately no onRedeemStoreCode here. This paywall is always compact
     // (see above), and renderPaywall only offers the store's redemption sheet

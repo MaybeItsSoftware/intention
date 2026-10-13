@@ -1343,3 +1343,48 @@ describe('the part and page-scope verdicts live in exactly one file', () => {
     expect(html).toMatch(/<script src="parts\.js"><\/script>[\s\S]*<script src="sites\.js">/);
   });
 });
+
+// A fully-qualified hostname — `www.youtube.com.`, trailing dot and all — is
+// the same site to the browser and a different string to every `===` and
+// `endsWith` there is. Every matcher that decides "is this host blocked?"
+// goes through these, so one normaliser closes the bypass everywhere.
+describe('host matching', () => {
+  it('reads a trailing dot and upper case as the same host', () => {
+    expect(P.normalizeHost('WWW.YouTube.com.')).toBe('www.youtube.com');
+    expect(P.normalizeHost('youtube.com..')).toBe('youtube.com');
+    expect(P.hostOnDomain('www.youtube.com.', 'youtube.com')).toBe(true);
+    expect(P.hostOnDomain('youtube.com.', 'youtube.com')).toBe(true);
+    expect(P.hostOnDomain('notyoutube.com', 'youtube.com')).toBe(false);
+    expect(P.hostOnDomain('', 'youtube.com')).toBe(false);
+    expect(P.hostOnDomain('youtube.com', '')).toBe(false);
+  });
+
+  it('answers with the most specific blocked domain, whatever the list order', () => {
+    const list = ['google.com', 'mail.google.com'];
+    expect(P.matchBlockedDomain('inbox.mail.google.com.', list)).toBe('mail.google.com');
+    expect(P.matchBlockedDomain('inbox.mail.google.com', [...list].reverse())).toBe('mail.google.com');
+    expect(P.matchBlockedDomain('www.google.com', list)).toBe('google.com');
+    expect(P.matchBlockedDomain('example.com', list)).toBe(null);
+    expect(P.matchBlockedDomain('example.com', undefined)).toBe(null);
+  });
+});
+
+describe('a pass whose start is ahead of the clock', () => {
+  it('is read as a clock put back, beyond a small sync tolerance', () => {
+    const now = 1_000_000_000_000;
+    expect(P.passStartedInFuture({ startTime: now + 60 * 60000 }, now)).toBe(true);
+    expect(P.passStartedInFuture({ startTime: now + 1000 }, now)).toBe(false);
+    expect(P.passStartedInFuture({ startTime: now - 60000 }, now)).toBe(false);
+    expect(P.passStartedInFuture({}, now)).toBe(false);
+  });
+
+  // Ten minutes into a pass, clock set back eight: the start is still in the
+  // past, but the pass was already seen alive at a time the clock now hasn't
+  // reached.
+  it('is read the same way when only its last sighting is ahead', () => {
+    const now = 1_000_000_000_000;
+    expect(P.passStartedInFuture({ startTime: now - 2 * 60000, seenAt: now + 8 * 60000 }, now)).toBe(true);
+    expect(P.passStartedInFuture({ startTime: now - 2 * 60000, seenAt: now + 1000 }, now)).toBe(false);
+    expect(P.passStartedInFuture({ startTime: now - 2 * 60000, seenAt: now - 60000 }, now)).toBe(false);
+  });
+});

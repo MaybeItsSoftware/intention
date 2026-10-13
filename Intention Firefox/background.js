@@ -100,9 +100,10 @@ if (typeof chrome !== 'undefined' && chrome.webNavigation?.onBeforeNavigate) {
   }
 }
 
-// Safari gets no declarativeNetRequest safety net: domainsNeedingRedirect()
+// Safari gets no declarativeNetRequest redirect: domainsNeedingRedirect()
 // returns nothing there, because WebKit's DNR engine cannot complete a load to
-// the gate page (see the note on it). So on Safari the content script's overlay
+// the gate page (see the note on it). Only the sub_frame blocks are installed
+// (see applyBlockingRules). So on Safari the content script's overlay
 // is the only thing standing between a blocked site and a full page of it, and
 // every way that overlay can fail to appear — the script was never injected,
 // the check errored, storage was unreadable — fails open, silently, for the
@@ -147,8 +148,30 @@ async function enforceGateBackstop(tabId, url) {
   // to coach with. The content script's own setup-needed notice is the right
   // answer there, not a navigation.
   if (!setupComplete) return;
-  const matchedDomain = blockedDomains.find(d => hostMatchesDomain(host, d)) || null;
+  const matchedDomain = matchBlockedDomain(host, blockedDomains);
   if (!matchedDomain) return;
+  // Where the tab is NOW, which is not always where it committed. A
+  // single-page app rewrites the address with pushState inside the grace
+  // period as a matter of course — YouTube settles its watch URL, Instagram
+  // appends a query — and no commit follows to re-arm this timer. Comparing
+  // the two addresses for equality read every one of those as "the tab moved
+  // on" and stood the backstop down on exactly the sites it exists for.
+  //
+  // So the question is whether the tab is still on the SAME BLOCKED SITE, and
+  // everything after this is asked about the address it is actually on: a
+  // part rule or a page-scoped pass may answer differently for the page the
+  // SPA moved to than for the one it committed. A real navigation away commits
+  // and cancels this timer (onCommitted above), so a host on another site is
+  // only reachable here through a tab that has not caught up yet — left alone.
+  let currentUrl = url;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || !tab.url) return;
+    if (!hostMatchesDomain(new URL(tab.url).hostname, matchedDomain)) return;
+    currentUrl = tab.url;
+  } catch (e) {
+    return;
+  }
   // A part rule can mean this address is not blocked at all — "only Reels on
   // instagram.com" leaves every other page of the site open, and an open page
   // never calls markHandled() because there is nothing to handle.
@@ -163,7 +186,7 @@ async function enforceGateBackstop(tabId, url) {
   // allowed channel's video on YouTube is only known to be open once its
   // channel has been looked up — and the content script, which asked the same
   // question through checkPageMatch, rendered nothing on the strength of it.
-  if (!(await resolvePageVerdict(limitEntryFor(matchedDomain, { domainLimits }), url)).gated) return;
+  if (!(await resolvePageVerdict(limitEntryFor(matchedDomain, { domainLimits }), currentUrl)).gated) return;
   // A live pass stands the backstop down — but only for the page it actually
   // covers. On Safari this is the second line of defence and there is no DNR
   // behind it, so a scoped pass whose page the tab has since left has to leave
@@ -171,16 +194,8 @@ async function enforceGateBackstop(tabId, url) {
   // one where the overlay is the only enforcement there is.
   // sessionCoversUrl returns true for any session with no scope, which is
   // every pass granted before this existed and every site pass since.
-  const session = readSession(activeSessions, tabId, matchedDomain, { url });
-  if (session && sessionCoversUrl(session, url)) return;
-  // The tab may have moved on during the grace period — only act if it is
-  // still sitting on the page this was scheduled for.
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab || tab.url !== url) return;
-  } catch (e) {
-    return;
-  }
+  const session = readSession(activeSessions, tabId, matchedDomain, { url: currentUrl });
+  if (session && sessionCoversUrl(session, currentUrl)) return;
   console.warn(INT_LOG, 'gate backstop firing for', matchedDomain, '- the page never reported an overlay');
   await chrome.tabs.update(tabId, {
     url: chrome.runtime.getURL(`coaching.html?domain=${encodeURIComponent(matchedDomain)}`)
@@ -543,6 +558,13 @@ async function interruptSessionTabs(session, ownerTabId) {
 function activeSession(session) {
   if (!session || session.endedAt) return null;
   const now = Date.now();
+  // A clock put back to before the pass began, or to before the last moment
+  // it was seen live (passStartedInFuture in parts.js, seenAt below). Not an
+  // in-memory monotonic anchor: an MV3 worker is gone after thirty idle
+  // seconds, so one rarely outlives the pass it was meant to police. Not a
+  // global high-water mark on Date.now() either — that would charge the
+  // rollback to every pass granted after it. The mark lives on the pass.
+  if (passStartedInFuture(session, now)) return null;
   return sessionElapsedMs(session, now) < Number(session.intervalMinutes) * 60000 &&
     !leftTooLong(session, now) &&
     (!session.wallExpiresAt || now < Number(session.wallExpiresAt)) ? session : null;
@@ -555,6 +577,28 @@ function activeSession(session) {
 // sheet, the screen going off for a moment, our own coach. Mirrored in
 // PassClock.LEAVE_GRACE_MS on the Android side; keep the two equal.
 const LEAVE_GRACE_MS = 60 * 1000;
+
+// Record that this pass was seen live now, for passStartedInFuture. At most
+// once a minute per pass — it runs on every gated page load — and never
+// awaited: the content script is waiting on the gate decision, not on this.
+// The rollback it can then catch is anything past the last stamp, so a pass
+// that is in use (pages loading on it) is covered to within a minute.
+const SESSION_SEEN_STAMP_MS = 60 * 1000;
+function stampSessionSeen(activeSessions, session, now = Date.now()) {
+  if (!session) return;
+  const last = Math.max(Number(session.startTime) || 0, Number(session.seenAt) || 0);
+  if (now - last < SESSION_SEEN_STAMP_MS) return;
+  const key = Object.keys(activeSessions).find(k => activeSessions[k] === session);
+  if (!key) return;
+  mutateStorage('activeSessions', all => {
+    const current = all[key];
+    // Only the pass that was read: a re-grant under the same key since then
+    // is a different pass with its own clock.
+    if (current && current.startTime === session.startTime) {
+      current.seenAt = Math.max(Number(current.seenAt) || 0, now);
+    }
+  }).catch(() => {});
+}
 
 function leftTooLong(session, now = Date.now()) {
   return !!session.pausedAt && now - Number(session.pausedAt) >= LEAVE_GRACE_MS;
@@ -631,6 +675,14 @@ async function domainsNeedingRedirect() {
   // Safari gates from the content script's overlay instead, as it did while
   // these rules were still malformed enough for WebKit to throw them out.
   if (hasNativeMessaging()) return [];
+  return domainsGatedByRules();
+}
+
+// The blocked domains a whole-domain rule may speak for right now: not on a
+// live site pass, and not sectioned by a part rule. domainsNeedingRedirect()
+// is this, except on Safari, where the redirect itself can't be used but the
+// sub_frame `block` rules beside it can (see applyBlockingRules).
+async function domainsGatedByRules() {
   const { blockedDomains = [], activeSessions = {}, domainLimits = {} } = await getStorage(['blockedDomains', 'activeSessions', 'domainLimits']);
   // `!s.scope` is what keeps a scoped pass's domain redirect alive — but only
   // where the narrowed allow rule can actually beat it. See
@@ -720,6 +772,66 @@ function allowOutranksRedirect() {
   }
 }
 
+// The dynamic rules one blocked domain needs, numbered from `baseId`.
+//
+// FOUR rules, not one, and each pair exists because the single rule this used
+// to be had a way round it:
+//
+//   * The FQDN twin. `www.youtube.com./` is the same site spelled with its
+//     trailing root dot, and urlFilter's `^` is a separator that `.` is not —
+//     so `||youtube.com^` never sees it, and one extra character in the
+//     address bar loaded the site with no redirect at all. `||youtube.com.^`
+//     catches exactly that spelling. A second filter rather than
+//     `requestDomains`, which would cover both at once, because whether an
+//     engine strips the dot before comparing a request domain is not written
+//     down anywhere for Chromium or Firefox, and a rule that silently fails to
+//     match is the failure this is fixing. urlFilter's behaviour on a literal
+//     `.` is the same everywhere.
+//   * The sub_frame block. Every rule here used to say main_frame only, and
+//     the content script runs top-frame only (all_frames: false), so any page
+//     on the web could put the blocked site in an <iframe> and play it with
+//     no gate at all. A frame is BLOCKED rather than redirected: the gate
+//     inside somebody else's page is not a conversation anyone can have.
+//     `excludedInitiatorDomains` keeps the site's own frames working — a
+//     frame the site itself loads can only exist once its top-level page was
+//     allowed through (a pass, or a part rule leaving it open), and YouTube's
+//     live chat or Reddit's embeds failing inside a granted page would read as
+//     the pass being broken.
+//
+// The sub_frame rules ride the same list as the redirect, so a live site pass
+// (which takes the domain out of domainsNeedingRedirect) lifts them too, and
+// a page-scoped pass where the redirect stays up keeps them — an embed of the
+// granted video elsewhere on the web is still not the page they asked for.
+// On Safari only the sub_frame pair is installed. The redirect is what WebKit
+// can't complete (see domainsNeedingRedirect); a `block` never loads the gate
+// page, so it doesn't share that failure, and without it an embedded blocked
+// site is ungated there — the content script does not run in frames. If
+// WebKit refuses one (excludedInitiatorDomains is the field most likely to be
+// unsupported), the one-at-a-time retry below drops just that rule, which
+// leaves Safari exactly where it was before.
+const RULES_PER_DOMAIN = 4;
+function blockingRulesFor(domain, baseId) {
+  const redirect = {
+    type: 'redirect',
+    redirect: { extensionPath: `/coaching.html?domain=${encodeURIComponent(domain)}` }
+  };
+  const filters = [`||${domain}^`, `||${domain}.^`];
+  return [
+    ...filters.map((urlFilter, i) => ({
+      id: baseId + i,
+      priority: 1,
+      action: redirect,
+      condition: { urlFilter, resourceTypes: ['main_frame'] }
+    })),
+    ...filters.map((urlFilter, i) => ({
+      id: baseId + filters.length + i,
+      priority: 1,
+      action: { type: 'block' },
+      condition: { urlFilter, resourceTypes: ['sub_frame'], excludedInitiatorDomains: [domain] }
+    }))
+  ];
+}
+
 // Rule updates are read-modify-write against the browser's rule store, and
 // several things can ask for one at once (a grant, a tab closing, a visit to a
 // blocked domain). Run them one at a time so a sync can't read a rule set
@@ -733,27 +845,14 @@ function syncBlockingRules() {
 // Sync DNR rules based on blocked domains setting
 async function applyBlockingRules() {
   try {
-    const blockedDomains = await domainsNeedingRedirect();
+    const framesOnly = hasNativeMessaging();
+    const blockedDomains = framesOnly ? await domainsGatedByRules() : await domainsNeedingRedirect();
     const currentRules = await chrome.declarativeNetRequest.getDynamicRules();
     const removeRuleIds = currentRules.map(r => r.id);
 
-    const addRules = blockedDomains.map((domain, index) => {
-      const ruleId = 1000 + index;
-      return {
-        id: ruleId,
-        priority: 1,
-        action: {
-          type: 'redirect',
-          redirect: {
-            extensionPath: `/coaching.html?domain=${encodeURIComponent(domain)}`
-          }
-        },
-        condition: {
-          urlFilter: `||${domain}^`,
-          resourceTypes: ['main_frame']
-        }
-      };
-    });
+    const addRules = blockedDomains
+      .flatMap((domain, index) => blockingRulesFor(domain, 1000 + index * RULES_PER_DOMAIN))
+      .filter(rule => !framesOnly || rule.action.type === 'block');
 
     // Called on every visit to a blocked domain, so don't rewrite a rule set
     // that already says what it should. Compare where each rule *sends* the
@@ -769,7 +868,7 @@ async function applyBlockingRules() {
     // actually DO can agree on every field this compares, and the difference
     // is then never applied. That failure is silent and it fails open.
     const ruleSummary = rules => rules
-      .map(r => `${r.condition?.urlFilter || ''} [${r.action?.type || ''} p${r.priority == null ? '' : r.priority}] -> ${r.action?.redirect?.extensionPath || r.action?.redirect?.url || ''}`)
+      .map(r => `${r.condition?.urlFilter || ''} ${(r.condition?.resourceTypes || []).join(',')} !${(r.condition?.excludedInitiatorDomains || []).join(',')} [${r.action?.type || ''} p${r.priority == null ? '' : r.priority}] -> ${r.action?.redirect?.extensionPath || r.action?.redirect?.url || ''}`)
       .sort()
       .join('\n');
     if (ruleSummary(currentRules) === ruleSummary(addRules)) return;
@@ -853,7 +952,7 @@ async function registerSessionRule(tabId, session) {
       ? dnrUrlFilterFor(session.scope.url)
       : '';
     const urlFilter = scopedFilter || `||${domain}^`;
-    const ruleId = tabId;
+    const ruleId = await sessionRuleIdFor(tabId, domain);
     const addRules = [{
       id: ruleId,
       priority: 2,
@@ -878,15 +977,101 @@ async function registerSessionRule(tabId, session) {
   }
 }
 
-async function removeSessionRule(tabId) {
+// One domain's allow rule in this tab, or — with no domain — every allow rule
+// the tab holds (it is closing, or nothing on it is live any more).
+async function removeSessionRule(tabId, domain) {
   try {
-    await chrome.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [tabId]
-    });
-    console.log(INT_LOG, 'Removed session allow rule for tab', tabId);
+    const removeRuleIds = await releaseSessionRuleIds(tabId, domain);
+    if (!removeRuleIds.length) return;
+    await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+    console.log(INT_LOG, 'Removed session allow rule for tab', tabId, domain || '(all)');
   } catch (e) {
     console.error(INT_LOG, 'Error removing session rule:', e);
   }
+}
+
+// Which session rule id belongs to which (tab, domain).
+//
+// The id used to BE the tab id, one rule per tab. But a tab can hold a pass on
+// two blocked sites at once, and the second grant's rule replaced the first's
+// under the same id — the first pass's site then hit its redirect on the next
+// load while its badge still said it was open. Each (tab, domain) gets its
+// own id now, allocated from SESSION_RULE_ID_BASE up and remembered in the
+// same store tabNavContext uses, because the rules outlive a suspended worker
+// and the next one has to know which id to take down. chrome.storage.session
+// has exactly a session rule's lifetime; on the old-Safari .local fallback a
+// stale entry names a rule the browser already dropped, and removing a rule
+// that does not exist is a no-op.
+//
+// The base sits far above both the dynamic redirect ids (1000 + 4 per blocked
+// domain) and any tab id a browser hands out in practice, so nothing the old
+// scheme registered can be mistaken for one of these. (Session rules do not
+// survive an extension update, so there are none of those left to collide
+// with anyway.)
+const SESSION_RULE_ID_BASE = 1000000;
+let sessionRuleIdState = null;
+let sessionRuleIdQueue = Promise.resolve();
+
+function withSessionRuleIds(fn) {
+  const run = sessionRuleIdQueue.then(async () => {
+    if (!sessionRuleIdState) {
+      const stored = navStore ? await new Promise((resolve) => {
+        try {
+          navStore.get(['sessionRuleIds'], (result) => {
+            void chrome.runtime.lastError;
+            resolve(result?.sessionRuleIds || null);
+          });
+        } catch (e) {
+          resolve(null);
+        }
+      }) : null;
+      sessionRuleIdState = {
+        next: Number(stored?.next) >= SESSION_RULE_ID_BASE ? Number(stored.next) : SESSION_RULE_ID_BASE,
+        ids: stored && typeof stored.ids === 'object' && stored.ids ? { ...stored.ids } : {}
+      };
+    }
+    const result = fn(sessionRuleIdState);
+    if (navStore) {
+      try {
+        navStore.set({ sessionRuleIds: sessionRuleIdState }, () => { void chrome.runtime.lastError; });
+      } catch (e) {}
+    }
+    return result;
+  });
+  sessionRuleIdQueue = run.catch(() => {});
+  return run;
+}
+
+const sessionRuleSlot = (tabId, domain) => `${tabId}|${domain}`;
+
+function sessionRuleIdFor(tabId, domain) {
+  return withSessionRuleIds((state) => {
+    const slot = sessionRuleSlot(tabId, domain);
+    if (!state.ids[slot]) state.ids[slot] = state.next++;
+    return state.ids[slot];
+  });
+}
+
+// The ids to remove, forgotten as they are handed back.
+function releaseSessionRuleIds(tabId, domain) {
+  return withSessionRuleIds((state) => {
+    const slots = domain != null
+      ? [sessionRuleSlot(tabId, domain)]
+      : Object.keys(state.ids).filter(slot => slot.startsWith(`${tabId}|`));
+    const ids = [];
+    for (const slot of slots) {
+      if (state.ids[slot]) ids.push(state.ids[slot]);
+      delete state.ids[slot];
+    }
+    return ids;
+  });
+}
+
+// The domains this tab currently holds an allow rule for.
+function sessionRuleDomainsForTab(tabId) {
+  return withSessionRuleIds(state => Object.keys(state.ids)
+    .filter(slot => slot.startsWith(`${tabId}|`))
+    .map(slot => slot.slice(`${tabId}|`.length)));
 }
 
 // A farewell page, not a hook. Chrome/Firefox open this AFTER we are already
@@ -965,9 +1150,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
-  // Expiration of session time -> remove DNR allow rule for this tab, and put
-  // back the domain redirect rule the grant dropped.
-  removeSessionRule(tabId);
+  // Expiration of session time -> remove the DNR allow rule this pass held,
+  // and put back the domain redirect rule the grant dropped. Through
+  // settleTabRule rather than a bare remove: the tab may hold a pass on
+  // another blocked site that is still running, and its rule must survive
+  // this one ending.
+  await settleTabRule(tabId);
   await syncBlockingRules();
 
   // WHETHER THE CHECK-IN ACTUALLY WENT UP, not whether the message arrived.
@@ -1140,8 +1328,11 @@ function senderPageHost(sender) {
   }
 }
 
+// Through parts.js's normaliser, so `www.youtube.com.` — the trailing-dot
+// spelling the browser loads as the same site — is on youtube.com here too.
+// See normalizeHost for why the raw comparison this used to be was a bypass.
 function hostMatchesDomain(host, domain) {
-  return !!host && !!domain && (host === domain || host.endsWith('.' + domain));
+  return hostOnDomain(host, domain);
 }
 
 // Where a conversation's transcript lives.
@@ -1237,8 +1428,18 @@ async function handleMessage(message, sender) {
       if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
       return saveSettings(message.config);
     case 'getAccess': return getAccess(sender);
-    case 'saveEntitlement': return saveEntitlement(message.entitlement);
-    case 'mergeEntitlement': return mergeEntitlement(message.entitlement);
+    // The entitlement writers likewise. The stored object carries the bearer
+    // token that spends the coaching balance, and a page able to write it could
+    // swap in a token of its own choosing or blank the user's out — the read
+    // side (getConfig, getAccess) was already closed to content senders, and
+    // a write is not the lesser of the two. The settings page and the native
+    // hosts, which are the only legitimate writers, are untouched.
+    case 'saveEntitlement':
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      return saveEntitlement(message.entitlement);
+    case 'mergeEntitlement':
+      if (senderTrust(sender) === 'content') return { error: 'Not allowed from a web page' };
+      return mergeEntitlement(message.entitlement);
     case 'getSession': {
       if (!message.domain) return { session: null };
       const { activeSessions = {} } = await getStorage(['activeSessions']);
@@ -1395,7 +1596,7 @@ async function handleMessage(message, sender) {
       if (!recorded || !message.domain) return { url: '' };
       try {
         const host = new URL(recorded).hostname;
-        if (host === message.domain || host.endsWith('.' + message.domain)) {
+        if (hostMatchesDomain(host, message.domain)) {
           return { url: recorded };
         }
       } catch (e) {}
@@ -1506,7 +1707,7 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   await syncConfigFromNative();
   const stored = await getStorage(['blockedDomains', 'setupComplete', 'activeSessions', 'domainLimits']);
   const { blockedDomains = [], setupComplete = false, activeSessions = {} } = stored;
-  const matchedDomain = blockedDomains.find(d => host === d || host.endsWith('.' + d)) || null;
+  const matchedDomain = matchBlockedDomain(host, blockedDomains);
   // This is the one moment the page is still intact — the gate has not yet
   // emptied it — so bank what the content script saw before it goes. Only for
   // a blocked page: this is material for the coach, not a browsing log, and
@@ -1517,13 +1718,32 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   // recordCandidateVisit). Never awaited — the content script is waiting on
   // this reply to decide whether to gate, and a tally is not worth a frame of
   // that. Anything not in COMMON_SITES falls straight back out.
-  if (!matchedDomain) recordCandidateVisit(host).catch(() => {});
+  //
+  // And then nothing else: this runs on every page load on the web, and an
+  // unblocked host has no session, no part rule, no intention and no gate for
+  // an access route to colour. Everything below is a storage read (or several)
+  // whose answer the content script throws away on `!isBlocked`, so the common
+  // case answers here instead of paying for them.
+  if (!matchedDomain) {
+    recordCandidateVisit(normalizeHost(host)).catch(() => {});
+    return {
+      isBlocked: false,
+      matchedDomain: null,
+      partId: null,
+      partRule: null,
+      setupComplete: !!setupComplete,
+      accessRoute: null,
+      session: null,
+      intention: null
+    };
+  }
   // readSession also covers the target-only key, the fallback for a pass
   // granted where no tab id was available (the coaching page on Safari, or a
   // native port). Without it the grant is invisible here and the page gates
   // again straight away.
   const pageUrl = url || (pageContext && typeof pageContext.url === 'string' ? pageContext.url : '');
   const session = readSession(activeSessions, tabId, matchedDomain, { url: pageUrl });
+  stampSessionSeen(activeSessions, session);
   await adoptPagePass(activeSessions, tabId, session);
   // Whether that pass covers the page actually being loaded. Always true for a
   // session with no scope, so this changes nothing for a site pass. The
@@ -1552,9 +1772,9 @@ async function checkPageMatch(host, tabId, pageContext, url) {
   // situation from the rule set's point of view: this page has to gate, so the
   // rule has to be there. Not awaited: the content script is holding this
   // page's gate decision open, and the rule only matters from the next load on.
-  if (matchedDomain && (!session || !covered)) syncBlockingRules();
+  if (!session || !covered) syncBlockingRules();
   const access = await resolveAIRoute();
-  const intention = matchedDomain ? await getIntention(matchedDomain) : null;
+  const intention = await getIntention(matchedDomain);
   return {
     // `matchedDomain` still says the host is on the blocklist; `isBlocked` now
     // says whether THIS address on it is gated. They come apart exactly when a
@@ -2606,6 +2826,10 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   if (!historyKey) return { error: 'No history context' };
   const { chatHistories = {} } = await getStorage(['chatHistories']);
   const history = chatHistories[historyKey] || [];
+  // Where this turn's own entries start. Everything before it is a snapshot
+  // that will be seconds stale by the time it is written back — see the
+  // persistence step at the end.
+  const priorLength = history.length;
 
   let systemPrompt = '';
   let tools = [];
@@ -3012,13 +3236,22 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
   // the copy of chatHistories read before it would drop any other
   // conversation's turns committed in the meantime.
   //
+  // That includes THIS conversation's. The transcript is per (site, day), not
+  // per tab, so two tabs on the same site share one — and the snapshot taken
+  // before the LLM call knows nothing of a turn the other tab committed while
+  // this one waited. Writing the snapshot back overwrote that turn. So only
+  // what this call added is appended, onto whatever the key holds now; the
+  // model saw the older snapshot, which costs it one turn of context, not the
+  // user one turn of transcript.
+  //
   // This is best-effort: the LLM has already replied and any grant/setting
   // change above already landed, so a storage hiccup here should not turn
   // into an error response — it would just make this turn missing from
   // history on next open, not undo anything the user was told happened.
   try {
     await mutateStorage('chatHistories', (histories) => {
-      histories[historyKey] = history.slice(-40);
+      const current = Array.isArray(histories[historyKey]) ? histories[historyKey] : [];
+      histories[historyKey] = current.concat(history.slice(priorLength)).slice(-40);
       pruneStaleTranscripts(histories);
     });
   } catch (e) {
@@ -3676,25 +3909,24 @@ async function retireSessionKey(sessionKey, outcome) {
   chrome.alarms.clear(`checkin-${sessionKey}`);
 }
 
-// The DNR allow rule is keyed by tab id alone (one rule per tab), but a tab can
-// hold a live pass on more than one blocked site. So ending one session must
-// not strip the rule out from under another that is still running — hand the
-// rule to whichever session is still live instead of removing it.
+// Brings a tab's DNR allow rules into line with the passes it still holds.
+// Each (tab, domain) has its own rule (sessionRuleIdFor), so ending one pass
+// takes down that pass's rule and leaves another blocked site's running pass
+// in the same tab exactly as it was. The survivors are re-registered rather
+// than merely left alone: re-registering is idempotent, and it means a rule
+// that somehow went missing comes back as the session's own — narrow for a
+// page-scoped pass — rather than staying gone.
 async function settleTabRule(tabId) {
   if (tabId == null) return;
   const { activeSessions = {} } = await getStorage(['activeSessions']);
-  const stillLive = sessionKeysForTab(activeSessions, tabId)
+  const live = sessionKeysForTab(activeSessions, tabId)
     .map(key => activeSession(activeSessions[key]))
-    .find(Boolean);
-  if (stillLive) {
-    // The surviving session's own rule, not just its domain: if what is left
-    // on this tab is a page-scoped pass, the rule that replaces the one being
-    // torn down has to be the narrow one, or ending an unrelated pass would
-    // quietly widen a scoped one to the whole site.
-    await registerSessionRule(tabId, stillLive);
-  } else {
-    removeSessionRule(tabId);
+    .filter(Boolean);
+  const liveDomains = new Set(live.map(session => session.domain));
+  for (const domain of await sessionRuleDomainsForTab(tabId)) {
+    if (!liveDomains.has(domain)) await removeSessionRule(tabId, domain);
   }
+  for (const session of live) await registerSessionRule(tabId, session);
 }
 
 async function endSession({ tabId, domain, reason }) {

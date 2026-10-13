@@ -932,11 +932,18 @@ function loadAccessPage({ userAgent = ANDROID_UA, fetch, entitlement = null, rou
     }
     return { ok: true };
   };
+  const listeners = {};
+  const bridgeCalls = [];
   const win = {
     navigator: { userAgent },
-    addEventListener: () => {}
+    addEventListener: (type, fn) => { listeners[type] = fn; }
   };
-  if (hasBridge) win.intentionBilling = { accountToken: (cb) => cb({ token: accountToken }), products: (cb) => cb({ available: true, products: [] }) };
+  if (hasBridge) {
+    win.intentionBilling = {
+      accountToken: (cb) => { bridgeCalls.push('accountToken'); cb({ token: accountToken }); },
+      products: (cb) => { bridgeCalls.push('products'); cb({ available: true, products: [] }); }
+    };
+  }
   const container = makeNode('div');
   const ctx = loadSource(['providers.js', 'billing.js', 'options-access.js'], {
     fetch: mockFetch,
@@ -950,7 +957,7 @@ function loadAccessPage({ userAgent = ANDROID_UA, fetch, entitlement = null, rou
       HAS_APP_BLOCKING: true
     }
   });
-  return { ctx, fetch: mockFetch, stored, sent, container };
+  return { ctx, fetch: mockFetch, stored, sent, container, listeners, bridgeCalls, win };
 }
 
 describe('the settings page and an unreachable backend', () => {
@@ -971,7 +978,9 @@ describe('the settings page and an unreachable backend', () => {
   it('renders the paywall and returns, offline, so the rest of the page runs', async () => {
     const offline = async () => { throw new TypeError('Failed to fetch'); };
     const { ctx, container } = loadAccessPage({ fetch: offline });
-    await expect(ctx.refreshAccessUI('access-card')).resolves.toBeUndefined();
+    // Resolves to the access state it rendered (onAccessChanged reuses it
+    // rather than asking again) — what matters is that it resolves at all.
+    await expect(ctx.refreshAccessUI('access-card')).resolves.toMatchObject({ route: 'locked' });
     expect(container.children.length).toBeGreaterThan(0);
   });
 
@@ -1152,5 +1161,132 @@ describe('Coach tab access warning', () => {
     const { ctx, status } = page();
     ctx.refreshCoachAccessStatus({ route: 'byok', balanceCredits: 0 });
     expect(status.hidden).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A purchase the backend could not confirm
+// ---------------------------------------------------------------------------
+//
+// By the time verification runs the store has taken the money and the native
+// side has consumed the purchase, so the receipt in hand is the only proof
+// left — and the person buying is very often topping up a balance they already
+// hold.
+describe('a top-up whose verification fails', () => {
+  const HELD = { active: true, source: 'google', token: 'EXISTING-TOKEN', receipt: 'OLD-RECEIPT', balanceCredits: 800 };
+
+  // The write used to be a whole-object save of { active: false, receipt },
+  // which deleted the token and balance of someone who had been coaching a
+  // minute earlier. One backend hiccup on a second purchase locked them out.
+  it('keeps the existing token and balance, and adds the receipt as pending', async () => {
+    const down = makeMockFetch({ status: 503, json: { error: 'down' } });
+    const page = loadAccessPage({ fetch: down, entitlement: { ...HELD }, route: 'hosted' });
+    await expect(page.ctx.verifyAndStore('google', 'NEW-RECEIPT')).rejects.toThrow(/couldn't confirm it yet/);
+    expect(page.sent.some(m => m.action === 'saveEntitlement')).toBe(false);
+    expect(page.stored.entitlement).toMatchObject({
+      token: 'EXISTING-TOKEN', balanceCredits: 800, active: true,
+      receipt: 'NEW-RECEIPT', pendingVerification: true
+    });
+  });
+
+  // ...and the retry must actually spend that receipt. With a token beside it,
+  // /refresh would have answered with the old balance and cleared the flag.
+  it('retries through /verify even though a token is held', async () => {
+    const fetch = makeMockFetch({ active: true, token: 'NEW-TOKEN', balanceCredits: 5800 });
+    const { ctx } = loadBilling({ fetch });
+    const out = await ctx.refreshEntitlement({ ...HELD, receipt: 'NEW-RECEIPT', pendingVerification: true });
+    expect(fetch.calls[0].url).toMatch(/\/v1\/entitlement\/verify$/);
+    expect(JSON.parse(fetch.calls[0].init.body).receipt).toBe('NEW-RECEIPT');
+    expect(out.balanceCredits).toBe(5800);
+    expect(out.pendingVerification).toBe(false);
+  });
+
+  it('builds the same pending patch for both paywalls', () => {
+    const { ctx } = loadBilling({});
+    expect(ctx.pendingReceiptPatch('apple', 'JWS', new Error('boom'))).toEqual({
+      source: 'apple', receipt: 'JWS', pendingVerification: true, lastError: 'boom'
+    });
+  });
+});
+
+describe('returning to the app with a purchase credited in the background', () => {
+  // verifyAndStore throws on a failed verify (having kept the receipt), and
+  // the listener awaited it bare: the refresh that shows and retries the
+  // pending purchase never ran, and the throw surfaced only as an unhandled
+  // rejection from an event listener.
+  it('still refreshes the access card when the verify fails', async () => {
+    const down = makeMockFetch({ status: 503, json: { error: 'down' } });
+    const page = loadAccessPage({ fetch: down });
+    page.ctx.wireAccessRefreshOnReturn('access-card');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(page.listeners['intention-app-active']({ detail: { platform: 'google', receipt: 'R' } }))
+        .resolves.toBeUndefined();
+    } finally {
+      warn.mockRestore();
+    }
+    expect(page.stored.entitlement).toMatchObject({ receipt: 'R', pendingVerification: true });
+    expect(page.container.children.length).toBeGreaterThan(0);
+  });
+});
+
+describe('what one settings render asks the native bridge', () => {
+  // Each render used to ask for the product list once and the account id
+  // twice, and every re-render (each purchase, the wizard's access step on
+  // every back/forward) asked all over again.
+  it('asks for products and the account id once for the life of the page', async () => {
+    const page = loadAccessPage();
+    page.win.intentionBilling.products = (cb) => {
+      page.bridgeCalls.push('products');
+      cb({ available: true, products: [{ id: 'p', title: 'Credit', price: '£1' }] });
+    };
+    await page.ctx.refreshAccessUI('access-card');
+    await page.ctx.refreshAccessUI('access-card');
+    expect(page.bridgeCalls.filter(c => c === 'products')).toHaveLength(1);
+    expect(page.bridgeCalls.filter(c => c === 'accountToken')).toHaveLength(1);
+  });
+
+  // A purchase, restore or redemption can mint or move the account id.
+  it('asks for the account id again after a store hand-off', async () => {
+    const page = loadAccessPage();
+    page.win.intentionBilling.purchase = (id, cb) => cb({ status: 'cancelled' });
+    await page.ctx.storeAccountToken();
+    await page.ctx.storeAccountRestored();
+    expect(page.bridgeCalls.filter(c => c === 'accountToken')).toHaveLength(1);
+    await page.ctx.purchaseProduct('p');
+    await page.ctx.storeAccountToken();
+    expect(page.bridgeCalls.filter(c => c === 'accountToken')).toHaveLength(2);
+  });
+
+  // An unreachable store is asked again next time, not remembered as empty.
+  it('does not keep an empty product list', async () => {
+    const page = loadAccessPage();
+    await page.ctx.fetchStoreProducts();
+    await page.ctx.fetchStoreProducts();
+    expect(page.bridgeCalls.filter(c => c === 'products')).toHaveLength(2);
+  });
+});
+
+describe('backend calls are bounded', () => {
+  // postBackend sits behind "Buy" and "Restore" and behind the paywall
+  // render; with no deadline a backend that accepted the connection and never
+  // answered left both spinning, and the pending-receipt fallback never ran
+  // because nothing threw.
+  it('aborts a verify that never answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const hang = (url, init) => new Promise((_, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; reject(e);
+        });
+      });
+      const { ctx } = loadBilling({ fetch: hang });
+      const pending = ctx.verifyPurchase({ platform: 'apple', receipt: 'jws', backendUrl: 'https://api.test' });
+      const caught = pending.catch(e => e);
+      await vi.advanceTimersByTimeAsync(ctx.PROVIDER_FETCH_TIMEOUT_MS + 1);
+      expect((await caught).code).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

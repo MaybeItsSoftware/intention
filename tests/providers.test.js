@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { loadProviders, makeMockFetch } from './load.js';
 
 const TOOLS = [{
@@ -125,7 +125,10 @@ describe('callGemini', () => {
 
     const { url, init } = fetch.calls[0];
     expect(url).toContain('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent');
-    expect(url).toContain('key=g-key');
+    // In a header, never in the address: a URL lands in proxy and network
+    // logs that a header does not.
+    expect(url).not.toContain('g-key');
+    expect(init.headers['x-goog-api-key']).toBe('g-key');
 
     const body = JSON.parse(init.body);
     expect(body.systemInstruction).toEqual({ parts: [{ text: 'SYS' }] });
@@ -296,6 +299,32 @@ describe('callIntentionHosted', () => {
     const body = JSON.parse(call.init.body);
     expect(body.system).toBe('sys');
     expect(body.tools[0].schema).toEqual({ type: 'object' });
+  });
+
+  // A stalled connection used to leave the gate on "thinking" for good. The
+  // deadline has to outlast the backend's own 60s upstream timeout, or the page
+  // would give up on a reply the user is then billed for.
+  it('gives up on a hosted reply that never comes, after the backend would have', async () => {
+    vi.useFakeTimers();
+    try {
+      const hang = (url, init) => new Promise((_, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const e = new Error('aborted'); e.name = 'AbortError'; reject(e);
+        });
+      });
+      const { ctx } = loadProviders({ fetch: hang });
+      const caught = ctx.callLLM(HOSTED).catch(e => e);
+      expect(ctx.HOSTED_CHAT_TIMEOUT_MS).toBeGreaterThan(60000);
+      await vi.advanceTimersByTimeAsync(60001);
+      let settled = false;
+      caught.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(ctx.HOSTED_CHAT_TIMEOUT_MS);
+      expect((await caught).code).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('honours a backend override and trims its trailing slashes', async () => {

@@ -105,6 +105,7 @@ function showSetupView(mode = 'full') {
     if (section === 'setup-step-intention') renderIntentionStep(targetOf(pageId));
     if (section === 'setup-step-purpose') renderPurposeStep(targetOf(pageId));
     if (section === 'setup-step-done') renderDoneStep();
+    if (section === 'setup-step-access') renderAccessStep();
     // Both of these describe state the user can change from outside this
     // wizard (a Safari toggle, a system permission prompt), so they are re-read
     // on arrival rather than trusted from whenever the page was built.
@@ -217,6 +218,26 @@ function computeStepOrder() {
   if (IS_MAC_APP) order.push('setup-step-mac-login');
   order.push('setup-step-done');
   return order;
+}
+
+// The page about what happens past an intention. Someone who said yes to
+// telling the coach about their services has just set the coach up, so on a
+// build that sells credit they are offered it here — the alternative is
+// finding out on a blocked page, which is the worst moment to buy anything.
+// Buying stays optional: Continue works either way.
+function renderAccessStep() {
+  const offerEl = document.getElementById('setup-access-offer');
+  const how = document.getElementById('setup-access-how');
+  const offer = BILLING_MODE === 'store' && setupWantsReasons === true;
+  // The wrapper is what hides and scrolls: renderPaywall replaces the inner
+  // container's className wholesale.
+  offerEl.hidden = !offer;
+  if (!offer) {
+    if (!BYOK_IS_PRIMARY) how.textContent = 'The coach uses coaching credit. Nothing to buy now, only if you ever need it.';
+    return;
+  }
+  how.textContent = 'The coach runs on coaching credit. Add some now so it\'s ready when you need it, or later from Settings.';
+  refreshAccessUI('setup-access-paywall', { compact: true }).catch(() => {});
 }
 
 // Finishing with an empty blocklist produces an install that does nothing at
@@ -943,6 +964,12 @@ function renderDoneStep() {
 
   document.getElementById('setup-done-note').textContent =
     'Every day you keep all of these adds to your streak. One slip a week is forgiven. Less time takes effect straight away; more waits until tomorrow.';
+  // The last page is where a gap in what was just set up is worth saying: a
+  // private window is not gated unless the browser is told to run Intention
+  // there. Browser builds only; see renderIncognitoNote in options.js.
+  if (typeof renderIncognitoNote === 'function') {
+    renderIncognitoNote('setup-incognito-note').catch(() => {});
+  }
 }
 
 // ---- Page: welcome ---------------------------------------------------------

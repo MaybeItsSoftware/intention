@@ -953,6 +953,9 @@ function coversThisPage(session) {
 // into one that returns true.
 function passIsLive(session) {
   if (!session || session.endedAt) return false;
+  // A clock put back since the grant would otherwise stretch the pass by
+  // however far it went back. Same answer as activeSession's — parts.js.
+  if (typeof passStartedInFuture === "function" && passStartedInFuture(session)) return false;
   return Date.now() < session.startTime + session.intervalMinutes * 60000;
 }
 
@@ -1087,8 +1090,10 @@ async function checkFromStorage(host) {
   if (handled) return;
 
   const blockedDomains = stored.blockedDomains || [];
-  const matched =
-    blockedDomains.find((d) => host === d || host.endsWith("." + d)) || null;
+  // parts.js's matcher, the worker's too: normalised (a trailing-dot
+  // `www.youtube.com.` is youtube.com) and most-specific-first, so the page
+  // and the worker cannot pick different entries for one host.
+  const matched = matchBlockedDomain(host, blockedDomains);
   console.log(INT_LOG, "storage fallback ->", matched || "not blocked");
   if (!matched) return;
 
@@ -1668,17 +1673,46 @@ function ensureBodyAndHush() {
 // overlay, which covers it completely, and take away the one part of it that
 // can still get through — sound. Media is paused and muted the moment it
 // tries to play, including whatever the rest of the load brings in.
+//
+// The document-level listener alone was not enough, because the wipe that
+// follows (ensureBodyAndHush) DETACHES every element it removes rather than
+// destroying it. A site's player keeps its own reference to its <video>, and
+// a detached element can still play — audio and all — while its `play` event
+// no longer passes through the document, so the capture listener never hears
+// it. So every element hushed here also gets a listener of its own, which
+// fires wherever the element now lives. Media created detached and never
+// inserted (`new Audio()` in the page's own world) is out of reach of an
+// isolated-world content script entirely.
+//
+// Nothing removes these. Lifting a gate is always a reload (see the drift
+// screen's way back, and onGranted), which takes the listeners, the elements
+// and this whole script with it — so a release path would only ever run on a
+// page that is about to stop existing.
+let hushedMedia = null;
+
+function hushMedia(media) {
+  if (!media || typeof media.pause !== "function") return;
+  try {
+    media.pause();
+    media.muted = true;
+  } catch (e) {
+    /* not every element that fires play answers to both */
+  }
+  if (hushedMedia.has(media)) return;
+  hushedMedia.add(media);
+  try {
+    media.addEventListener("play", () => hushMedia(media));
+  } catch (e) {}
+}
+
 function hushPage() {
-  const hush = (media) => {
-    try {
-      media.pause();
-      media.muted = true;
-    } catch (e) {
-      /* not every element that fires play answers to both */
-    }
-  };
-  document.addEventListener("play", (event) => hush(event.target), true);
-  document.querySelectorAll("video, audio").forEach(hush);
+  // Once per page: the gate and a later check-in both come through here, and
+  // a second document listener would only hush everything twice.
+  if (!hushedMedia) {
+    hushedMedia = new WeakSet();
+    document.addEventListener("play", (event) => hushMedia(event.target), true);
+  }
+  document.querySelectorAll("video, audio").forEach(hushMedia);
 }
 
 function runWhenBodyExists(callback) {
@@ -2507,7 +2541,7 @@ function checkinAppliesHere(domain) {
   } catch (e) {
     return true;
   }
-  if (domain && !(host === domain || host.endsWith("." + domain))) return false;
+  if (domain && !hostOnDomain(host, domain)) return false;
   const rule = urlWatchReasons.parts || matchedPartRule;
   if (!rule || typeof resolvePartVerdict !== "function") return true;
   try {

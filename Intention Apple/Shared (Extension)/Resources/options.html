@@ -143,6 +143,11 @@
           <li>If something genuinely needs more, you can make your case to the coach.</li>
           <li id="setup-access-how">The coach uses coaching credit. Nothing to buy now, only if you ever need it.</li>
         </ol>
+        <!-- Store builds, and only after a yes to telling the coach what each
+             service is for: someone who has just set the coach up is offered
+             credit for it here rather than discovering it on a blocked page.
+             Filled by renderAccessStep in options-wizard.js. -->
+        <div id="setup-access-offer" class="setup-scroll" hidden><div id="setup-access-paywall"></div></div>
       </section>
 
       <!-- Mac app only. Blocking never depends on the app running — Safari
@@ -166,6 +171,12 @@
         <h3 class="setup-question" id="setup-done-title">Your intentions</h3>
         <ul class="setup-done-list setup-scroll" id="setup-done-list"></ul>
         <p class="setup-lede" id="setup-done-note"></p>
+        <!-- Browser builds whose private windows are not gated; filled by
+             renderIncognitoNote in options.js. -->
+        <div class="incognito-note" id="setup-incognito-note" role="note" hidden>
+          <p>Private windows aren’t covered yet. Your browser runs extensions there only if you allow it.</p>
+          <p data-incognito-how></p>
+        </div>
       </section>
 
       <!-- Above the nav rather than under it: under it, an always-reserved
@@ -356,6 +367,17 @@
                      while leaving the site reachable in Safari is expressible, and
                      our own part rules then do the fine-grained work there. -->
                 <p class="row-info-note" id="ios-apps-parts-note">Parts of an app can’t be blocked on iPhone or iPad. Screen Time blocks a whole app or nothing, and Apple gives Intention no way to see which screen you’re on. If you want Reels blocked but messages open, block the Instagram app here and add instagram.com on the Websites tab. Safari runs Intention’s own rules, which can tell the parts apart.</p>
+              </div>
+            </section>
+
+            <!-- Browser builds whose private windows are not gated; filled by
+                 renderIncognitoNote in options.js. First in Settings because it
+                 is the one thing here that is a hole rather than a preference. -->
+            <section class="card" id="incognito-card" data-section="settings" hidden>
+              <h2>Private windows</h2>
+              <div class="incognito-note" role="note">
+                <p>Sites aren’t gated in private windows. Your browser runs extensions there only if you allow it, so a private window is a way round every intention.</p>
+                <p data-incognito-how></p>
               </div>
             </section>
 

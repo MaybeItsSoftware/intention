@@ -51,14 +51,14 @@ async function verifyAndStore(platform, receipt) {
     await persistEntitlement(entitlement);
     return entitlement;
   } catch (e) {
-    await persistEntitlement({
-      active: false,
-      source: platform,
-      receipt,
-      pendingVerification: true,
-      lastError: String(e.message || e)
-    });
-    throw new Error("Your purchase went through, but we couldn't confirm it yet. It'll be applied automatically. Reopen Settings to retry.");
+    // A patch, not a replacement. This is the top-up of someone who very often
+    // already holds a token and a balance; writing `{ active: false, receipt }`
+    // whole used to delete both, so one backend hiccup during a second purchase
+    // locked out a user who had been coaching happily a minute before. Only the
+    // new receipt and the fact that it still needs confirming are news here —
+    // see pendingReceiptPatch in billing.js, shared with the gate's paywall.
+    await patchEntitlement(pendingReceiptPatch(platform, receipt, e));
+    throw new Error(PENDING_VERIFICATION_MESSAGE);
   }
 }
 
@@ -192,9 +192,12 @@ async function envKeyDefaults() {
   }
 }
 
+// Resolves to the access state it rendered, so a caller about to run
+// onAccessChanged can hand it over instead of asking the background a second
+// time for the answer this has only just read.
 async function refreshAccessUI(containerId, { compact = false, errorCode = null } = {}) {
   const container = document.getElementById(containerId);
-  if (!container) return;
+  if (!container) return null;
   const access = await getAccessState();
   const entitlement = access?.entitlement || null;
   refreshCoachAccessStatus(access, errorCode);
@@ -221,8 +224,7 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
         throw new Error(result.error || "The purchase didn't complete.");
       }
       await verifyAndStore(result.platform || storePlatform(), result.receipt);
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
     },
     onRestore: async () => {
       const result = await restorePurchases();
@@ -230,8 +232,7 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
         throw new Error(result?.error || 'No pending purchase found.');
       }
       await verifyAndStore(result.platform || storePlatform(), result.receipt);
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
     },
     // A store-issued code (App Store promo / Play promo), redeemed through
     // the store's own sheet. This one grants.
@@ -260,8 +261,7 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
         throw new Error(result.error || "That code didn't unlock anything.");
       }
       await verifyAndStore(result.platform || storePlatform(), result.receipt);
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
     },
     // The manual form of the silent check, for the person who has just
     // restored a backup or signed back into their store account and knows more
@@ -281,8 +281,7 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
       if (!entitlementIsActive(recovered)) {
         return 'No credit is attached to this device.';
       }
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
       return null;
     } : null,
     // Only Android's bridge can answer this; Apple's omits it and it stays
@@ -294,13 +293,11 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
     onUseOwnKey: BYOK_IS_OFFERED ? () => openOwnKeyFlow() : null,
     onSaveKey: BYOK_IS_OFFERED && !compact ? async ({ provider, apiKey, model }) => {
       await sendBg({ action: 'saveSettings', config: { provider, apiKey, model } });
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
     } : null,
     onRemoveKey: BYOK_IS_OFFERED && !compact ? async () => {
       await sendBg({ action: 'saveSettings', config: { provider: '', apiKey: '', model: '' } });
-      await rerender();
-      await onAccessChanged();
+      await onAccessChanged(await rerender());
     } : null
   });
 
@@ -316,12 +313,14 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
     reconciled = await reconcileEntitlement(entitlement, access?.route || null);
   } catch (e) {
     console.warn('Intention: could not re-check coaching credit', e);
-    return;
+    return access;
   }
   if (entitlementSignature(reconciled) !== entitlementSignature(entitlement)) {
-    await refreshAccessUI(containerId, { compact });
-    await onAccessChanged();
+    const settled = await refreshAccessUI(containerId, { compact });
+    await onAccessChanged(settled);
+    return settled;
   }
+  return access;
 }
 
 // Whether the platform put this device's account id back, or `undefined` where
@@ -363,19 +362,37 @@ function wireAccessRefreshOnReturn(containerId) {
     // code). Verifying it here is idempotent server-side and is what gives
     // this device the token and balance — without it the credit sat on the
     // backend while the paywall still said there was none.
+    //
+    // A verify that fails must not stop the refresh behind it. verifyAndStore
+    // has already kept the receipt as pending when it throws, and the refresh
+    // is what shows that and retries it; letting the throw escape skipped both
+    // and surfaced only as an unhandled rejection from an event listener.
     const purchase = event?.detail;
     if (purchase?.receipt) {
-      await verifyAndStore(purchase.platform || storePlatform(), purchase.receipt);
+      try {
+        await verifyAndStore(purchase.platform || storePlatform(), purchase.receipt);
+      } catch (e) {
+        console.warn('Intention: could not verify a purchase credited in the background', e);
+      }
     }
-    await refreshAccessUI(containerId);
-    await onAccessChanged();
+    try {
+      // The account id can have been minted or restored while we were away (a
+      // redemption finished in Play, a backup landing); the render asks again.
+      invalidateAccountTokenCache();
+      await onAccessChanged(await refreshAccessUI(containerId));
+    } catch (e) {
+      console.warn('Intention: could not refresh AI access on return', e);
+    }
   });
 }
 
 // Called after any change that can flip the access route, so the settings view
 // stops offering a locked coach (or starts offering an unlocked one).
-async function onAccessChanged() {
-  const access = await getAccessState();
+//
+// `known` is an access state the caller has just read (refreshAccessUI returns
+// the one it rendered); without one, the background is asked.
+async function onAccessChanged(known = null) {
+  const access = known || await getAccessState();
   refreshCoachAccessStatus(access);
   const modal = document.getElementById('paywall-modal');
   if (access?.route !== 'locked' && modal && !modal.hidden) modal.hidden = true;

@@ -1205,8 +1205,10 @@ describe('candidate visit tally', () => {
   it('counts an unblocked candidate site', async () => {
     const { ctx, chrome } = loadBackground({ seed });
     await ctx.checkPageMatch('news.ycombinator.com', 1);
-    await ctx.getCandidateVisits();
-    expect(chrome.storage._store.siteVisits['news.ycombinator.com'].count).toBe(1);
+    // Fire-and-forget on the worker's side (the page is waiting on the
+    // verdict, not the tally), and an unblocked host now answers before any
+    // further storage read could give it time to land — so wait for it.
+    await vi.waitFor(() => expect(chrome.storage._store.siteVisits?.['news.ycombinator.com']?.count).toBe(1));
   });
 
   it('folds a subdomain into its candidate', async () => {
@@ -1468,7 +1470,16 @@ function statefulDnr(chrome) {
     getDynamicRules: async () => structuredClone(dynamic),
     updateDynamicRules: async (update) => { dynamic = apply(dynamic, update); },
     updateSessionRules: async (update) => { session = apply(session, update); },
-    redirectedDomains: () => dynamic.map(r => r.condition.urlFilter).sort(),
+    // One entry per redirected DOMAIN: the bare-host main_frame redirect.
+    // Each domain also carries its trailing-dot twin and two sub_frame blocks
+    // (blockingRulesFor); those have their own tests below, and listing them
+    // here would make every "is this domain redirected?" assertion restate
+    // the whole rule shape.
+    redirectedDomains: () => dynamic
+      .filter(r => r.action.type === 'redirect' && !r.condition.urlFilter.endsWith('.^'))
+      .map(r => r.condition.urlFilter).sort(),
+    dynamicRules: () => structuredClone(dynamic),
+    sessionRules: () => structuredClone(session),
     allowedTabs: () => session.map(r => r.condition.tabIds?.[0]).sort()
   };
   return chrome.declarativeNetRequest;
@@ -1558,6 +1569,39 @@ describe('a runtime whose DNR cannot reach the gate', () => {
     expect(dnr.redirectedDomains()).toEqual([]);
   });
 
+  // The content script doesn't run in frames, so without these an embedded
+  // blocked site is the one place Safari doesn't gate at all. A `block` never
+  // loads the gate page, which is the part WebKit can't do.
+  it('still blocks the site inside other pages\' frames', async () => {
+    const { ctx, chrome } = loadBackground({ seed: seedBlocked, native: true });
+    const dnr = statefulDnr(chrome);
+
+    await ctx.syncBlockingRules();
+
+    const rules = dnr.dynamicRules();
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.every(r => r.action.type === 'block')).toBe(true);
+    expect(rules.every(r => r.condition.resourceTypes.join() === 'sub_frame')).toBe(true);
+    expect(rules.map(r => r.condition.urlFilter).sort()).toEqual(['||instagram.com.^', '||instagram.com^']);
+  });
+
+  it('lifts the frame blocks for a live site pass', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...seedBlocked,
+        activeSessions: {
+          'target:instagram.com': { domain: 'instagram.com', startTime: Date.now(), intervalMinutes: 10 }
+        }
+      },
+      native: true
+    });
+    const dnr = statefulDnr(chrome);
+
+    await ctx.syncBlockingRules();
+
+    expect(dnr.dynamicRules()).toEqual([]);
+  });
+
   it('still gates the page it let through', async () => {
     const { ctx } = loadBackground({ seed: seedBlocked, native: true });
     const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
@@ -1586,8 +1630,9 @@ describe('a rule set that points somewhere wrong', () => {
     await ctx.syncBlockingRules();
 
     const targets = (await chrome.declarativeNetRequest.getDynamicRules())
+      .filter(r => r.action.type === 'redirect')
       .map(r => r.action.redirect.extensionPath);
-    expect(targets).toEqual(['/coaching.html?domain=instagram.com']);
+    expect(targets).toEqual(['/coaching.html?domain=instagram.com', '/coaching.html?domain=instagram.com']);
   });
 });
 
@@ -1928,9 +1973,9 @@ describe('a pass is confined to the site it was earned on', () => {
     );
     await ctx.handleMessage({ action: 'endSession', domain: 'instagram.com' }, tab(42));
 
-    // One rule per tab, so ending one session must re-point the rule at the
-    // survivor rather than removing it and stranding that pass.
-    const forTab = chrome.declarativeNetRequest._sessionRules.filter(r => r.id === 42);
+    // Ending one session must leave the survivor's rule in place rather than
+    // removing the tab's only rule and stranding that pass.
+    const forTab = chrome.declarativeNetRequest._sessionRules.filter(r => r.condition.tabIds?.[0] === 42);
     expect(forTab).toHaveLength(1);
     expect(forTab[0].condition.urlFilter).toContain('reddit.com');
   });
@@ -3339,21 +3384,21 @@ describe('a scoped pass keeps the rest of the site blocked', () => {
   it('notices a rule set that differs only in action type or priority', async () => {
     const { ctx, chrome } = loadBackground({ seed: YT_BLOCKED });
     statefulDnr(chrome);
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      addRules: [{
-        id: 1000,
-        priority: 4,
-        action: { type: 'allow' },
-        condition: { urlFilter: '||youtube.com^', resourceTypes: ['main_frame'] }
-      }]
-    });
+    // The full rule set the domain should have, with ONLY the first rule's
+    // action and priority changed — so nothing else gives the difference away.
+    const seeded = JSON.parse(JSON.stringify(ctx.blockingRulesFor('youtube.com', 1000)));
+    seeded[0].action = { type: 'allow' };
+    seeded[0].priority = 4;
+    await chrome.declarativeNetRequest.updateDynamicRules({ addRules: seeded });
 
     await ctx.syncBlockingRules();
 
     const rules = await chrome.declarativeNetRequest.getDynamicRules();
-    expect(rules).toHaveLength(1);
-    expect(rules[0].action.type).toBe('redirect');
-    expect(rules[0].priority).toBe(1);
+    expect(rules).toHaveLength(4);
+    const main = rules.find(r => r.condition.urlFilter === '||youtube.com^' &&
+      r.condition.resourceTypes.includes('main_frame'));
+    expect(main.action.type).toBe('redirect');
+    expect(main.priority).toBe(1);
   });
 });
 
@@ -5174,5 +5219,294 @@ describe('disable_all and Screen Time', () => {
     await ctx.applySettingChange({ changeType: 'disable_all' });
     expect(chrome.storage._store.screenTimeClearPending).toBe(true);
     expect((await ctx.handleMessage({ action: 'getConfig' }, EXT_PAGE)).screenTimeClearPending).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------
+// Audit fixes: the hostname, frame, rule-id, clock and transcript holes.
+// --------------------------------------------------------------------------
+
+describe('a fully-qualified hostname (trailing dot)', () => {
+  const BLOCKED = { ...CONFIGURED, setupComplete: true, blockedDomains: ['youtube.com'] };
+
+  it('is still on the blocklist for checkPageMatch', async () => {
+    const { ctx } = loadBackground({ seed: BLOCKED });
+    const match = await ctx.handleMessage(
+      { action: 'checkPageMatch', host: 'www.youtube.com.' },
+      { tab: { id: 3 }, url: 'https://www.youtube.com./' }
+    );
+    expect(match.matchedDomain).toBe('youtube.com');
+    expect(match.isBlocked).toBe(true);
+  });
+
+  it('is sent to the gate by the backstop', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    const url = 'https://www.youtube.com./';
+    chrome.tabs._byId[4] = { id: 4, url };
+    await ctx.enforceGateBackstop(4, url);
+    expect(chrome.tabs._updates).toHaveLength(1);
+    expect(chrome.tabs._updates[0].props.url).toContain('coaching.html?domain=youtube.com');
+  });
+
+  // `||youtube.com^` cannot match `youtube.com./`: `^` is a separator and a
+  // dot is not one. So the network layer carries a twin for the FQDN form.
+  it('is caught by its own redirect rule at the network layer', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    const dnr = statefulDnr(chrome);
+    await ctx.syncBlockingRules();
+    const redirects = (await dnr.getDynamicRules())
+      .filter(r => r.action.type === 'redirect')
+      .map(r => r.condition.urlFilter)
+      .sort();
+    expect(redirects).toEqual(['||youtube.com.^', '||youtube.com^']);
+  });
+});
+
+describe('a blocked site loaded in a frame', () => {
+  const BLOCKED = { ...CONFIGURED, setupComplete: true, blockedDomains: ['youtube.com'] };
+  const frameBlocks = async (chrome) => (await chrome.declarativeNetRequest.getDynamicRules())
+    .filter(r => r.condition.resourceTypes.includes('sub_frame'));
+
+  // Redirecting an iframe to the coach would put a gate inside somebody
+  // else's page; a block is the honest answer for a frame.
+  it('is blocked, for both forms of the hostname', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    statefulDnr(chrome);
+    await ctx.syncBlockingRules();
+    const rules = await frameBlocks(chrome);
+    expect(rules.map(r => r.condition.urlFilter).sort()).toEqual(['||youtube.com.^', '||youtube.com^']);
+    for (const rule of rules) {
+      expect(rule.action.type).toBe('block');
+      expect(rule.condition.resourceTypes).toEqual(['sub_frame']);
+      // The site's own frames, which only load once the page itself was let
+      // through (a live page pass), are not ours to break.
+      expect(rule.condition.excludedInitiatorDomains).toEqual(['youtube.com']);
+    }
+  });
+
+  it('is let through while a site pass is running, like the page itself', async () => {
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...BLOCKED,
+        activeSessions: { 'tab:3:youtube.com': { domain: 'youtube.com', startTime: Date.now(), intervalMinutes: 10 } }
+      }
+    });
+    statefulDnr(chrome);
+    await ctx.syncBlockingRules();
+    expect(await frameBlocks(chrome)).toEqual([]);
+  });
+});
+
+describe('the gate backstop after a pushState', () => {
+  const BLOCKED = { setupComplete: true, blockedDomains: ['instagram.com'] };
+
+  // A single-page app moving the address within the grace period used to read
+  // as "the tab moved on", and the backstop stood down on a page that never
+  // put the gate up.
+  it('still fires when the tab is on another page of the same blocked site', async () => {
+    const { ctx, chrome } = loadBackground({ seed: BLOCKED });
+    chrome.tabs._byId[4] = { id: 4, url: 'https://www.instagram.com/reels/' };
+    await ctx.enforceGateBackstop(4, 'https://www.instagram.com/explore/');
+    expect(chrome.tabs._updates).toHaveLength(1);
+    expect(chrome.tabs._updates[0].props.url).toContain('coaching.html?domain=instagram.com');
+  });
+
+  it('judges a page pass against the page the tab is on now', async () => {
+    const VIDEO = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        setupComplete: true,
+        blockedDomains: ['youtube.com'],
+        activeSessions: {
+          'tab:4:youtube.com': {
+            domain: 'youtube.com', startTime: Date.now(), intervalMinutes: 10,
+            scope: { kind: 'page', key: 'youtube:dQw4w9WgXcQ', url: VIDEO }
+          }
+        }
+      }
+    });
+    // Scheduled on the granted video, then pushState'd somewhere else.
+    chrome.tabs._byId[4] = { id: 4, url: 'https://www.youtube.com/shorts/abc' };
+    await ctx.enforceGateBackstop(4, VIDEO);
+    expect(chrome.tabs._updates).toHaveLength(1);
+  });
+});
+
+describe('two blocked sites in one tab', () => {
+  const SEED = { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com', 'reddit.com'] };
+  const rulesForTab = (chrome, id) =>
+    chrome.declarativeNetRequest._sessionRules.filter(r => r.condition.tabIds?.[0] === id);
+
+  it('get an allow rule each, neither overwriting the other', async () => {
+    const { ctx, chrome } = loadBackground({ seed: SEED, fetch: grantingFetch(10) });
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' }, tab(42));
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' }, tab(42, 'reddit.com'));
+    const rules = rulesForTab(chrome, 42);
+    expect(rules.map(r => r.condition.urlFilter).sort()).toEqual(['||instagram.com^', '||reddit.com^']);
+    expect(new Set(rules.map(r => r.id)).size).toBe(2);
+    // Clear of the dynamic rule range and of the old tab-id ids.
+    for (const r of rules) expect(r.id).toBeGreaterThanOrEqual(ctx.SESSION_RULE_ID_BASE);
+  });
+
+  it('keep the survivor rule when the check-in alarm ends the other', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: SEED, fetch: grantingFetch(10) });
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' }, tab(42));
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' }, tab(42, 'reddit.com'));
+    chrome.storage._store.activeSessions['tab:42:instagram.com'].startTime = Date.now() - 30 * 60000;
+
+    await listeners.alarm({ name: 'checkin-tab:42:instagram.com' });
+
+    expect(rulesForTab(chrome, 42).map(r => r.condition.urlFilter)).toEqual(['||reddit.com^']);
+  });
+
+  it('are all swept when the tab closes', async () => {
+    const { ctx, chrome, listeners } = loadBackground({ seed: SEED, fetch: grantingFetch(10) });
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' }, tab(42));
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'reddit.com', userMessage: 'b' }, tab(42, 'reddit.com'));
+    await listeners.tabRemoved(42);
+    expect(rulesForTab(chrome, 42)).toEqual([]);
+  });
+});
+
+describe('overlapping blocklist entries', () => {
+  // The first match used to win, so the broader entry's rules (and pass
+  // bookkeeping) applied to the narrower site whenever it was listed first.
+  it('resolve to the most specific domain', async () => {
+    const { ctx } = loadBackground({
+      seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['google.com', 'mail.google.com'] }
+    });
+    const match = await ctx.handleMessage(
+      { action: 'checkPageMatch', host: 'mail.google.com' },
+      { tab: { id: 3 }, url: 'https://mail.google.com/' }
+    );
+    expect(match.matchedDomain).toBe('mail.google.com');
+  });
+});
+
+describe('a clock put back after a grant', () => {
+  it('ends the pass rather than stretching it', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        // Granted "an hour from now": the clock has since gone back an hour.
+        activeSessions: { 'tab:3:instagram.com': { domain: 'instagram.com', startTime: Date.now() + 60 * 60000, intervalMinutes: 10 } }
+      }
+    });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    expect(match.session).toBe(null);
+    expect(match.isBlocked).toBe(true);
+  });
+
+  it('ends it for a rollback smaller than the time already used', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        // Granted two minutes ago by the clock as it now reads, but already
+        // seen alive eight minutes from "now": the clock went back eight.
+        activeSessions: { 'tab:3:instagram.com': { domain: 'instagram.com', startTime: Date.now() - 2 * 60000, seenAt: Date.now() + 8 * 60000, intervalMinutes: 15 } }
+      }
+    });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    expect(match.session).toBe(null);
+  });
+
+  it('stamps a live pass as seen, at most once a minute', async () => {
+    const start = Date.now() - 5 * 60000;
+    const { ctx, chrome } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        activeSessions: { 'tab:3:instagram.com': { domain: 'instagram.com', startTime: start, intervalMinutes: 15 } }
+      }
+    });
+    await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    await new Promise(r => setTimeout(r, 0));
+    const seen = chrome.storage._store.activeSessions['tab:3:instagram.com'].seenAt;
+    expect(seen).toBeGreaterThan(start);
+
+    await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    await new Promise(r => setTimeout(r, 0));
+    expect(chrome.storage._store.activeSessions['tab:3:instagram.com'].seenAt).toBe(seen);
+  });
+
+  // The mark is the pass's own, so a pass granted after the rollback starts
+  // clean — a global high-water mark would have ended it on the spot.
+  it('does not charge the rollback to a pass granted after it', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        activeSessions: { 'tab:3:instagram.com': { domain: 'instagram.com', startTime: Date.now() - 60000, intervalMinutes: 10 } }
+      }
+    });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    expect(match.session).not.toBe(null);
+  });
+
+  it('leaves a pass alone across a small time-sync correction', async () => {
+    const { ctx } = loadBackground({
+      seed: {
+        ...CONFIGURED,
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        activeSessions: { 'tab:3:instagram.com': { domain: 'instagram.com', startTime: Date.now() + 2000, intervalMinutes: 10 } }
+      }
+    });
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'www.instagram.com' }, tab(3));
+    expect(match.session).not.toBe(null);
+  });
+});
+
+describe('two turns on the same site at once', () => {
+  // Each call read the transcript, waited seconds on the model, then wrote
+  // back the copy it read plus its own turn — so the slower one erased the
+  // faster one's exchange.
+  it('both land in the transcript', async () => {
+    const slowFetch = makeMockFetch(async () => {
+      await new Promise(r => setTimeout(r, 5));
+      return { content: [{ type: 'text', text: 'ok' }] };
+    });
+    const { ctx, chrome } = loadBackground({ seed: CONFIGURED, fetch: slowFetch });
+    await Promise.all([
+      ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'a.com', userMessage: 'one' }, NATIVE),
+      ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'a.com', userMessage: 'two' }, NATIVE)
+    ]);
+    const said = JSON.stringify(chrome.storage._store.chatHistories[transcript('a.com')]);
+    expect(said).toContain('one');
+    expect(said).toContain('two');
+  });
+});
+
+describe('checkPageMatch on a host that is not blocked', () => {
+  // Runs on every page load on the web; the AI route and intention are only
+  // ever used by a gate, so reading them for an open page is pure cost.
+  it('does not read the AI route', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { ...CONFIGURED, setupComplete: true, blockedDomains: ['instagram.com'] } });
+    const read = [];
+    const get = chrome.storage.local.get.bind(chrome.storage.local);
+    chrome.storage.local.get = (keys, cb) => { read.push(...[].concat(keys || [])); return get(keys, cb); };
+    const match = await ctx.handleMessage({ action: 'checkPageMatch', host: 'example.com' }, tab(3, 'example.com'));
+    expect(match.isBlocked).toBe(false);
+    expect(match.matchedDomain).toBe(null);
+    expect(read).not.toContain('apiKey');
+    expect(read).not.toContain('entitlement');
+  });
+});
+
+describe('entitlement writes from a web page', () => {
+  it('are refused for both writers', async () => {
+    const { ctx, chrome } = loadBackground({ seed: { entitlement: ACTIVE_ENTITLEMENT } });
+    const page = tab(3);
+    const saved = await ctx.handleMessage({ action: 'saveEntitlement', entitlement: null }, page);
+    const merged = await ctx.handleMessage({ action: 'mergeEntitlement', entitlement: { balance: 999 } }, page);
+    expect(saved.error).toBeTruthy();
+    expect(merged.error).toBeTruthy();
+    expect(chrome.storage._store.entitlement).toEqual(ACTIVE_ENTITLEMENT);
   });
 });

@@ -303,6 +303,33 @@ describe('when the background never answers', () => {
     expect(gated(dom)).toBe(true);
   });
 
+  it('gates a fully-qualified hostname (trailing dot) from storage', async () => {
+    vi.useFakeTimers();
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: () => {},
+      dom: { href: 'https://www.instagram.com./explore/' }
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
+  // A start time ahead of the clock means the clock was put back after the
+  // grant; honouring it would stretch the pass by however far it went.
+  it('does not honour a pass that starts in the future', async () => {
+    vi.useFakeTimers();
+    const dom = loadContent({
+      storage: {
+        setupComplete: true,
+        blockedDomains: ['instagram.com'],
+        activeSessions: { 'target:instagram.com': { ...LIVE_SESSION, startTime: Date.now() + 60 * 60000 } }
+      },
+      sendMessage: () => {}
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(gated(dom)).toBe(true);
+  });
+
   it('still leaves sites that are not on the blocklist alone', async () => {
     vi.useFakeTimers();
     const dom = loadContent({
@@ -619,6 +646,25 @@ describe('the gate does not cancel the navigation it is gating', () => {
     const playing = makeMedia();
     const dom = withGate({ href: 'https://www.instagram.com/explore/', media: [playing] });
     await vi.waitFor(() => expect(gated(dom)).toBe(true));
+    expect(playing.paused).toBe(true);
+    expect(playing.muted).toBe(true);
+  });
+
+  // The gate's wipe detaches the page's <video> rather than destroying it, and
+  // a player holding its own reference can start it again. A detached
+  // element's play event never reaches the document, so the element carries
+  // a listener of its own.
+  it('silences a hushed element the page plays again after the wipe', async () => {
+    const playing = makeMedia();
+    const own = [];
+    playing.addEventListener = (type, fn) => { if (type === 'play') own.push(fn); };
+    const dom = withGate({ href: 'https://www.instagram.com/explore/', media: [playing] });
+    await vi.waitFor(() => expect(gated(dom)).toBe(true));
+    expect(own.length).toBe(1);
+
+    playing.paused = false;
+    playing.muted = false;
+    own.forEach(fn => fn({ target: playing }));
     expect(playing.paused).toBe(true);
     expect(playing.muted).toBe(true);
   });

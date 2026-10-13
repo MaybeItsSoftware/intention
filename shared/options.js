@@ -1,4 +1,14 @@
-async function loadEnv() {
+// Memoised for the life of the page: env.txt cannot change under a running
+// page, and every caller (the key card, each paywall render) used to fetch and
+// re-parse it.
+let loadEnvOnce = null;
+
+function loadEnv() {
+  if (!loadEnvOnce) loadEnvOnce = readEnvFile();
+  return loadEnvOnce;
+}
+
+async function readEnvFile() {
   try {
     const res = await fetch(chrome.runtime.getURL('env.txt'));
     if (!res.ok) return {};
@@ -241,6 +251,75 @@ const HAS_SAFARI_EXTENSION = !!window.intentionExtension;
 // here runs). It gets its own welcome, a login-item switch, and no Screen Time.
 const IS_MAC_APP = HAS_SAFARI_EXTENSION && document.documentElement.classList.contains('platform-mac');
 
+
+// ---- Private windows -------------------------------------------------------
+//
+// Every browser runs extensions in private windows only when told to, so out
+// of the box an incognito / private window is a browser with no gate in it at
+// all — the one-keystroke way round every intention someone has just set. We
+// cannot switch it on (no browser lets an extension grant itself that), but we
+// can say so and say where the switch is.
+//
+// Browser extension builds only. In the Android and iOS/macOS apps this page
+// runs in the app's own WebView, where there is no private mode to speak of
+// and no extension API to ask; those are told apart by their bridges, the same
+// flags as above. Anywhere the question cannot be asked, or throws, the answer
+// is "say nothing" — a false alarm about a setting the user cannot find would
+// be worse than the silence it replaces.
+function incognitoInstructions() {
+  let base = '';
+  try { base = chrome.runtime.getURL(''); } catch (e) {}
+  if (/^moz-extension:/.test(base)) {
+    return 'To fix it, open Add-ons and themes, choose Intention, and set Run in Private Windows to Allow.';
+  }
+  if (/^safari-web-extension:/.test(base) || IS_APPLE_BUILD) {
+    return 'To fix it, open Safari Settings, go to Extensions, choose Intention, and tick Allow in Private Browsing.';
+  }
+  return 'To fix it, open Extensions, choose Details under Intention, and turn on Allow in Incognito.';
+}
+
+let incognitoAllowedAnswer = null;
+
+function incognitoAccessAllowed() {
+  if (incognitoAllowedAnswer) return incognitoAllowedAnswer;
+  incognitoAllowedAnswer = new Promise((resolve) => {
+    if (HAS_APP_BLOCKING || HAS_IOS_APP_BLOCKING || HAS_SAFARI_EXTENSION) {
+      resolve(true);
+      return;
+    }
+    try {
+      // Firefox's and Safari's `browser` namespace answers with a promise;
+      // Chrome's `chrome` answers a callback. Prefer the former where it exists.
+      if (typeof browser !== 'undefined' && typeof browser?.extension?.isAllowedIncognitoAccess === 'function') {
+        Promise.resolve(browser.extension.isAllowedIncognitoAccess())
+          .then((allowed) => resolve(allowed !== false), () => resolve(true));
+        return;
+      }
+      if (typeof chrome?.extension?.isAllowedIncognitoAccess !== 'function') {
+        resolve(true);
+        return;
+      }
+      chrome.extension.isAllowedIncognitoAccess((allowed) => {
+        resolve(chrome.runtime?.lastError ? true : allowed !== false);
+      });
+    } catch (e) {
+      resolve(true);
+    }
+  });
+  return incognitoAllowedAnswer;
+}
+
+// Fills (or hides) one of the two places the note appears: the card at the
+// top of Settings and the last page of setup.
+async function renderIncognitoNote(id) {
+  const note = document.getElementById(id);
+  if (!note) return;
+  const allowed = await incognitoAccessAllowed();
+  note.hidden = allowed;
+  if (allowed) return;
+  const how = note.querySelector('[data-incognito-how]');
+  if (how) how.textContent = incognitoInstructions();
+}
 
 // ---- Mobile Apps/Websites tab toggle ----
 
@@ -629,6 +708,9 @@ async function showSettingsView(state) {
     document.getElementById('mac-app-card').hidden = false;
     wireLoginSwitch('mac-login-btn', 'mac-login-sub', 'mac-login-approve-btn');
   }
+  // Not awaited: a browser that never answers must not hold up the page.
+  renderIncognitoNote('incognito-card')
+    .catch((e) => console.warn('Intention: could not check private-window access', e));
 
   renderContextCard(state.userContext);
   await renderCoachObservations();
@@ -702,9 +784,18 @@ async function showSettingsView(state) {
     wireIOSAppsCard();
   }
 
-  await refreshAccessUI('access-paywall');
+  // Not awaited, for the same reason as the lists above. refreshAccessUI asks
+  // the native bridge for products and the account id and may make a backend
+  // round trip to reconcile a pending purchase; awaiting it here held the
+  // settings tabs, the usage log and every button bound below hostage to all of
+  // that — a slow store or backend left a page that looked loaded and did
+  // nothing when tapped. It catches its own failures (see the end of
+  // refreshAccessUI); the .catch is for anything that slips past.
+  refreshAccessUI('access-paywall')
+    .catch((e) => console.warn('Intention: could not render AI access', e));
   wireAccessRefreshOnReturn('access-paywall');
-  await refreshCreditChip();
+  refreshCreditChip()
+    .catch((e) => console.warn('Intention: could not refresh the credit chip', e));
   bindOnce('credit-chip', 'click', () => {
     setSettingsSection('settings');
     document.getElementById('ai-access-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1878,16 +1969,35 @@ async function refreshUsageLog(state) {
     appIcons = Object.fromEntries(installed.filter(a => a && a.icon).map(a => [a.packageName, a.icon]));
   }
 
+  let iosReportNote = '';
   if (HAS_IOS_APP_BLOCKING && window.intentionScreenTime.getAppUsageReport) {
     const report = await new Promise(resolve => window.intentionScreenTime.getAppUsageReport(resolve));
     for (const [date, minutes] of Object.entries((report && report.minutesByDate) || {})) {
       const m = Math.round(minutes);
       if (m > 0) entries.push({ date, domain: 'ios-apps', minutes: m, label: 'Blocked apps (this device)' });
     }
+    // Screen Time answers through a sandboxed report extension that can be
+    // slow or silent. An empty map on its own would read as "no app use",
+    // which is a claim the app can't make, so say what actually happened.
+    const status = report && report.status;
+    if (status === 'unavailable') {
+      iosReportNote = 'Screen Time didn\'t send app usage this time, so blocked apps aren\'t counted here.';
+    } else if (status === 'stale' && report.writtenAt) {
+      const when = new Date(report.writtenAt);
+      if (!Number.isNaN(when.getTime())) {
+        iosReportNote = `Blocked apps as of ${when.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}.`;
+      }
+    }
   }
 
   entries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.minutes - a.minutes));
   renderUsageLog(entries, appIcons);
+  if (iosReportNote) {
+    const li = document.createElement('li');
+    li.className = 'muted history-empty';
+    li.textContent = iosReportNote;
+    document.getElementById('usage-log-list').appendChild(li);
+  }
 }
 
 // Shared by the coach and settings-gate modals below.
