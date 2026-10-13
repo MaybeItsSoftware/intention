@@ -21,9 +21,27 @@ import { logEvent } from './log.js';
 // outgrows one process, the swap target is a synchronous embedded store
 // (node:sqlite's DatabaseSync), not Redis.
 
+// A durable write that did not land. Thrown only after the in-memory change
+// has been rolled back, so memory and disk still agree; app.js answers it with
+// a 503, which every client already treats as "try again".
+export class StoreError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.code = 'store_unavailable';
+    this.cause = cause;
+  }
+}
+
 export class MemoryStore {
   constructor() {
     this.map = new Map();
+  }
+
+  // Run several mutations as one unit. In memory there is nothing that can
+  // fail halfway, so this is just a call; FileStore overrides it to persist
+  // once at the end and roll every change back if that persist fails.
+  batch(fn) {
+    return fn();
   }
 
   get(key) {
@@ -82,13 +100,24 @@ export class MemoryStore {
 // file on disk is always either the old state or the new one, never partial.
 //
 // Synchronous-on-every-mutation is affordable because the durable store only
-// ever sees rare writes: purchases, refunds, one deduction per chat message. High-churn counters (rate limiting) must go in
-// a separate always-in-memory MemoryStore, never here — losing them on
-// restart is fine, and keeping them out is what keeps this fsync-per-write.
+// ever sees rare writes: purchases, refunds, one deduction per chat message.
+// High-churn counters (rate limiting) and anything an unauthenticated caller
+// can write at will (coach reports — see reports.js) must stay out of it:
+// every write re-serialises the whole ledger.
+//
+// Memory and disk never disagree. A mutation used to land in the Map first
+// and then throw if the flush failed, leaving memory ahead of disk: a credit
+// record the process believed in, a balance it did not have, and both gone on
+// the next restart. Now every mutation runs inside batch(), which journals the
+// prior value of each key it touches and puts them all back if the flush
+// fails, then throws StoreError. Callers that write several keys for one
+// event (a credit, a refund) wrap them in a single batch, so the event lands
+// whole or not at all.
 export class FileStore extends MemoryStore {
   constructor(filePath) {
     super();
     this.filePath = filePath;
+    this.journal = null;
     mkdirSync(dirname(filePath), { recursive: true });
     this.load();
   }
@@ -137,21 +166,62 @@ export class FileStore extends MemoryStore {
     } catch (e) {} // not supported on some platforms; rename already landed
   }
 
+  batch(fn) {
+    // Nested batches join the outermost one: one flush, one rollback unit.
+    if (this.journal) return fn();
+    this.journal = new Map();
+    try {
+      const result = fn();
+      try {
+        this.persist();
+      } catch (e) {
+        throw new StoreError(`state file write failed: ${e?.message || e}`, e);
+      }
+      return result;
+    } catch (e) {
+      // Whatever failed — the flush, or fn itself partway through — restore
+      // every touched key to exactly what it was, including absent. A throw
+      // from fn keeps its own type: it is a bug or a rejection, not a disk.
+      for (const [key, previous] of this.journal) {
+        if (previous === undefined) this.map.delete(key);
+        else this.map.set(key, previous);
+      }
+      logEvent('store_rollback', { keys: this.journal.size, error: String(e?.message || e) });
+      throw e;
+    } finally {
+      this.journal = null;
+    }
+  }
+
+  touch(key) {
+    if (this.journal && !this.journal.has(key)) this.journal.set(key, this.map.get(key));
+  }
+
   set(key, value, ttlMs) {
-    super.set(key, value, ttlMs);
-    this.persist();
+    this.batch(() => {
+      this.touch(key);
+      super.set(key, value, ttlMs);
+    });
   }
 
   delete(key) {
-    super.delete(key);
-    this.persist();
+    this.batch(() => {
+      this.touch(key);
+      super.delete(key);
+    });
   }
 
+  // MemoryStore.increment writes through this.set, which journals the key;
+  // the batch around it just makes that one flush rather than two.
   increment(key, ttlMs) {
-    const current = super.increment(key, ttlMs);
-    this.persist();
-    return current;
+    return this.batch(() => super.increment(key, ttlMs));
   }
+}
+
+// For callers handed an arbitrary backing (tests inject their own): batch when
+// the backing can, plain call when it can't.
+export function inBatch(backing, fn) {
+  return typeof backing?.batch === 'function' ? backing.batch(fn) : fn();
 }
 
 export const store = config.stateFile ? new FileStore(config.stateFile) : new MemoryStore();
@@ -215,6 +285,26 @@ export function addSandboxCreditMicros(subject, micros, backing = store) {
   return next;
 }
 
+// The same ledger summed across every subject, per UTC day — the bound the
+// per-subject one cannot be, since a subject is whatever UUID the client
+// sends (config.apple.sandboxDailyBudgetGbp). One key per day, expiring after
+// two so a day's total is never read past its own day and never accumulates.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function sandboxDailyKey(now = Date.now()) {
+  return `sandboxDaily:${new Date(now).toISOString().slice(0, 10)}`;
+}
+
+export function getSandboxDailyMicros(backing = store, now = Date.now()) {
+  return Number(backing.get(sandboxDailyKey(now)) || 0);
+}
+
+export function addSandboxDailyMicros(micros, backing = store, now = Date.now()) {
+  const next = getSandboxDailyMicros(backing, now) + micros;
+  backing.set(sandboxDailyKey(now), next, 2 * DAY_MS);
+  return next;
+}
+
 // ---- Purchase idempotency & refund tracking --------------------------------
 //
 // Keyed by the store transaction/order id alone, never combined with subject:
@@ -247,7 +337,14 @@ export function getCreditRecord(platform, creditId, backing = store) {
   return val;
 }
 
-export function refundTopUp(platform, creditId, { subject = null, productId = null, creditMicros = null } = {}, backing = store) {
+export function refundTopUp(platform, creditId, options = {}, backing = store) {
+  // One unit: the clawback, the refunded markers and the revocation land
+  // together or not at all — a half-applied refund would either keep the
+  // credit or, retried, deduct it twice.
+  return inBatch(backing, () => applyRefund(platform, creditId, options, backing));
+}
+
+function applyRefund(platform, creditId, { subject = null, productId = null, creditMicros = null }, backing) {
   const existing = getCreditRecord(platform, creditId, backing);
 
   // A refund for a purchase that was never credited must not write anything:
@@ -290,6 +387,12 @@ export function refundTopUp(platform, creditId, { subject = null, productId = nu
   let newBalance = 0;
   if (targetSubject && microsToDeduct > 0) {
     newBalance = adjustBalance(targetSubject, -microsToDeduct, backing);
+    // A refund is the one event that proves a subject's tokens were minted
+    // on money that has since gone back, so every token they hold is revoked
+    // with it. Honest clients notice nothing they can't recover from: the
+    // next call 401s, they re-verify (or recover) and are re-issued a token
+    // on the current version — against the balance as it now stands.
+    bumpTokenVersion(targetSubject, backing);
   } else if (targetSubject) {
     newBalance = getBalanceMicros(targetSubject, backing);
   }
@@ -327,6 +430,10 @@ export function refundTopUp(platform, creditId, { subject = null, productId = nu
 // verify. Bumping it invalidates all of a subject's outstanding tokens at
 // once — constant storage, unlike a jti denylist. Absent record means
 // version 0, which is also what pre-versioning tokens carry.
+//
+// Bumped by a refund clawback (refundTopUp above) and by the operator via
+// POST /v1/admin/revoke. Never by recovery: a recovered device holding a
+// token must not be able to sign every other device out of the account.
 
 export function getTokenVersion(subject, backing = store) {
   return Number(backing.get(`tv:${subject}`) || 0);

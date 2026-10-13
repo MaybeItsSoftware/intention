@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { fetchWithTimeout } from './http.js';
 
 // The hosted coach's LLM call, made under Intention's own provider key.
 //
@@ -20,19 +21,11 @@ export class UpstreamError extends Error {
 // UpstreamError, whose hold chatEndpoint's finally block already releases.
 const UPSTREAM_TIMEOUT_MS = 60_000;
 
-async function fetchWithTimeout(url, options, timeoutMs = UPSTREAM_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (e) {
-    if (e.name === 'AbortError') {
-      throw new UpstreamError('Upstream LLM call timed out', 504);
-    }
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
+function fetchUpstream(url, options) {
+  return fetchWithTimeout(url, options, {
+    timeoutMs: UPSTREAM_TIMEOUT_MS,
+    onTimeout: () => new UpstreamError('Upstream LLM call timed out', 504)
+  });
 }
 
 export async function callCoachLLM({ system, messages, tools }, options = {}) {
@@ -76,7 +69,7 @@ async function callAnthropic({ system, messages, tools }, options) {
     }));
   }
 
-  const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+  const res = await fetchUpstream('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -119,18 +112,33 @@ async function callOpenAI({ system, messages, tools }, options) {
   if (systemText) openaiMessages.push({ role: 'system', content: systemText });
   for (const m of messages) openaiMessages.push({ role: m.role, content: m.content });
 
-  const body = { model: options.model || config.llm.model, messages: openaiMessages };
+  const body = {
+    model: options.model || config.llm.model,
+    // The same server-side output ceiling the Anthropic path sends as
+    // max_tokens. Without it OpenAI generates up to the model's own limit, so
+    // one call could cost many times the hold chatEndpoint reserved for it —
+    // estimateCostMicros prices output at exactly this many tokens, and the
+    // reservation's overdraft bound is only real if the provider enforces it.
+    // max_completion_tokens rather than the legacy max_tokens: it is the field
+    // reasoning models accept, and it counts reasoning tokens too, which are
+    // billed as completion tokens and so belong under the same cap.
+    max_completion_tokens: options.maxTokens || config.llm.maxTokens,
+    messages: openaiMessages
+  };
   if (tools && tools.length) {
     body.tools = tools.map(t => ({
       type: 'function',
       function: { name: t.name, description: t.description, parameters: t.schema }
     }));
-    // GPT-5 and later refuse function tools on /chat/completions (400) at any
-    // reasoning effort but 'none'. Older models reject the field outright.
-    if (/^gpt-([5-9]|\d{2})/.test(body.model)) body.reasoning_effort = 'none';
   }
+  // GPT-5 and later refuse function tools on /chat/completions (400) at any
+  // reasoning effort but 'none'. Set it on tool-less calls too: reasoning
+  // tokens count against max_completion_tokens above, so a default-effort
+  // reply can spend the whole cap thinking and come back empty — billed, with
+  // nothing to show. Older models reject the field outright.
+  if (/^gpt-([5-9]|\d{2})/.test(body.model)) body.reasoning_effort = 'none';
 
-  const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
+  const res = await fetchUpstream('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { config, findTopUp } from './config.js';
+import { fetchWithTimeout } from './http.js';
 
 // Apple receipt verification for a consumable coaching-credit top-up.
 //
@@ -17,8 +18,10 @@ import { config, findTopUp } from './config.js';
 //      subscription (no renewal/grace/billing-retry) — a transaction is
 //      either on record and not revoked, or it isn't.
 //
-// A receipt that fails (1) is rejected. (2) is skipped with a warning when the
-// credentials aren't configured — see assertBootConfig.
+// A receipt that fails (1) is rejected. (2) is not optional: without the
+// credentials a receipt is refused as upstream_unavailable rather than credited
+// on its signature alone, since a signature cannot show a later refund — and a
+// production boot without them is fatal (see assertBootConfig).
 
 export class VerificationError extends Error {
   constructor(message, code = 'entitlement_invalid') {
@@ -36,8 +39,53 @@ const APPLE_ROOT_FINGERPRINTS = new Set([
   'C2:B9:B0:42:DD:57:83:0E:7D:11:7D:AC:55:AC:8A:E1:94:07:D3:8E:41:D8:8F:38:15:19:F7:59:F3:04:A5:4B'
 ].map(f => f.toUpperCase()));
 
+// DER encoding of an OBJECT IDENTIFIER, tag and length included. Node's
+// X509Certificate exposes no arbitrary extensions, so the marker extensions
+// below are found the way Apple's own server libraries find them: by looking
+// for the encoded OID in the certificate's raw DER. The full TLV (not just the
+// arc bytes) is what is searched for, so a stray run of the same bytes inside
+// a key or signature would have to reproduce the tag and length as well.
+function encodeOid(dotted) {
+  const arcs = dotted.split('.').map(Number);
+  const bytes = [arcs[0] * 40 + arcs[1]];
+  for (const arc of arcs.slice(2)) {
+    const base128 = [arc & 0x7f];
+    for (let rest = Math.floor(arc / 128); rest > 0; rest = Math.floor(rest / 128)) {
+      base128.unshift((rest & 0x7f) | 0x80);
+    }
+    bytes.push(...base128);
+  }
+  return Buffer.from([0x06, bytes.length, ...bytes]);
+}
+
+// Apple marks what each certificate in a StoreKit chain is FOR. The pinned
+// root only proves Apple issued the chain — Apple issues a great many
+// certificates under that root (every developer's Apple Pay, push and
+// signing certificates among them) — so without these two checks any
+// Apple-issued leaf that could make an ES256 signature would mint receipts.
+//   leaf:          Mac App Store receipt signing  1.2.840.113635.100.6.11.1
+//   intermediate:  Apple WWDR intermediate        1.2.840.113635.100.6.2.1
+export const APPLE_RECEIPT_SIGNING_OID = encodeOid('1.2.840.113635.100.6.11.1');
+export const APPLE_WWDR_INTERMEDIATE_OID = encodeOid('1.2.840.113635.100.6.2.1');
+
+function hasOid(cert, oidDer) {
+  return Buffer.from(cert.raw).includes(oidDer);
+}
+
 function decodeSegment(segment) {
-  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+  let value;
+  try {
+    value = JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+  } catch (e) {
+    throw new VerificationError('receipt is not a JWS');
+  }
+  // A JWS header and payload are both JSON objects. Anything else — a bare
+  // string, null, an array — would surface later as a TypeError (a 500)
+  // rather than as the malformed receipt it is.
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new VerificationError('receipt is not a JWS');
+  }
+  return value;
 }
 
 export function decodeJWS(jws) {
@@ -52,16 +100,38 @@ export function decodeJWS(jws) {
   };
 }
 
+function parseCertificate(der) {
+  if (typeof der !== 'string' || !der) {
+    throw new VerificationError('receipt certificate chain is malformed');
+  }
+  try {
+    return new crypto.X509Certificate(Buffer.from(der, 'base64'));
+  } catch (e) {
+    throw new VerificationError('receipt certificate chain is malformed');
+  }
+}
+
 // Walks the x5c chain leaf -> intermediate -> root, then checks the leaf's
-// signature over the JWS. Throws VerificationError on any break.
+// signature over the JWS. Throws VerificationError on any break — including
+// input too malformed to parse, so a junk receipt is a 4xx, never a 500.
 export function verifyAppleJWS(jws, { rootFingerprints = APPLE_ROOT_FINGERPRINTS, now = new Date() } = {}) {
   const { header, signingInput, signature, payload } = decodeJWS(jws);
+  // StoreKit only ever signs ES256. Pinning the algorithm means the header
+  // never gets a say in how its own signature is checked.
+  if (header.alg !== 'ES256') {
+    throw new VerificationError('receipt is not signed with ES256');
+  }
   const chain = header.x5c;
-  if (!Array.isArray(chain) || chain.length < 2) {
+  if (!Array.isArray(chain) || chain.length === 0) {
     throw new VerificationError('receipt has no certificate chain');
   }
+  // Exactly leaf, intermediate, root — the shape every StoreKit chain has, and
+  // the shape the marker checks below assume.
+  if (chain.length !== 3) {
+    throw new VerificationError('receipt certificate chain is malformed');
+  }
 
-  const certs = chain.map(der => new crypto.X509Certificate(Buffer.from(der, 'base64')));
+  const certs = chain.map(parseCertificate);
 
   for (const cert of certs) {
     if (new Date(cert.validFrom) > now || new Date(cert.validTo) < now) {
@@ -75,20 +145,42 @@ export function verifyAppleJWS(jws, { rootFingerprints = APPLE_ROOT_FINGERPRINTS
     }
   }
 
-  const root = certs[certs.length - 1];
+  const [leaf, intermediate, root] = certs;
   const fingerprint = (root.fingerprint256 || '').toUpperCase();
   if (!rootFingerprints.has(fingerprint)) {
     throw new VerificationError('receipt was not signed by Apple');
   }
 
+  // Only certificate authorities may sign the link below them, and the leaf
+  // must not be one: basicConstraints is what makes a chain a chain rather
+  // than a list of certificates that happen to verify against each other.
+  if (!intermediate.ca || !root.ca) {
+    throw new VerificationError('receipt certificate chain is malformed');
+  }
+  if (leaf.ca) {
+    throw new VerificationError('receipt was not signed by a receipt-signing certificate');
+  }
+  if (!hasOid(intermediate, APPLE_WWDR_INTERMEDIATE_OID)) {
+    throw new VerificationError('receipt intermediate is not Apple WWDR');
+  }
+  if (!hasOid(leaf, APPLE_RECEIPT_SIGNING_OID)) {
+    throw new VerificationError('receipt was not signed by a receipt-signing certificate');
+  }
+
   // StoreKit signs with ES256; Node needs the IEEE P1363 hint because JWS
-  // signatures are raw r||s rather than DER.
-  const ok = crypto.verify(
-    'sha256',
-    Buffer.from(signingInput),
-    { key: certs[0].publicKey, dsaEncoding: 'ieee-p1363' },
-    signature
-  );
+  // signatures are raw r||s rather than DER. A signature of the wrong length
+  // makes verify throw rather than return false.
+  let ok = false;
+  try {
+    ok = crypto.verify(
+      'sha256',
+      Buffer.from(signingInput),
+      { key: leaf.publicKey, dsaEncoding: 'ieee-p1363' },
+      signature
+    );
+  } catch (e) {
+    ok = false;
+  }
   if (!ok) throw new VerificationError('receipt signature does not match');
 
   return payload;
@@ -119,6 +211,10 @@ function appStoreBaseUrls() {
     : [PRODUCTION_BASE_URL, SANDBOX_BASE_URL];
 }
 
+export function hasAppStoreCredentials() {
+  return Boolean(config.apple.issuerId && config.apple.keyId && config.apple.privateKey);
+}
+
 function appStoreJWT() {
   const { issuerId, keyId, privateKey, bundleId } = config.apple;
   const header = { alg: 'ES256', kid: keyId, typ: 'JWT' };
@@ -132,11 +228,18 @@ function appStoreJWT() {
   };
   const encode = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
   const signingInput = `${encode(header)}.${encode(payload)}`;
-  const signature = crypto.sign(
-    'sha256',
-    Buffer.from(signingInput),
-    { key: privateKey, dsaEncoding: 'ieee-p1363' }
-  );
+  let signature;
+  try {
+    signature = crypto.sign(
+      'sha256',
+      Buffer.from(signingInput),
+      { key: privateKey, dsaEncoding: 'ieee-p1363' }
+    );
+  } catch (e) {
+    // A malformed APPLE_PRIVATE_KEY is our misconfiguration, not the
+    // purchase's fault — the client keeps the receipt and retries.
+    throw new VerificationError(`App Store Server API key is unreadable: ${e.message}`, 'upstream_unavailable');
+  }
   return `${signingInput}.${signature.toString('base64url')}`;
 }
 
@@ -149,12 +252,18 @@ function appStoreJWT() {
 // Anything other than 404 — Apple down, credentials wrong — stops immediately:
 // retrying the other environment would turn one outage into two and still tell
 // us nothing.
+const APP_STORE_TIMEOUT_MS = 15_000;
+
 async function fetchTransactionInfo(transactionId) {
   const bases = appStoreBaseUrls();
   for (let i = 0; i < bases.length; i++) {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${bases[i]}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`,
-      { headers: { authorization: `Bearer ${appStoreJWT()}` } }
+      { headers: { authorization: `Bearer ${appStoreJWT()}` } },
+      {
+        timeoutMs: APP_STORE_TIMEOUT_MS,
+        onTimeout: () => new VerificationError('App Store Server API timed out', 'upstream_unavailable')
+      }
     );
     if (res.status === 404) {
       if (i === bases.length - 1) {
@@ -166,7 +275,11 @@ async function fetchTransactionInfo(transactionId) {
       // Apple being unavailable must not read as "this purchase doesn't exist".
       throw new VerificationError(`App Store Server API ${res.status}`, 'upstream_unavailable');
     }
-    return res.json();
+    try {
+      return await res.json();
+    } catch (e) {
+      throw new VerificationError('App Store Server API returned an unreadable response', 'upstream_unavailable');
+    }
   }
   throw new VerificationError('Apple has no record of that transaction');
 }
@@ -208,15 +321,25 @@ export async function verifyAppleReceipt(jws) {
   if (config.allowUnverifiedReceipts) {
     payload = decodeJWS(jws).payload;
   } else {
+    // Fail closed. Crediting on the signature alone used to be the fallback
+    // when the API credentials were missing, but a signed transaction is a
+    // snapshot: it stays validly signed after Apple refunds it, so a refunded
+    // receipt replayed against a credential-less deployment credited in full.
+    // upstream_unavailable (503) rather than a rejection, because the
+    // purchase is fine and the deployment isn't — the client keeps the
+    // receipt and retries once the credentials are back.
+    if (!hasAppStoreCredentials()) {
+      throw new VerificationError('App Store Server API is not configured', 'upstream_unavailable');
+    }
     payload = verifyAppleJWS(jws);
   }
 
   if (payload.bundleId && payload.bundleId !== config.apple.bundleId) {
-    throw new VerificationError('receipt is for a different app');
+    throw new VerificationError('receipt is for a different app', 'server_misconfigured');
   }
   let environment = creditableEnvironment(payload.environment);
   if (payload.productId && !findTopUp('apple', payload.productId)) {
-    throw new VerificationError('receipt is for an unknown product');
+    throw new VerificationError('receipt is for an unknown product', 'server_misconfigured');
   }
 
   const transactionId = String(payload.transactionId || '');
@@ -226,8 +349,9 @@ export async function verifyAppleReceipt(jws) {
   let productId = payload.productId || '';
   let appAccountToken = payload.appAccountToken || '';
 
-  // Authoritative pass, when we have the credentials for it.
-  if (config.apple.issuerId && config.apple.privateKey && config.apple.keyId) {
+  // Authoritative pass. Always taken outside development (see the guard
+  // above); in development it runs only if credentials happen to be present.
+  if (hasAppStoreCredentials()) {
     const record = await fetchTransactionInfo(transactionId);
     if (!record.signedTransactionInfo) throw new VerificationError('Apple has no record of that transaction');
     const info = config.allowUnverifiedReceipts

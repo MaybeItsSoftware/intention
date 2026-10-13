@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { config, findTopUp } from './config.js';
 import { VerificationError } from './apple.js';
+import { fetchWithTimeout } from './http.js';
 
 // Google Play purchase verification for a consumable coaching-credit top-up,
 // via the Play Developer API.
@@ -13,6 +14,18 @@ import { VerificationError } from './apple.js';
 // subscriptionsv2.
 
 let cachedAccessToken = null;
+
+// Every Google call is bounded, and a timeout reads as upstream_unavailable
+// (503): the purchase may be perfectly good, so the client keeps the token
+// and retries, and Pub/Sub redelivers a webhook that got a non-2xx.
+const GOOGLE_TIMEOUT_MS = 15_000;
+
+function googleFetch(url, options, what) {
+  return fetchWithTimeout(url, options, {
+    timeoutMs: GOOGLE_TIMEOUT_MS,
+    onTimeout: () => new VerificationError(`${what} timed out`, 'upstream_unavailable')
+  });
+}
 
 // Service-account OAuth2: sign a JWT with the account's private key and swap
 // it for an access token. Cached until shortly before it expires.
@@ -46,14 +59,14 @@ async function accessToken() {
   }
   const assertion = `${signingInput}.${signature}`;
 
-  const res = await fetch('https://oauth2.googleapis.com/token', {
+  const res = await googleFetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
       assertion
     })
-  });
+  }, 'Google token exchange');
   if (!res.ok) {
     throw new VerificationError(`Google token exchange ${res.status}`, 'upstream_unavailable');
   }
@@ -119,7 +132,7 @@ export async function verifyGooglePurchase(receipt) {
   const productId = (receipt && receipt.productId) || '';
   if (!purchaseToken) throw new VerificationError('purchase token missing');
   if (!productId || !findTopUp('google', productId)) {
-    throw new VerificationError('purchase is for an unknown product');
+    throw new VerificationError('purchase is for an unknown product', 'server_misconfigured');
   }
 
   if (config.allowUnverifiedReceipts) {
@@ -133,7 +146,8 @@ export async function verifyGooglePurchase(receipt) {
   }
 
   const token = await accessToken();
-  const res = await fetch(productsUrl(productId, purchaseToken), { headers: { authorization: `Bearer ${token}` } });
+  const res = await googleFetch(productsUrl(productId, purchaseToken),
+    { headers: { authorization: `Bearer ${token}` } }, 'Play Developer API');
   if (res.status === 404 || res.status === 410) {
     throw new VerificationError('Google has no record of that purchase');
   }
@@ -159,10 +173,10 @@ export async function verifyGooglePurchase(receipt) {
 // primary guard against double-crediting (see store.js).
 export async function consumePurchase(productId, purchaseToken) {
   const token = await accessToken();
-  const res = await fetch(`${productsUrl(productId, purchaseToken)}:consume`, {
+  const res = await googleFetch(`${productsUrl(productId, purchaseToken)}:consume`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` }
-  });
+  }, 'Play Developer API consume');
   if (!res.ok) {
     throw new VerificationError(`Play Developer API consume ${res.status}`, 'upstream_unavailable');
   }

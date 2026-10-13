@@ -58,7 +58,8 @@ export default defineRailway(() =>
           APPLE_KEY_ID: preserve(),
           APPLE_PRIVATE_KEY: preserve(),
           GOOGLE_CLIENT_EMAIL: preserve(),
-          GOOGLE_PRIVATE_KEY: preserve()
+          GOOGLE_PRIVATE_KEY: preserve(),
+          INTENTION_ADMIN_SECRET: preserve()
         }
       }), state];
     })()

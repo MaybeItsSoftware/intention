@@ -4,6 +4,7 @@
 // logged loudly at boot.
 
 import crypto from 'node:crypto';
+import { dirname, join } from 'node:path';
 
 function required(name) {
   const value = process.env[name];
@@ -70,6 +71,21 @@ export const config = {
   // Point it at a mounted volume in production; unset means in-memory only,
   // which keeps tests and local dev hermetic but loses paid credit on restart.
   stateFile: process.env.INTENTION_STATE_FILE || '',
+
+  // Where coach reports go, deliberately NOT the state file: /v1/report is
+  // unauthenticated, and every write to the state file re-serialises the
+  // whole ledger, so reports in it made an anonymous endpoint into ledger
+  // write amplification. An append-only file beside the ledger instead,
+  // size-bounded (see reports.js). Derived rather than configured — it lives
+  // on whatever volume the ledger does. Unset state file means in-memory.
+  reportsFile: process.env.INTENTION_STATE_FILE
+    ? join(dirname(process.env.INTENTION_STATE_FILE), 'intention-reports.jsonl')
+    : '',
+
+  // Guards POST /v1/admin/revoke, the operator's way to revoke every token a
+  // subject holds. Unset (or shorter than 32 characters) disables the route.
+  // Generate with: openssl rand -base64 48
+  adminSecret: process.env.INTENTION_ADMIN_SECRET || '',
 
   // How many trailing X-Forwarded-For entries were appended by proxies we
   // control or trust (Railway's edge appends the peer it actually observed).
@@ -163,7 +179,22 @@ export const config = {
     // One tier's worth by default — enough for App Review, and for a
     // TestFlight tester, to exercise the whole loop end to end. Set to 0 to
     // refuse sandbox credit entirely, which is the behaviour this replaced.
-    sandboxCreditCapGbp: Number(process.env.INTENTION_SANDBOX_CREDIT_CAP_GBP ?? 1)
+    sandboxCreditCapGbp: Number(process.env.INTENTION_SANDBOX_CREDIT_CAP_GBP ?? 1),
+
+    // ...and what sandbox purchases may be worth across EVERY subject in one
+    // UTC day, priced the same way. The per-subject cap above is keyed by a
+    // subject the client chooses (a fresh UUID is a fresh subject, and so a
+    // fresh cap), so on its own it bounds nothing: one sandbox Apple Account
+    // and a loop minting UUIDs drew £1 a time without end. This is the bound
+    // that does not depend on who the client says it is.
+    //
+    // £5 a day by default: App Review plus a handful of TestFlight testers
+    // fit comfortably, and the worst case an attacker can extract is a few
+    // pounds of tokens a day rather than an open tap. Once it is spent,
+    // sandbox purchases still verify and report success (exactly as past the
+    // per-subject cap) — they credit nothing until the next UTC day. Set to 0
+    // to refuse sandbox credit altogether.
+    sandboxDailyBudgetGbp: Number(process.env.INTENTION_SANDBOX_DAILY_BUDGET_GBP ?? 5)
   },
 
   google: {
@@ -215,6 +246,13 @@ export function sandboxCreditCapMicros(platform = 'apple') {
   return capGbp > 0 ? creditMicrosForTopUp(platform, capGbp) : 0;
 }
 
+// The all-subjects daily ceiling on sandbox-sourced credit, same unit and
+// same pricing as the per-subject cap above.
+export function sandboxDailyBudgetMicros(platform = 'apple') {
+  const budgetGbp = Number(config.apple.sandboxDailyBudgetGbp) || 0;
+  return budgetGbp > 0 ? creditMicrosForTopUp(platform, budgetGbp) : 0;
+}
+
 // Display-only conversion from the ledger's microGBP-equivalent balance to
 // the "coaching credits" figure shown in the UI.
 export function microsToCredits(micros) {
@@ -242,12 +280,32 @@ export function assertBootConfig(log = console) {
   const problems = [];
   if (!config.tokenSecret) problems.push('INTENTION_TOKEN_SECRET is not set');
   if (!config.llm.apiKey) problems.push('INTENTION_LLM_API_KEY is not set');
+  // verifyAppleReceipt refuses every receipt without these (a signature
+  // alone cannot show a refund), so a production boot without them would
+  // listen with every Apple purchase failing. Fail the deploy instead, which
+  // keeps the previous one serving. Development keeps it a warning, so a
+  // local server still starts without App Store Connect access.
+  const appleMissing = [
+    !config.apple.issuerId && 'APPLE_ISSUER_ID',
+    !config.apple.keyId && 'APPLE_KEY_ID',
+    !config.apple.privateKey && 'APPLE_PRIVATE_KEY'
+  ].filter(Boolean);
+  const appleKeyBroken = !appleMissing.length && !pemParses(config.apple.privateKey);
+  if (config.env === 'production') {
+    for (const name of appleMissing) problems.push(`${name} is not set (Apple purchases cannot be verified without it)`);
+    if (appleKeyBroken) problems.push('APPLE_PRIVATE_KEY is set but is not a readable private key');
+  }
   if (problems.length) {
     (log.error || log.warn)(`[intention] FATAL: Missing required environment configuration:\n  - ${problems.join('\n  - ')}\n[intention] Refusing to start — every auth/coaching call would fail.`);
     return false;
   }
-  if (!config.apple.issuerId || !config.apple.privateKey) {
-    log.warn('[intention] App Store Server API credentials missing — Apple receipts will be checked by signature only.');
+  if (appleMissing.length) {
+    log.warn(`[intention] App Store Server API credentials missing (${appleMissing.join(', ')}) — Apple receipts will be refused.`);
+  } else if (appleKeyBroken) {
+    (log.error || log.warn)('[intention] APPLE_PRIVATE_KEY is set but is not a readable private key — every Apple purchase will fail to verify.');
+  }
+  if (config.adminSecret && config.adminSecret.length < 32) {
+    log.warn('[intention] INTENTION_ADMIN_SECRET is shorter than 32 characters, so /v1/admin/revoke stays disabled.');
   }
   if (!config.google.clientEmail || !config.google.privateKey) {
     log.warn('[intention] Play Developer API credentials missing — Android purchases cannot be verified.');
@@ -264,8 +322,8 @@ export function assertBootConfig(log = console) {
   // and no longer worth warning about. What is worth saying out loud is the
   // ceiling, because it is the only bound on free credit: a sandbox Apple
   // Account costs nothing and can buy forever.
-  if (config.apple.sandboxCreditCapGbp > 0) {
-    log.warn(`[intention] Sandbox purchases credit up to £${config.apple.sandboxCreditCapGbp} per account, for App Review and TestFlight. Set INTENTION_SANDBOX_CREDIT_CAP_GBP=0 to refuse them.`);
+  if (config.apple.sandboxCreditCapGbp > 0 && config.apple.sandboxDailyBudgetGbp > 0) {
+    log.warn(`[intention] Sandbox purchases credit up to £${config.apple.sandboxCreditCapGbp} per account and £${config.apple.sandboxDailyBudgetGbp} per day across all accounts, for App Review and TestFlight. Set INTENTION_SANDBOX_CREDIT_CAP_GBP=0 to refuse them.`);
   }
   return true;
 }

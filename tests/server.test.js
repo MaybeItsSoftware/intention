@@ -38,6 +38,7 @@ const { verifyAppleJWS, decodeJWS, verifyAppleReceipt, VerificationError } = awa
 const { verifyGooglePurchase } = await import('../server/src/google.js');
 const { Reservations } = await import('../server/src/reservations.js');
 const { RateLimiter } = await import('../server/src/ratelimit.js');
+const { MemoryReportStore } = await import('../server/src/reports.js');
 const { UpstreamError } = await import('../server/src/llm.js');
 const { creditMicrosForTopUp, config } = await import('../server/src/config.js');
 
@@ -68,6 +69,7 @@ const deps = (overrides = {}) => ({
   // sharing them would let one test's traffic throttle another's.
   reservations: new Reservations(),
   rateLimiter: new RateLimiter(),
+  reports: new MemoryReportStore(),
   verifyApple: async () => appleResult,
   verifyGoogle: async () => googleResult,
   consumeGoogle: async () => {},
@@ -750,8 +752,10 @@ describe('Apple transaction info (consumable verification)', () => {
   });
 
   it('rejects an unknown product', async () => {
+    // Retryable, not definitive: the receipt is genuine and the gap is our
+    // product config, and the iOS client finishes a transaction on a 4xx.
     await expect(verifyAppleReceipt(fakeJWS({ ...basePayload(), productId: 'not-a-real-product' })))
-      .rejects.toThrow(/unknown product/);
+      .rejects.toMatchObject({ message: /unknown product/, code: 'server_misconfigured' });
   });
 
   it('rejects a receipt with no transaction id', async () => {
@@ -813,7 +817,7 @@ describe('Google product purchase verification', () => {
 
   it('rejects an unknown product', async () => {
     await expect(verifyGooglePurchase({ purchaseToken: 'pt-100', productId: 'not-a-real-product' }))
-      .rejects.toThrow(/unknown product/);
+      .rejects.toMatchObject({ message: /unknown product/, code: 'server_misconfigured' });
   });
 
   it('rejects a missing purchase token', async () => {
@@ -1068,7 +1072,7 @@ describe('Refund webhooks & clawback', () => {
 function makeSelfSignedJWS(payload) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const cert = selfSignedCertificate(privateKey, publicKey);
-  const header = Buffer.from(JSON.stringify({ alg: 'ES256', x5c: [cert, cert] })).toString('base64url');
+  const header = Buffer.from(JSON.stringify({ alg: 'ES256', x5c: [cert, cert, cert] })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto.sign('sha256', Buffer.from(`${header}.${body}`), {
     key: privateKey,
@@ -1329,14 +1333,8 @@ describe('FileStore durability', () => {
 describe('POST /v1/report', () => {
   const report = { reported: 'something the coach said', prompt: 'what I asked', note: 'this was cruel' };
 
-  // The store is a flat key-value with no enumeration of its own, so the test
-  // reaches into the MemoryStore's map to find the row that was just written.
-  const findReport = (store) => {
-    for (const key of store.map.keys()) {
-      if (key.startsWith('report:')) return store.get(key);
-    }
-    return null;
-  };
+  // Reports live in their own store (reports.js), never the ledger.
+  const findReport = (d) => d.reports.records.at(-1) || null;
 
   it('accepts a report with no token at all', async () => {
     const d = deps();
@@ -1348,7 +1346,7 @@ describe('POST /v1/report', () => {
   it('stores what was reported, along with the turn that provoked it', async () => {
     const d = deps();
     await post('/v1/report', { ...report, provider: 'byok:groq', model: 'oss-120b' }, {}, d);
-    const record = findReport(d.store);
+    const record = findReport(d);
     expect(record.reported).toBe('something the coach said');
     expect(record.prompt).toBe('what I asked');
     expect(record.note).toBe('this was cruel');
@@ -1360,7 +1358,7 @@ describe('POST /v1/report', () => {
     const d = deps();
     const token = signToken({ sub: 'sub-reporter', platform: 'apple', productId: 'p' }, SECRET, 60_000);
     await post('/v1/report', report, { authorization: `Bearer ${token}` }, d);
-    expect(findReport(d.store).subject).toBe('sub-reporter');
+    expect(findReport(d).subject).toBe('sub-reporter');
   });
 
   // Losing the report would be worse than losing the attribution.
@@ -1368,7 +1366,16 @@ describe('POST /v1/report', () => {
     const d = deps();
     const res = await post('/v1/report', report, { authorization: 'Bearer not-a-token' }, d);
     expect(res.status).toBe(200);
-    expect(findReport(d.store).subject).toBe('');
+    expect(findReport(d).subject).toBe('');
+  });
+
+  // /v1/report is unauthenticated, and a ledger write re-serialises every
+  // balance — so a report must never become a ledger row.
+  it('keeps reports out of the ledger entirely', async () => {
+    const d = deps();
+    await post('/v1/report', report, {}, d);
+    expect(d.store.size).toBe(0);
+    expect(d.reports.records).toHaveLength(1);
   });
 
   it('refuses a report with nothing in it', async () => {
@@ -1380,7 +1387,7 @@ describe('POST /v1/report', () => {
   it('truncates rather than accepting an unbounded body', async () => {
     const d = deps();
     await post('/v1/report', { reported: 'x'.repeat(9000), note: 'y'.repeat(4000) }, {}, d);
-    const record = findReport(d.store);
+    const record = findReport(d);
     expect(record.reported.length).toBe(4000);
     expect(record.note.length).toBe(1000);
   });

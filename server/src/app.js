@@ -1,12 +1,16 @@
-import { config, findTopUp, creditMicrosForTopUp, microsToCredits, sandboxCreditCapMicros } from './config.js';
+import {
+  config, findTopUp, creditMicrosForTopUp, microsToCredits, sandboxCreditCapMicros, sandboxDailyBudgetMicros
+} from './config.js';
 import { verifyAppleReceipt, verifyAppleJWS, decodeJWS, VerificationError } from './apple.js';
 import { verifyGooglePurchase, consumePurchase } from './google.js';
 import { signToken, verifyToken, subjectFor, safeEqualString, TokenError } from './tokens.js';
 import {
   adjustBalance, getBalanceMicros, markCredited,
   getCreditRecord, refundTopUp, hasBalanceRecord,
-  getTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros, store
+  getTokenVersion, bumpTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros,
+  getSandboxDailyMicros, addSandboxDailyMicros, inBatch, StoreError, store
 } from './store.js';
+import { reports as defaultReports } from './reports.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
 import { reservations } from './reservations.js';
 import { rateLimiter } from './ratelimit.js';
@@ -63,7 +67,10 @@ const IP_LIMITS = {
   // IP limit is the only thing standing in front of it. Low, because reporting
   // is a rare human act — but not so low that a genuinely bad session can't be
   // reported several times over.
-  '/v1/report': { limit: 20, windowMs: HOUR }
+  '/v1/report': { limit: 20, windowMs: HOUR },
+  // Operator-only, so legitimate use is a handful of calls a day; the limit is
+  // what makes guessing the admin secret pointless on top of its length.
+  '/v1/admin/revoke': { limit: 10, windowMs: HOUR }
 };
 
 // Failed recoveries are tracked separately from volume: a miss
@@ -104,7 +111,8 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
       case '/v1/entitlement/refresh': return refreshEndpoint(body, backing);
       case '/v1/entitlement/recover': return recoverEndpoint(body, backing, limiter, ip);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
-      case '/v1/report': return reportEndpoint(headers, body, backing);
+      case '/v1/report': return reportEndpoint(headers, body, deps.reports || defaultReports);
+      case '/v1/admin/revoke': return adminRevokeEndpoint(headers, body, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
       case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing, query);
       default:
@@ -112,13 +120,24 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
     }
   } catch (e) {
     if (e instanceof TokenError || e instanceof VerificationError) {
-      const status = e.code === 'upstream_unavailable' ? 503
+      // server_misconfigured is a store-signed purchase this deployment's
+      // product or bundle config doesn't recognise — our gap, not the
+      // buyer's. 503 keeps it retryable: the native clients finish a
+      // transaction on a definitive 4xx, which would drop a paid purchase.
+      const status = e.code === 'upstream_unavailable' || e.code === 'server_misconfigured' ? 503
         : e.code === 'entitlement_expired' ? 402
         : 401;
       return json(status, { error: e.message, code: e.code });
     }
     if (e instanceof UpstreamError) {
       return json(e.status, { error: e.message, code: 'upstream_error' });
+    }
+    // The state file could not be written. FileStore has already rolled the
+    // change back, so nothing was acknowledged that is not on disk — a credit
+    // that 503s here was not credited, and the client's retry will credit it.
+    if (e instanceof StoreError) {
+      console.error('[intention] state write failed', e.cause || e);
+      return json(503, { error: 'Temporarily unable to save. Try again shortly.', code: 'store_unavailable' });
     }
     console.error('[intention] unhandled error', e);
     return json(500, { error: 'Internal error', code: 'internal_error' });
@@ -296,11 +315,24 @@ async function creditTopUp(platform, subject, result, backing, deps = {}) {
     // that it still verifies and still reports success, which is what keeps
     // App Review's own repeat purchases from looking broken; it just adds
     // nothing. Production purchases never touch any of this.
+    //
+    // Two ceilings, and the lower wins: the per-subject lifetime cap, and a
+    // daily budget across every subject. The first alone is no bound at all
+    // against someone who mints a fresh account UUID per purchase — the
+    // subject is the client's to choose — so the second is the one that
+    // actually caps what sandbox can cost us.
     const sandbox = result.environment === 'sandbox';
     let creditMicros = faceMicros;
     if (sandbox) {
-      const headroom = Math.max(0, sandboxCreditCapMicros(platform) - getSandboxCreditMicros(subject, backing));
-      creditMicros = Math.min(faceMicros, headroom);
+      const subjectHeadroom = Math.max(0, sandboxCreditCapMicros(platform) - getSandboxCreditMicros(subject, backing));
+      const dailyHeadroom = Math.max(0, sandboxDailyBudgetMicros(platform) - getSandboxDailyMicros(backing));
+      creditMicros = Math.min(faceMicros, subjectHeadroom, dailyHeadroom);
+      if (creditMicros < faceMicros) {
+        logEvent('sandbox_credit_capped', {
+          subject, faceMicros, creditMicros,
+          limitedBy: dailyHeadroom < subjectHeadroom ? 'daily_budget' : 'subject_cap'
+        });
+      }
     }
 
     const record = {
@@ -317,14 +349,23 @@ async function creditTopUp(platform, subject, result, backing, deps = {}) {
       // looking like a pricing bug.
       ...(sandbox ? { environment: 'sandbox', faceMicros } : {})
     };
-    markCredited(platform, result.creditId, record, backing);
-    if (result.purchaseToken && result.purchaseToken !== result.creditId) {
-      markCredited(platform, result.purchaseToken, record, backing);
-    }
-    if (creditMicros > 0) {
-      if (sandbox) addSandboxCreditMicros(subject, creditMicros, backing);
-      adjustBalance(subject, creditMicros, backing);
-    }
+    // One batch: the idempotency marker and the credit land on disk together
+    // or not at all. Written separately, a failed flush after the marker used
+    // to leave a purchase recorded as credited with no balance behind it, and
+    // every retry then saw the marker and added nothing.
+    inBatch(backing, () => {
+      markCredited(platform, result.creditId, record, backing);
+      if (result.purchaseToken && result.purchaseToken !== result.creditId) {
+        markCredited(platform, result.purchaseToken, record, backing);
+      }
+      if (creditMicros > 0) {
+        if (sandbox) {
+          addSandboxCreditMicros(subject, creditMicros, backing);
+          addSandboxDailyMicros(creditMicros, backing);
+        }
+        adjustBalance(subject, creditMicros, backing);
+      }
+    });
   }
   if (platform === 'google') {
     // Google's own authoritative "this token is spent" record — insurance
@@ -773,7 +814,9 @@ function priceMicros({ inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, c
 }
 
 // Worst case for the call about to be made, used only to size the hold. Output
-// is bounded server-side by config.llm.maxTokens (the client cannot raise it),
+// is bounded server-side by config.llm.maxTokens, which llm.js sends to every
+// provider (max_tokens to Anthropic, max_completion_tokens to OpenAI) and the
+// client cannot raise,
 // and input by the request caps above, so this is a real ceiling rather than a
 // guess. ~4 chars per token is the usual rough ratio; erring high is safe here
 // because the hold is released as soon as the call returns. All estimated
@@ -818,18 +861,58 @@ function sanitizeToolSchema(node, depth = 0) {
   return INVALID_SCHEMA; // functions/symbols can't appear in JSON bodies anyway
 }
 
+// ---- Operator --------------------------------------------------------------
+
+// Revokes every token a subject holds, at once — for a leaked token, a
+// compromised account UUID, or abuse. It is a route rather than a script
+// against the state file because the running process owns that file: its Map
+// is the authority and it rewrites the whole file on its next mutation, so a
+// bump written by a second process would be silently overwritten within
+// seconds and never seen by verify in the meantime.
+//
+// It only revokes. The balance is untouched, and the subject can still
+// re-verify a receipt or recover by account UUID — revocation ends sessions,
+// it does not take anything away. Disabled unless INTENTION_ADMIN_SECRET is
+// set to something long; compared in constant time.
+//
+// Body: { subject } (the hashed id the logs carry), or { platform,
+// accountToken } to derive it the same way verify does.
+const ADMIN_SECRET_MIN_CHARS = 32;
+
+function adminRevokeEndpoint(headers, body, backing) {
+  const secret = config.adminSecret;
+  if (!secret || secret.length < ADMIN_SECRET_MIN_CHARS) {
+    return json(404, { error: 'Not found', code: 'not_found' });
+  }
+  if (!safeEqualString(bearer(headers), secret)) {
+    return json(401, { error: 'Unauthorized', code: 'unauthorized' });
+  }
+
+  let subject = typeof body?.subject === 'string' ? body.subject.trim() : '';
+  if (!subject && (body?.platform === 'apple' || body?.platform === 'google')) {
+    const token = assertedAccountToken(body?.accountToken);
+    if (token) subject = subjectFor(body.platform, token);
+  }
+  if (!/^[0-9a-f]{32}$/.test(subject)) {
+    return json(400, { error: 'subject (or platform + accountToken) is required', code: 'bad_request' });
+  }
+
+  const tokenVersion = bumpTokenVersion(subject, backing);
+  logEvent('tokens_revoked', { subject, tokenVersion, by: 'admin' });
+  return json(200, { ok: true, subject, tokenVersion });
+}
+
 // ---- Reports --------------------------------------------------------------
 
 const MAX_REPORT_CHARS = 4_000;
 const MAX_REPORT_NOTE_CHARS = 1_000;
-// Long enough to spot a pattern across weeks of reports, short enough that this
-// isn't an open-ended archive of things people found upsetting.
-const REPORT_TTL_MS = 180 * 24 * HOUR;
 
 // A user reporting something the coach said. Play's AI-Generated Content policy
 // requires the affordance and requires that reports "inform content filtering
 // and moderation" — which they can't do if they land somewhere unreadable, so
-// this both persists the report and emits it as a log event.
+// this both keeps the report and emits it as a log event. Kept in reports.js's
+// own size-bounded file, never the ledger: this route is unauthenticated, and
+// a ledger write re-serialises every balance.
 //
 // That log line is the one deliberate exception to log.js's rule against
 // logging message content. It is narrow and it is consented: the client says in
@@ -840,7 +923,7 @@ const REPORT_TTL_MS = 180 * 24 * HOUR;
 // is presented, purely so a repeat reporter can be recognised across reports,
 // and a bad token is ignored rather than rejected: losing the report would be
 // worse than losing the attribution.
-function reportEndpoint(headers, body, backing) {
+function reportEndpoint(headers, body, reportStore) {
   const reported = clampReportText(body && body.reported, MAX_REPORT_CHARS);
   if (!reported) {
     return json(400, { error: 'Nothing to report', code: 'invalid_request' });
@@ -868,7 +951,7 @@ function reportEndpoint(headers, body, backing) {
 
   const id = newRequestId();
   try {
-    backing.set(`report:${id}`, record, REPORT_TTL_MS);
+    reportStore.add({ id, ...record });
   } catch (e) {
     // A full or unmounted volume must not swallow the report — the log line
     // below is what actually gets read, so carry on and let it through.

@@ -63,6 +63,13 @@ key can't fill a gap.
 | `POST /v1/chat` | Bearer | `{ system, messages, tools }` → `{ text, toolCalls, balanceMicros, balanceGbp }` |
 | `POST /v1/webhooks/apple` | Apple JWS | App Store Server Notifications V2 (refund/revocation clawback) |
 | `POST /v1/webhooks/google` | Token / PubSub | Google Play RTDN (refund/cancellation clawback) |
+| `POST /v1/report` | — (Bearer optional) | `{ reported, prompt?, note?, provider?, model? }` → a user's report of something the coach said |
+| `POST /v1/admin/revoke` | Bearer `INTENTION_ADMIN_SECRET` | `{ subject }` or `{ platform, accountToken }` → revokes every token the subject holds (balance untouched). 404 unless the secret is set and ≥ 32 chars |
+
+A refund clawback (either webhook) also revokes the refunded subject's
+tokens, so nothing minted on the refunded money keeps working; the client
+re-verifies or recovers and gets a token against the balance as it now
+stands. Recovery never revokes.
 
 Error responses carry a `code` the client acts on: `entitlement_invalid` (401)
 and `entitlement_expired` (402) send the user back to the paywall,
@@ -135,9 +142,23 @@ that must not be able to permanently re-point a device at another account.
 
 See [`.env.template`](.env.template). `INTENTION_TOKEN_SECRET` and
 `INTENTION_LLM_API_KEY` are required and the server refuses to start without
-them. Missing store credentials are a startup warning, not a failure: Apple
-receipts still get their signature checked, but Play purchases can't be
-verified at all until `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY` are set.
+them. With `NODE_ENV` unset or `production`, so are `APPLE_ISSUER_ID`,
+`APPLE_KEY_ID` and `APPLE_PRIVATE_KEY` (and the key must parse): Apple receipts
+are refused (503 `upstream_unavailable`) rather than credited on their
+signature alone, because a signed transaction stays validly signed after Apple
+refunds it — only Get Transaction Info can say otherwise. In development they
+are a warning. Missing Play credentials are a warning everywhere: Play
+purchases can't be verified until `GOOGLE_CLIENT_EMAIL` / `GOOGLE_PRIVATE_KEY`
+are set.
+
+Apple's JWS check is the full StoreKit one: `alg` must be `ES256`, `x5c` must
+be exactly leaf/intermediate/root, every link must verify against the next and
+be in date, the root must be one of Apple's pinned roots, the intermediate and
+root must be CAs and the leaf must not be, the intermediate must carry Apple's
+WWDR marker (`1.2.840.113635.100.6.2.1`) and the leaf the receipt-signing
+marker (`1.2.840.113635.100.6.11.1`). Malformed input of any kind is a 401,
+never a 500. Every outbound store call has a 15 s timeout that surfaces as
+`upstream_unavailable`.
 
 The three top-up tiers, per-model LLM pricing, and the USD→GBP/margin
 constants used to compute a deduction all live in `server/src/config.js` —
@@ -176,6 +197,12 @@ and credited like any other — up to `INTENTION_SANDBOX_CREDIT_CAP_GBP` (defaul
 the balance appear and talk to the coach; not enough for a free sandbox Apple
 Account to become an unlimited supply of tokens. Set it to `0` to refuse
 sandbox credit altogether.
+
+The per-account cap alone is no bound, because the account is a UUID the
+client chooses — a fresh one is a fresh cap. So sandbox credit is also capped
+across *every* account at `INTENTION_SANDBOX_DAILY_BUDGET_GBP` (default £5) per
+UTC day, priced the same way. Past either ceiling a sandbox purchase still
+verifies and reports success; it just credits nothing.
 
 - **App Store Connect** → your app → *Promo Codes*, or the in-app purchase's
   own promo code section. The tester redeems in the app (Settings → AI access →
@@ -221,12 +248,27 @@ high-churn and fine to lose on restart, and keeping them in memory is what
 makes fsync-per-mutation affordable for the rare durable writes (purchases,
 refunds, one deduction per chat message).
 
+Coach reports are kept out of it too, since `/v1/report` is unauthenticated
+and every ledger write re-serialises every balance. They go to
+`intention-reports.jsonl` beside the state file (`src/reports.js`), appended
+one line per report and rotated to `.1` at 5 MB, so disk use stays under
+10 MB; with no state file, the last 500 are kept in memory. The
+`coach_report` log line is still emitted for every one.
+
+A durable write that fails (full or unmounted volume) never leaves memory
+ahead of disk: `FileStore.batch()` journals every key a unit of work touches
+and restores them all if the flush fails. A credit, and a refund, each write as
+one batch, so a purchase is recorded as credited together with its balance or
+not at all, and the client gets a 503 `store_unavailable` and retries.
+
 ## Tests
 
-Run from the repo root (`npm test`); the suite is `tests/server.test.js`. Store
-verification is injected, so the tests need neither network access nor
-credentials. Apple's signature walk is exercised against a locally generated
-certificate chain, which it must reject.
+Run from the repo root (`npm test`); the suites are `tests/server.test.js` and
+`tests/server-hardening.test.js`. Store verification is injected, so the tests
+need neither network access nor credentials. Apple's signature walk is
+exercised against locally minted StoreKit-shaped chains — pinned in the test
+so every check after the root pin can be broken one at a time — and against a
+self-signed chain, which it must reject.
 
 ## Deploying
 
