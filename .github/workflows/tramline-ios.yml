@@ -1,0 +1,87 @@
+name: Tramline · iOS
+
+# Triggered by Tramline. Builds the iOS app at Tramline's commit, stamps it
+# with Tramline's version name / build number, signs it via match and uploads
+# it to TestFlight (no external distribution). Tramline then picks the build up
+# in App Store Connect by its build number. Uses the same Fastlane + match
+# setup and `release` environment secrets as publish-apple.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tramline-input:
+        description: "JSON from Tramline (version_name, version_code, commit_ref, build_notes)"
+        required: false
+        default: "{}"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tramline-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release
+    steps:
+      - name: Configure Tramline
+        id: tramline
+        uses: tramlinehq/deploy-action@v0.1.7
+        with:
+          input: ${{ github.event.inputs.tramline-input }}
+
+      - name: Require Tramline version
+        env:
+          VERSION_NAME: ${{ steps.tramline.outputs.version_name }}
+          VERSION_CODE: ${{ steps.tramline.outputs.version_code }}
+        run: |
+          if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
+            echo "::error::No version_name/version_code in tramline-input — this workflow is meant to be triggered by Tramline."; exit 1
+          fi
+
+      - name: Check secrets configured
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_GIT_SSH_KEY: ${{ secrets.MATCH_GIT_SSH_KEY }}
+        run: |
+          MISSING=""
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT MATCH_PASSWORD MATCH_GIT_SSH_KEY; do
+            [[ -n "${!name}" ]] || MISSING="$MISSING $name"
+          done
+          if [[ -n "$MISSING" ]]; then
+            echo "::error::App Store Connect secrets not configured. Missing:$MISSING. See DEPLOYMENT.md."
+            exit 1
+          fi
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      - name: Load match-certs SSH key
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.MATCH_GIT_SSH_KEY }}
+
+      - name: Set up Ruby + Fastlane
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+        with:
+          bundler-cache: true
+          working-directory: Intention Apple
+
+      - name: Build & upload to TestFlight
+        working-directory: Intention Apple
+        env:
+          VERSION_NAME: ${{ steps.tramline.outputs.version_name }}
+          VERSION_CODE: ${{ steps.tramline.outputs.version_code }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        run: bundle exec fastlane ios tramline version_name:"$VERSION_NAME" version_code:"$VERSION_CODE"
