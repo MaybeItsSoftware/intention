@@ -863,28 +863,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Two readings, either is enough. The setting is the switch itself, but it
+    // holds the component in whichever form the writer chose: the full
+    // "pkg/pkg.Service" from stock Settings, the short "pkg/.Service" from
+    // some OEM builds and from adb, so it is compared as a ComponentName, not
+    // as text. The manager's list is what the system has actually bound, and
+    // does not care how the setting was spelled. ACCESSIBILITY_ENABLED is not
+    // consulted: some builds leave it at 0 with services on.
     private fun isAccessibilityServiceEnabled(): Boolean {
-        val service = "$packageName/${IntentionAccessibilityService::class.java.canonicalName}"
-        val enabled = Settings.Secure.getInt(
+        val ours = android.content.ComponentName(this, IntentionAccessibilityService::class.java)
+        val settingValue = Settings.Secure.getString(
             contentResolver,
-            Settings.Secure.ACCESSIBILITY_ENABLED, 0
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         )
-        if (enabled == 1) {
-            val settingValue = Settings.Secure.getString(
-                contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            )
-            if (settingValue != null) {
-                val splitter = TextUtils.SimpleStringSplitter(':')
-                splitter.setString(settingValue)
-                while (splitter.hasNext()) {
-                    val accessService = splitter.next()
-                    if (accessService.equals(service, ignoreCase = true)) {
-                        return true
-                    }
+        if (settingValue != null) {
+            val splitter = TextUtils.SimpleStringSplitter(':')
+            splitter.setString(settingValue)
+            while (splitter.hasNext()) {
+                if (android.content.ComponentName.unflattenFromString(splitter.next()) == ours) {
+                    return true
                 }
             }
         }
-        return false
+        val manager = getSystemService(Context.ACCESSIBILITY_SERVICE)
+            as? android.view.accessibility.AccessibilityManager ?: return false
+        return manager.getEnabledAccessibilityServiceList(
+            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+        ).any {
+            it.resolveInfo.serviceInfo.let { info ->
+                info.packageName == ours.packageName && info.name == ours.className
+            }
+        }
     }
 }
