@@ -1,3 +1,15 @@
+## [1.3.1](https://github.com/MaybeItsSoftware/intention/compare/v1.3.0...v1.3.1) (2026-10-15)
+
+### Bug Fixes
+
+* **android:** detect Accessibility however the setting spells the service ([c9e1420](https://github.com/MaybeItsSoftware/intention/commit/c9e1420af73afaec94ecde03570f621a2c5f2db3))
+* **android:** gate on return after a lapsed pass, survive clock changes, keep Block Store ids ([531bfb1](https://github.com/MaybeItsSoftware/intention/commit/531bfb1465b050df16f20d22c231811dd2258db9))
+* **apple:** stop clock and time-zone stretch, end short passes on time ([ddbc49b](https://github.com/MaybeItsSoftware/intention/commit/ddbc49bf98d2b7cca498d1831fe72a58021bb234))
+* **gate:** close trailing-dot, frame and rollback bypasses; keep credit through failed verifies ([494d37e](https://github.com/MaybeItsSoftware/intention/commit/494d37e473164f87970c1c4b1465c29c5a9062b0))
+* **gate:** end a site pass on the page when the check-in alarm is gone ([778ae17](https://github.com/MaybeItsSoftware/intention/commit/778ae176e7c539cd3b4b1fbaea94b4e594bfe931))
+* **gate:** gate a followed link once, and keep the coach above the keyboard ([f574325](https://github.com/MaybeItsSoftware/intention/commit/f574325b9ad8d13e011f7d9c7d585a65465fb880))
+* **server:** harden Apple JWS checks, cap hosted output, keep reports out of the ledger ([8118925](https://github.com/MaybeItsSoftware/intention/commit/81189253131689bbad49bdca1d7e772ae1815882))
+
 ## [1.3.0](https://github.com/MaybeItsSoftware/intention/compare/v1.2.0...v1.3.0) (2026-10-09)
 
 ### Features
