@@ -22,6 +22,10 @@ android {
         targetSdk = 36
         versionCode = 76
         versionName = "1.3.1"
+        // Tramline release builds pass -PversionCode=/-PversionName=; local
+        // builds and scripts/bump-version.sh keep using the literals above.
+        (project.findProperty("versionCode") as String?)?.let { versionCode = it.toInt() }
+        (project.findProperty("versionName") as String?)?.let { versionName = it }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
