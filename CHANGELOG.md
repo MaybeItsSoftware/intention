@@ -1,3 +1,9 @@
+## [1.3.2](https://github.com/MaybeItsSoftware/intention/compare/v1.3.1...v1.3.2) (2026-10-30)
+
+### Bug Fixes
+
+* **android:** open the Play Store app to redeem codes, never the browser ([dcb9dd3](https://github.com/MaybeItsSoftware/intention/commit/dcb9dd3987228df576c10ec0e38485d165cd6c58))
+
 ## [1.3.1](https://github.com/MaybeItsSoftware/intention/compare/v1.3.0...v1.3.1) (2026-10-15)
 
 ### Bug Fixes
