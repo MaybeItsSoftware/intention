@@ -350,46 +350,44 @@ object BillingManager : PurchasesUpdatedListener {
     // Where the user actually ended up. The redemption itself happens in
     // another app, so this is the only thing we can tell them for certain.
     private const val ROUTE_PLAY_APP = "play"
-    private const val ROUTE_BROWSER = "browser"
+    private const val ROUTE_PLAY_HOME = "play_home"
 
     /**
-     * Opens Play's redemption screen, preferring the Play Store app, and
-     * reports which route was taken (null if neither could be opened).
+     * Opens Play's redemption screen in the Play Store app, and reports which
+     * route was taken (null if the Play Store couldn't be opened at all).
      *
-     * This used to try the Play-scoped intent and, on ANY exception, silently
-     * retry unscoped — so a device that has the Play Store but whose Play
-     * Store doesn't claim the /redeem URL landed in a web browser without a
-     * word. That is worse than it sounds: the browser is often signed into a
-     * different Google account than the device's Play Store, so the code is
-     * granted to an account the app will never see, and queryPurchasesAsync
-     * stays empty forever.
+     * Not every Play Store build claims the /redeem URL. Those that don't used
+     * to fall through to a web browser — and play.google.com/redeem refuses a
+     * one-time-product code outright ("redeem in the app"), so that route
+     * could never work for the only codes this app sells. It also risked a
+     * browser signed into a different Google account than the device's Play
+     * Store. Instead, open the Play Store app itself and let the UI say where
+     * Redeem code lives (profile → Payments & subscriptions).
      *
-     * Resolved deliberately rather than by catching ActivityNotFoundException,
-     * so the fallback is a decision we report instead of an accident. Safe
-     * against Android 11 package-visibility filtering because the app already
-     * holds QUERY_ALL_PACKAGES (see AndroidManifest).
+     * Safe against Android 11 package-visibility filtering because the app
+     * already holds QUERY_ALL_PACKAGES (see AndroidManifest).
      */
     private fun openRedeemScreen(activity: Activity): String? {
-        val uri = Uri.parse("https://play.google.com/redeem")
         val pm = activity.packageManager
 
-        val playIntent = Intent(Intent.ACTION_VIEW, uri).setPackage(PLAY_STORE_PACKAGE)
-        if (playIntent.resolveActivity(pm) != null) {
+        val redeemIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/redeem"))
+            .setPackage(PLAY_STORE_PACKAGE)
+        if (redeemIntent.resolveActivity(pm) != null) {
             try {
-                activity.startActivity(playIntent)
+                activity.startActivity(redeemIntent)
                 return ROUTE_PLAY_APP
             } catch (e: Exception) {
                 Log.w(TAG, "Play Store resolved the redeem URL but wouldn't start: ${e.message}")
             }
         }
 
-        val webIntent = Intent(Intent.ACTION_VIEW, uri)
-        if (webIntent.resolveActivity(pm) != null) {
+        val homeIntent = pm.getLaunchIntentForPackage(PLAY_STORE_PACKAGE)
+        if (homeIntent != null) {
             try {
-                activity.startActivity(webIntent)
-                return ROUTE_BROWSER
+                activity.startActivity(homeIntent)
+                return ROUTE_PLAY_HOME
             } catch (e: Exception) {
-                Log.w(TAG, "Couldn't open Play redemption in a browser: ${e.message}")
+                Log.w(TAG, "Couldn't open the Play Store: ${e.message}")
             }
         }
         return null

@@ -245,13 +245,12 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
       // this used to block until a two-minute poll expired and then report a
       // failure, for a code that was very often about to work.
       //
-      // The route matters enough to say out loud. A browser is usually signed
-      // into a different Google account than the device's Play Store, and a
-      // code redeemed there is granted to an account this app will never see —
-      // which looks, from here, exactly like a code that did nothing.
+      // Not every Play Store build opens straight onto its redeem screen;
+      // when it doesn't, the user lands on Play's home and has to find
+      // Redeem code themselves, so tell them where it is.
       if (result.status === 'opened') {
-        return result.route === 'browser'
-          ? 'Google Play opened in your browser. Make sure it\'s the same Google account as the Play Store on this device, or the credit will land somewhere Intention can\'t see it. It\'ll appear here once redeemed.'
+        return result.route === 'play_home'
+          ? 'Google Play is open. Tap your profile picture, then Payments & subscriptions, then Redeem code. Your credit will appear here when it lands.'
           : 'Finish redeeming in Google Play. Your credit will appear here when it lands.';
       }
       if (result.status === 'none') {
