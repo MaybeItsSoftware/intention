@@ -1,3 +1,9 @@
+## [1.3.3](https://github.com/MaybeItsSoftware/intention/compare/v1.3.2...v1.3.3) (2026-11-09)
+
+### Bug Fixes
+
+* **android:** keep website passes charging while the address bar is hidden ([e33132c](https://github.com/MaybeItsSoftware/intention/commit/e33132c9223050834d7b30979af6e896af41fa73))
+
 ## [1.3.2](https://github.com/MaybeItsSoftware/intention/compare/v1.3.1...v1.3.2) (2026-10-30)
 
 ### Bug Fixes
