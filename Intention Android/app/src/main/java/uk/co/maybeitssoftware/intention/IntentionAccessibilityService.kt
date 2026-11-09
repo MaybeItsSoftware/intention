@@ -178,6 +178,14 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private val lastContentCheckAt = mutableMapOf<String, Long>()
     private val lastSeenHost = mutableMapOf<String, String>()
+    // Browsers whose next readable host must be evaluated afresh even if it is
+    // the one in lastSeenHost. Kept apart from lastSeenHost on purpose: that
+    // map is also what keeps a website pass charging while the address bar is
+    // hidden (scrolling, fullscreen video), and wiping it to force a re-check
+    // paused the pass instead — after a minute away the background banked
+    // only the time before the pause and ended it, so a ten-minute visit
+    // came off the day's budget as one.
+    private val hostRecheck = mutableSetOf<String>()
     private val dismissedUntil = mutableMapOf<String, Long>()
 
     private val handler = Handler(Looper.getMainLooper())
@@ -491,9 +499,10 @@ class IntentionAccessibilityService : AccessibilityService() {
             // A browser coming (back) to the foreground must be re-evaluated
             // even when the URL bar still shows the same host — e.g. the user
             // swiped the coach away and reopened the browser from recents.
-            // Drop the dedupe/throttle state so checkWebsiteBlock runs fresh.
+            // Drop the dedupe/throttle state so checkWebsiteBlock runs fresh —
+            // but keep the host itself, which a live pass needs (hostRecheck).
             if (BROWSER_URL_BAR_IDS.containsKey(packageName)) {
-                lastSeenHost.remove(packageName)
+                hostRecheck.add(packageName)
                 lastContentCheckAt.remove(packageName)
             }
         }
@@ -618,7 +627,7 @@ class IntentionAccessibilityService : AccessibilityService() {
             return
         }
         val host = extractHost(urlText) ?: return
-        val hostChanged = lastSeenHost[packageName] != host
+        val hostChanged = hostRecheck.remove(packageName) or (lastSeenHost[packageName] != host)
         lastSeenHost[packageName] = host
 
         val matchedDomain = findBlockedDomain(host)
@@ -767,8 +776,9 @@ class IntentionAccessibilityService : AccessibilityService() {
         // cases; a live pass that is merely still running re-renders instead.
         val target = foregroundTarget(foreground, root)
         // Hosts were deduped while the pass was live; an expiry needs a fresh
-        // check, but first retain the loaded host for address-bar edit mode.
-        lastSeenHost.clear()
+        // check. The hosts themselves stay: they are what a hidden address
+        // bar falls back to (see hostRecheck).
+        hostRecheck.addAll(lastSeenHost.keys)
         ForegroundPass.sync(applicationContext, target)
         SessionOverlay.sync(applicationContext, target)
         if (target != null) sessionExpiresAt(target)?.let { scheduleExpiryRecheck(it) }
@@ -810,6 +820,7 @@ class IntentionAccessibilityService : AccessibilityService() {
         }
         val host = extractHost(urlText) ?: return
         lastSeenHost[packageName] = host
+        hostRecheck.remove(packageName)
         val matchedDomain = findBlockedDomain(host)
         if (matchedDomain == null) {
             clearDismissals(packageName)
@@ -851,7 +862,12 @@ class IntentionAccessibilityService : AccessibilityService() {
         val url = root?.let { findBrowserUrlText(it, packageName, urlIds) }
         // Editing an address does not change the loaded page. Keep its pass
         // until a committed URL appears or the browser leaves the foreground.
-        val host = if (url == null && lastForegroundPackage == packageName) {
+        // "The browser is still in front" is the active window's own package
+        // when there is one: lastForegroundPackage follows window-state events
+        // from anything, and a heads-up notification or the keyboard taking
+        // that slot must not read as leaving the site.
+        val stillInFront = root?.packageName?.toString() == packageName || lastForegroundPackage == packageName
+        val host = if (url == null && stillInFront) {
             lastSeenHost[packageName]
         } else url?.let { extractHost(it) }
         return host?.let { findBlockedDomain(it) }
