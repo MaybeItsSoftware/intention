@@ -119,8 +119,20 @@ jobs:
           chmod +x ./gradlew
           ./gradlew bundleRelease
 
-      - name: Upload & publish to Google Play
+      # changesNotSentForReview is right in one Play state and refused in the
+      # other. While a review on the app is open (a rejection, say), Play will
+      # not auto-submit and the edit only commits with it set. Once nothing is
+      # open, Play sends changes for review automatically and rejects any edit
+      # that sets it ("Changes are sent for review automatically. The query
+      # parameter changesNotSentForReview must not be set") — which is how
+      # v1.3.4 uploaded and then never reached the track. Which state the app
+      # is in is not something this workflow can read, so try the first and
+      # fall back to the second. Nothing is lost by the retry: a refused edit
+      # is never committed, so the same versionCode uploads again cleanly.
+      - name: Upload & publish to Google Play (not sent for review)
+        id: upload_held
         if: steps.check.outputs.configured == 'true'
+        continue-on-error: true
         uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
@@ -128,8 +140,14 @@ jobs:
           releaseFiles: Intention Android/app/build/outputs/bundle/release/app-release.aab
           track: internal
           status: completed
-          # Commit the internal release without sending it for review. Play
-          # refuses to auto-submit while any review on the app is open (e.g. a
-          # rejection), and an internal build doesn't need one anyway; send
-          # changes for review from the Play console when a review is wanted.
           changesNotSentForReview: true
+
+      - name: Upload & publish to Google Play (Play sends for review itself)
+        if: steps.check.outputs.configured == 'true' && steps.upload_held.outcome == 'failure'
+        uses: r0adkll/upload-google-play@935ef9c68bb393a8e6116b1575626a7f5be3a7fb # v1.1.3
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: uk.co.maybeitssoftware.intention
+          releaseFiles: Intention Android/app/build/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed
