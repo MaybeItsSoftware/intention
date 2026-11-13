@@ -278,6 +278,17 @@ async function refreshAccessUI(containerId, { compact = false, errorCode = null 
       const recovered = await recoverStrandedCredit(fresh?.entitlement || null,
         { force: true, route: fresh?.route || null });
       if (!entitlementIsActive(recovered)) {
+        try {
+          const result = await restorePurchases();
+          if (result && result.receipt) {
+            await verifyAndStore(result.platform || storePlatform(), result.receipt);
+          }
+        } catch (_) {}
+        const afterRestore = await getAccessState();
+        if (entitlementIsActive(afterRestore?.entitlement)) {
+          await onAccessChanged(await rerender());
+          return null;
+        }
         return 'No credit is attached to this device.';
       }
       await onAccessChanged(await rerender());

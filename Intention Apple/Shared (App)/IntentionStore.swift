@@ -89,7 +89,10 @@ actor IntentionStore {
             // makes that true rather than merely intended — see the long note
             // on it.
             if await shouldAttemptRecovery() {
-                await recoverBalance()
+                let recovered = await recoverBalance()
+                if !recovered {
+                    await recoverPastTransactions()
+                }
             }
         }
     }
@@ -193,13 +196,36 @@ actor IntentionStore {
     // A consumable has nothing to "restore" in the subscription sense — once
     // finished, StoreKit forgets it. What this recovers is a purchase that
     // was bought but never durably credited (app killed, offline at the
-    // time) — a real, useful operation, just a different one than before.
+    // time) — or a finished purchase / promo redemption from Transaction.all
+    // when restoring on a new install.
     func restore() async -> [String: Any] {
         try? await AppStore.sync()
-        guard let jws = await recoverUnfinishedTransactions(), !jws.isEmpty else {
-            return ["status": "none", "error": "No pending purchase found."]
+        if let jws = await recoverUnfinishedTransactions(), !jws.isEmpty {
+            return ["status": "purchased", "platform": "apple", "receipt": jws]
         }
-        return ["status": "purchased", "platform": "apple", "receipt": jws]
+        if let jws = await recoverPastTransactions(), !jws.isEmpty {
+            return ["status": "purchased", "platform": "apple", "receipt": jws]
+        }
+        return ["status": "none", "error": "No pending or past purchase found."]
+    }
+
+    // Sweeps Transaction.all for already-finished transactions (e.g. after a reinstall).
+    // StoreKit 2 keeps the full history for this Apple ID, including finished consumables
+    // and promo redemptions, in Transaction.all. Re-verifying a finished transaction with
+    // the backend does not double-credit (getCreditRecord ensures idempotency), but restores
+    // the original subject, live token, and current balance.
+    @discardableResult
+    private func recoverPastTransactions() async -> String? {
+        for await result in Transaction.all {
+            guard case .verified(let transaction) = result,
+                  IntentionProduct.all.contains(transaction.productID) else { continue }
+            let jws = result.jwsRepresentation
+            let outcome = await verifyWithBackend(receipt: jws)
+            if outcome == .credited {
+                return jws
+            }
+        }
+        return nil
     }
 
     // Sweeps Transaction.unfinished — unlike currentEntitlements, this *does*
