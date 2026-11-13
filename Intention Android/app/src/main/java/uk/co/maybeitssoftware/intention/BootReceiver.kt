@@ -52,6 +52,10 @@ class BootReceiver : BroadcastReceiver() {
             else -> return
         }
         Log.d(TAG, "Reconciling sessions after ${intent.action}")
+        // Alarms do not survive a reboot or an update, and the service may
+        // not come back to re-arm the watchdog itself — that is the case it
+        // is for.
+        ServiceWatchdog.arm(context)
 
         // BackgroundJsHelper reconciles on its own as soon as background.html
         // loads; this request is queued behind that one and only serves as a

@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.text.TextUtils
 import android.view.View
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -42,6 +41,11 @@ class MainActivity : AppCompatActivity() {
         private const val COLOR_AMBER_FILL = "#1affbf00"
         private const val COLOR_AMBER_BORDER = "#66ffbf00"
         private const val REQUEST_POST_NOTIFICATIONS = 0x1973
+        // See refreshAccessibilityState.
+        private const val GATE_RECHECK_MS = 2_000L
+        private const val SETUP_STEPS = "1.  Tap the button below and agree\n\n" +
+            "2.  Find Intention in the list (on Samsung it's under \"Installed apps\", on others sometimes \"Downloaded apps\") and turn it on\n\n" +
+            "3.  Tap \"Allow\". Intention reopens by itself"
 
         // The accessibility gate's own background. The page's paper is
         // R.color.paper (values / values-night), see paintSystemBars.
@@ -102,12 +106,24 @@ class MainActivity : AppCompatActivity() {
     // rules at the head of AppParts.kt), so it is worth a permanent place above
     // the settings UI rather than a toast that vanishes.
     private lateinit var partsWarning: View
+    // The gate has two faces: first-run setup (switch off) and "blocking has
+    // stopped" (switch on, service not running — see ServiceHealth). Kept as
+    // fields so onResume can turn one into the other.
+    private lateinit var gateTitle: TextView
+    private lateinit var gateText: TextView
+    private lateinit var gateSteps: TextView
+    private lateinit var gateButton: Button
+    private lateinit var gateShareBtn: Button
+    private var gateShowsStopped = false
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val gateRecheck = Runnable { if (!isFinishing) refreshAccessibilityState() }
     private lateinit var partsWarningTitle: TextView
     private lateinit var partsWarningBody: TextView
     private var partsWarningTarget: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ServiceHealth.installCrashRecorder(this)
         enableEdgeToEdge()
         // enableEdgeToEdge lays a translucent scrim over a three-button
         // navigation bar so its icons stay legible on arbitrary content. Ours
@@ -165,9 +181,7 @@ class MainActivity : AppCompatActivity() {
         // No "come back here" step: the service brings the app back itself
         // (returnToSetupIfAsked).
         val stepsText = TextView(this).apply {
-            text = "1.  Tap the button below and agree\n\n" +
-                "2.  Find Intention in the list (on Samsung it's under \"Installed apps\", on others sometimes \"Downloaded apps\") and turn it on\n\n" +
-                "3.  Tap \"Allow\". Intention reopens by itself"
+            text = SETUP_STEPS
             setTextColor(android.graphics.Color.parseColor(COLOR_TEXT))
             textSize = 16f
             gravity = android.view.Gravity.START
@@ -187,7 +201,30 @@ class MainActivity : AppCompatActivity() {
                 setColor(android.graphics.Color.parseColor(COLOR_AZURE))
             }
             setTextColor(android.graphics.Color.WHITE)
-            setOnClickListener { showAccessibilityDisclosure() }
+            setOnClickListener {
+                // The disclosure is for turning it on. Restarting a stopped
+                // service is a switch the user already agreed to.
+                if (gateShowsStopped) {
+                    requestReturn(this@MainActivity)
+                    openAccessibilitySettings()
+                } else {
+                    showAccessibilityDisclosure()
+                }
+            }
+        }
+
+        // Only on the stopped face: the crash log and service events, as text
+        // the user can send to whoever is fixing it.
+        val shareDiagnosticsBtn = Button(this).apply {
+            text = "Send a diagnostics report"
+            isAllCaps = false
+            textSize = 15f
+            minHeight = dp(48f)
+            stateListAnimator = null
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setTextColor(android.graphics.Color.parseColor(COLOR_AZURE))
+            visibility = View.GONE
+            setOnClickListener { shareDiagnostics() }
         }
 
         // A fallback only: onResume already re-checks, and the service brings
@@ -201,14 +238,19 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             setTextColor(android.graphics.Color.parseColor(COLOR_MUTED))
             setOnClickListener {
-                if (isAccessibilityServiceEnabled()) {
-                    accessibilityGate.visibility = View.GONE
-                    webView.visibility = View.VISIBLE
-                    paintSystemBars(gate = false)
+                val status = ServiceHealth.status(this@MainActivity)
+                if (status == ServiceHealth.Status.RUNNING) {
+                    refreshAccessibilityState()
                 } else {
+                    // The stopped face may have appeared or gone since.
+                    refreshAccessibilityState()
                     android.widget.Toast.makeText(
                         this@MainActivity,
-                        "Still off. Make sure the switch next to Intention is on",
+                        if (status == ServiceHealth.Status.STOPPED) {
+                            "Still stopped. Turn Intention off, then on again"
+                        } else {
+                            "Still off. Make sure the switch next to Intention is on"
+                        },
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
@@ -220,6 +262,12 @@ class MainActivity : AppCompatActivity() {
         (accessibilityGate as android.widget.LinearLayout).addView(stepsText)
         (accessibilityGate as android.widget.LinearLayout).addView(enableServiceBtn)
         (accessibilityGate as android.widget.LinearLayout).addView(recheckBtn)
+        (accessibilityGate as android.widget.LinearLayout).addView(shareDiagnosticsBtn)
+        gateTitle = alertTitle
+        gateText = alertText
+        gateSteps = stepsText
+        gateButton = enableServiceBtn
+        gateShareBtn = shareDiagnosticsBtn
 
         overlayPrompt = buildOverlayPrompt()
         partsWarning = buildPartsWarning()
@@ -681,6 +729,7 @@ class MainActivity : AppCompatActivity() {
     private var backgroundCredit: ((org.json.JSONObject) -> Unit)? = null
 
     override fun onDestroy() {
+        handler.removeCallbacks(gateRecheck)
         if (BillingManager.onBackgroundCredit === backgroundCredit) BillingManager.onBackgroundCredit = null
         backgroundCredit = null
         super.onDestroy()
@@ -689,7 +738,24 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         sweepForPurchasesOnReturn()
-        if (!isAccessibilityServiceEnabled()) {
+        refreshAccessibilityState()
+    }
+
+    override fun onPause() {
+        handler.removeCallbacks(gateRecheck)
+        super.onPause()
+    }
+
+    private fun refreshAccessibilityState() {
+        val status = ServiceHealth.status(this)
+        if (status != ServiceHealth.Status.RUNNING) {
+            setGateFace(stopped = status == ServiceHealth.Status.STOPPED)
+            // Re-read every couple of seconds while the stopped face is up:
+            // coming back from Settings the system may not have bound the
+            // service yet, and the screen should clear itself the moment it
+            // has, without a tap on "Check again".
+            handler.removeCallbacks(gateRecheck)
+            if (status == ServiceHealth.Status.STOPPED) handler.postDelayed(gateRecheck, GATE_RECHECK_MS)
             accessibilityGate.visibility = View.VISIBLE
             webView.visibility = View.GONE
             overlayPrompt.visibility = View.GONE
@@ -863,36 +929,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Two readings, either is enough. The setting is the switch itself, but it
-    // holds the component in whichever form the writer chose: the full
-    // "pkg/pkg.Service" from stock Settings, the short "pkg/.Service" from
-    // some OEM builds and from adb, so it is compared as a ComponentName, not
-    // as text. The manager's list is what the system has actually bound, and
-    // does not care how the setting was spelled. ACCESSIBILITY_ENABLED is not
-    // consulted: some builds leave it at 0 with services on.
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val ours = android.content.ComponentName(this, IntentionAccessibilityService::class.java)
-        val settingValue = Settings.Secure.getString(
-            contentResolver,
-            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        )
-        if (settingValue != null) {
-            val splitter = TextUtils.SimpleStringSplitter(':')
-            splitter.setString(settingValue)
-            while (splitter.hasNext()) {
-                if (android.content.ComponentName.unflattenFromString(splitter.next()) == ours) {
-                    return true
-                }
-            }
+    private fun setGateFace(stopped: Boolean) {
+        if (stopped == gateShowsStopped) return
+        gateShowsStopped = stopped
+        if (stopped) {
+            gateTitle.text = "Blocking has stopped"
+            gateText.text = "Android stopped Intention's Accessibility service, so nothing is being " +
+                "blocked right now. The switch in Settings still shows it as on."
+            gateSteps.text = "1.  Tap the button below\n\n" +
+                "2.  Find Intention (on Samsung it's under \"Installed apps\"), turn it off, then on again\n\n" +
+                "3.  Intention reopens by itself"
+            gateButton.text = "Open Accessibility settings"
+            gateShareBtn.visibility = View.VISIBLE
+        } else {
+            gateTitle.text = "Turn on Accessibility for Intention"
+            gateText.text = "Intention blocks apps and sites by noticing which one is open. " +
+                "Android only allows that through the Accessibility permission."
+            gateSteps.text = SETUP_STEPS
+            gateButton.text = "Turn on Accessibility"
+            gateShareBtn.visibility = View.GONE
         }
-        val manager = getSystemService(Context.ACCESSIBILITY_SERVICE)
-            as? android.view.accessibility.AccessibilityManager ?: return false
-        return manager.getEnabledAccessibilityServiceList(
-            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
-        ).any {
-            it.resolveInfo.serviceInfo.let { info ->
-                info.packageName == ours.packageName && info.name == ours.className
-            }
+    }
+
+    // Plain text through the share sheet: mail, a chat, notes. No file
+    // provider, no permissions, and readable by whoever receives it.
+    private fun shareDiagnostics() {
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Intention diagnostics")
+            putExtra(Intent.EXTRA_TEXT, ServiceHealth.report(this@MainActivity))
+        }
+        try {
+            startActivity(Intent.createChooser(send, "Send diagnostics"))
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "No app available to send it", android.widget.Toast.LENGTH_LONG).show()
         }
     }
 }

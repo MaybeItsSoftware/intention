@@ -66,6 +66,8 @@ class IntentionAccessibilityService : AccessibilityService() {
         // meant to be on. This is long enough for the hand-off and no longer:
         // if the browser is still on the site when it runs out, it is gated.
         private const val APP_HANDOFF_WAIT_MS = 1_500L
+        // How often the same caught error is written to the crash log.
+        private const val CAUGHT_RECORD_INTERVAL_MS = 60_000L
 
         @Volatile
         var instance: IntentionAccessibilityService? = null
@@ -279,9 +281,30 @@ class IntentionAccessibilityService : AccessibilityService() {
     // The site gate held back by APP_HANDOFF_WAIT_MS, if one is waiting.
     private var pendingSiteGate: Runnable? = null
 
+    // An error the event handler caught and survived, and when it was last
+    // written down — see onAccessibilityEvent. Kept so one that repeats on
+    // every event is recorded once a minute, not dozens of times a second.
+    private var lastCaughtSignature: String? = null
+    private var lastCaughtAt = 0L
+    private var caughtSinceRecorded = 0
+
+    override fun onCreate() {
+        super.onCreate()
+        // Before anything else can throw: a crash in this service is what
+        // leaves the switch on with nothing blocked, and logcat forgets the
+        // trace long before anyone asks. See ServiceHealth.
+        ServiceHealth.installCrashRecorder(this)
+        ServiceHealth.recordEvent(this, "service created")
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        ServiceHealth.recordEvent(this, "service connected — blocking is running")
+        // Keep watching while it runs, and take down a "blocking has stopped"
+        // notification now that it is not.
+        ServiceWatchdog.arm(applicationContext)
+        ServiceWatchdog.check(applicationContext)
         // A pass can outlive this service — a reboot, an app update, the system
         // reclaiming the process — so put its timer back rather than waiting
         // for the next app switch to notice.
@@ -375,6 +398,7 @@ class IntentionAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        ServiceHealth.recordEvent(this, "service destroyed")
         if (instance == this) instance = null
         unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
@@ -390,6 +414,7 @@ class IntentionAccessibilityService : AccessibilityService() {
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        ServiceHealth.recordEvent(this, "service unbound (switched off, or stopped by the system)")
         unregisterReceivers()
         ForegroundPass.sync(applicationContext, null)
         SessionOverlay.hide(applicationContext)
@@ -413,7 +438,37 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     private fun wallClockOffset(): Long = System.currentTimeMillis() - SystemClock.elapsedRealtime()
 
+    // Every event goes through here. An exception escaping this method takes
+    // the whole service down, and Android then marks it crashed and stops
+    // binding it while the switch stays on: no blocking at all, silently,
+    // until the user toggles it. One bad event is not worth that, so an
+    // Exception is caught, recorded (see ServiceHealth) and survived. An Error
+    // (out of memory and the like) is left to crash and be recorded by the
+    // uncaught handler: carrying on after one is not safe.
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        try {
+            handleAccessibilityEvent(event)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling ${event.eventType} from ${event.packageName}; carrying on", e)
+            recordCaught("handling an event from ${event.packageName}", e)
+        }
+    }
+
+    private fun recordCaught(where: String, e: Exception) {
+        val signature = "${e.javaClass.name}: ${e.message} @ ${e.stackTrace.firstOrNull()}"
+        val now = SystemClock.elapsedRealtime()
+        if (signature == lastCaughtSignature && now - lastCaughtAt < CAUGHT_RECORD_INTERVAL_MS) {
+            caughtSinceRecorded++
+            return
+        }
+        val repeats = if (caughtSinceRecorded > 0) " (plus $caughtSinceRecorded repeats of the last one)" else ""
+        ServiceHealth.recordCrash(this, "Caught while $where, service kept running$repeats", e)
+        lastCaughtSignature = signature
+        lastCaughtAt = now
+        caughtSinceRecorded = 0
+    }
+
+    private fun handleAccessibilityEvent(event: AccessibilityEvent) {
         val eventType = event.eventType
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
@@ -574,6 +629,20 @@ class IntentionAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.d(TAG, "Accessibility Service Interrupted")
+        ServiceHealth.recordEvent(this, "service interrupted")
+    }
+
+    // adb shell dumpsys activity service uk.co.maybeitssoftware.intention/.IntentionAccessibilityService
+    // Only answers while the service is up; a stopped one is reported from the
+    // app's own "Blocking has stopped" screen, which shares the same text.
+    override fun dump(fd: java.io.FileDescriptor?, writer: java.io.PrintWriter, args: Array<out String>?) {
+        writer.println(ServiceHealth.report(this))
+        writer.println("Last foreground package: $lastForegroundPackage")
+        writer.println("Last active package/target: $lastActivePackage -> $lastActiveTarget")
+        writer.println("Last seen hosts: $lastSeenHost")
+        writer.println("Hosts awaiting a fresh check: $hostRecheck")
+        writer.println("Expiry recheck armed for: $expiryArmedFor")
+        writer.flush()
     }
 
     // Called by CoachingActivity when the user dismisses the coach for a
