@@ -469,12 +469,48 @@ async function recordWalkAway(domain) {
   });
 }
 
+// How far back the coach's reason log reaches. The week before today is
+// already shown day by day (recentDays); this is the longer memory behind it,
+// read from the dailyStats the 365-day retention already keeps.
+const REASON_LOG_DAYS = 90;
+
+// Repeats of one reason, grouped. Case, punctuation and spacing are folded so
+// "Reply to Sam." and "reply to sam" are one entry; the wording shown is the
+// most recent. Most frequent first, then most recent, so the reasons that
+// keep coming back are the ones that survive the prompt's cap.
+function summarizeReasonLog(entries) {
+  const normalize = (r) => r.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const groups = new Map();
+  for (const e of entries) {
+    const key = normalize(e.reason);
+    if (!key) continue;
+    let g = groups.get(key);
+    if (!g) {
+      g = { reason: e.reason, count: 0, days: new Set(), firstDate: e.date, lastDate: e.date, outcomes: {} };
+      groups.set(key, g);
+    }
+    g.count += 1;
+    g.days.add(e.date);
+    if (e.date < g.firstDate) g.firstDate = e.date;
+    if (e.date >= g.lastDate) { g.lastDate = e.date; g.reason = e.reason; }
+    if (e.outcome) g.outcomes[e.outcome] = (g.outcomes[e.outcome] || 0) + 1;
+  }
+  return [...groups.values()]
+    .map(g => ({ reason: g.reason, count: g.count, days: g.days.size, firstDate: g.firstDate, lastDate: g.lastDate, outcomes: g.outcomes }))
+    .sort((a, b) => (b.count - a.count) || (a.lastDate < b.lastDate ? 1 : a.lastDate > b.lastDate ? -1 : 0));
+}
+
 async function getStatsForDomain(domain) {
   const { dailyStats = {}, allTimeStats = {} } = await getDisplayStats(['allTimeStats']);
   const todayKey = dateKey();
   const weekKeys = daysAgoKeys(7);
   const monthKeys = daysAgoKeys(30);
   const yearKeys = daysAgoKeys(365);
+  const logKeys = new Set(daysAgoKeys(REASON_LOG_DAYS));
+  const weekKeySet = new Set(weekKeys);
+  // Reasons from before this week, within the log window: one entry per pass.
+  const olderReasons = [];
+  const olderDays = new Set();
 
   let minutesToday = 0, grantsToday = 0, negotiatedToday = 0, quickChecksToday = 0, minutesWeek = 0, minutesMonth = 0, minutesYear = 0;
   let minutesTodayAll = 0, minutesWeekAll = 0;
@@ -533,6 +569,14 @@ async function getStatsForDomain(domain) {
             quickChecks: site.quickChecks || 0
           });
         }
+        if (logKeys.has(k) && !weekKeySet.has(k)) {
+          for (const s of site.sessions || []) {
+            const reason = s && s.reason ? String(s.reason).trim() : '';
+            if (!reason) continue;
+            olderReasons.push({ date: k, reason, outcome: s.outcome || null });
+            olderDays.add(k);
+          }
+        }
         if (weekKeys.includes(k)) minutesWeek += site.minutes || 0;
         // Includes today deliberately: "3 walk-aways this week" should count
         // the one from an hour ago, or the streak the coach names is stale.
@@ -582,6 +626,9 @@ async function getStatsForDomain(domain) {
     reasonsToday,
     sessionsToday,
     recentDays,
+    reasonLog: summarizeReasonLog(olderReasons),
+    reasonLogPasses: olderReasons.length,
+    reasonLogActiveDays: olderDays.size,
     dailyMinutes,
     walkedAwayToday,
     walkedAwayWeek

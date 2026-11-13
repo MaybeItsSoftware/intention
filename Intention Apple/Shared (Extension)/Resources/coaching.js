@@ -316,23 +316,12 @@ async function renderCoachUI() {
   // Bail if this tab is the duplicate — window.close() is already on its way.
   if (await dupCheckPromise) return;
 
-  // Re-render whatever was already said this pass (the background filters out
-  // its own synthetic marker turns), so a same-day reopen picks the
-  // conversation back up instead of starting cold.
-  let turns = [];
-  try {
-    const resp = await sendTabMessage({ action: 'getHistory', domain }, 10000);
-    turns = resp?.turns || [];
-  } catch (e) {
-    turns = [];
-  }
-  for (const turn of turns) {
-    addMessage(messagesEl, turn.role === 'user' ? 'user' : 'assistant', turn.content);
-  }
-
-  // The coach speaks first: always at check-in (the pass ending is the news),
-  // otherwise only when there is no conversation to pick back up.
-  if (mode === 'checkin' || turns.length === 0) conversation.attemptOpen();
+  // Every visit opens on an empty chat and the coach speaks first. The day's
+  // earlier conversation is still in the transcript the background sends the
+  // model (keyed per target and day, see transcriptKeyFor), so the coach
+  // remembers it; it just isn't replayed on screen, where a reopened gate
+  // read as one conversation that never reset.
+  conversation.attemptOpen();
 }
 
 // The gate, before any conversation. Three states, decided by the intention:

@@ -2082,28 +2082,10 @@ function renderChatUI({ mode, domain }) {
   });
   inputEl.focus();
 
-  // Re-render whatever was already said this pass (the background filters out
-  // its own synthetic marker turns), so a same-day reopen picks the
-  // conversation back up instead of starting cold. Then the coach speaks
-  // first: always at check-in (the pass ending is the news), otherwise only
-  // when there is no conversation to pick back up.
-  try {
-    chrome.runtime.sendMessage({ action: "getHistory", domain }, (resp) => {
-      if (chrome.runtime.lastError) {
-        console.warn(INT_LOG, "getHistory lastError:", chrome.runtime.lastError.message);
-        conversation.attemptOpen();
-        return;
-      }
-      const turns = (resp && resp.turns) || [];
-      for (const turn of turns) {
-        addMessage(messagesEl, turn.role === "user" ? "user" : "assistant", turn.content);
-      }
-      if (mode === "checkin" || turns.length === 0) conversation.attemptOpen();
-    });
-  } catch (e) {
-    console.warn(INT_LOG, "getHistory message threw:", e);
-    conversation.attemptOpen();
-  }
+  // Every visit opens on an empty chat and the coach speaks first. The day's
+  // earlier conversation stays in the coach's transcript (see transcriptKeyFor
+  // in background.js), so it is remembered without being replayed on screen.
+  conversation.attemptOpen();
 }
 
 // The gate. What it offers is decided by the intention and nothing else:

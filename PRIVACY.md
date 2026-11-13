@@ -59,6 +59,7 @@ When you open a blocked site or app and talk to your coach, Intention sends an H
 - Your chat messages to the coach.
 - Your saved "about you" context.
 - Usage stats needed for the coach's judgment: which domain or app you're on (by name, e.g. "Instagram" or "example.com"), minutes spent today/this week/all-time on it, and today's grant count.
+- The reasons you gave for earlier visits to that same site or app, so the coach can notice when one keeps coming back: today's and the past week's day by day, and the three months before that grouped by repeats (how many times, first and last date, how those visits ended). Reasons for other sites and apps are not included.
 - A short description of the specific thing you were opening, so the coach can talk about it rather than about "a website": the address, the page title, and where one exists a one-line summary — for a video, its title and channel; for a thread, its title and forum; for a search, what you typed. Each field is truncated (the address to 500 characters, titles to 200, summaries to 400).
 
 Where that request goes depends on which path you're on:

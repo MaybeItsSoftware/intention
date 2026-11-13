@@ -1345,8 +1345,8 @@ function hostMatchesDomain(host, domain) {
 // instead: continuous within the day the usage stats are also scoped to, and
 // gone the next morning, which is the fresh start the user actually wants.
 //
-// The UI never renders stored history — it opens on an empty chat window — so
-// this changes what the coach remembers, not what the user sees.
+// The gate never replays stored history — every visit opens on an empty chat —
+// so this decides what the coach remembers, not what the user sees.
 function transcriptKeyFor(mode, { domain, changeType }) {
   if (mode === 'context') return mode;
   if (mode === 'settings_gate') return `settings_gate:${changeType}:${domain || 'all'}`;
@@ -2855,6 +2855,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       reasonsToday: stats.reasonsToday,
       sessionsToday: stats.sessionsToday,
       recentDays: stats.recentDays,
+      reasonLog: stats.reasonLog,
+      reasonLogPasses: stats.reasonLogPasses,
+      reasonLogActiveDays: stats.reasonLogActiveDays,
       walkedAwayToday: stats.walkedAwayToday,
       walkedAwayWeek: stats.walkedAwayWeek,
       observations: coachObservations,
@@ -2894,6 +2897,9 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
       reasonsToday: stats.reasonsToday,
       sessionsToday: stats.sessionsToday,
       recentDays: stats.recentDays,
+      reasonLog: stats.reasonLog,
+      reasonLogPasses: stats.reasonLogPasses,
+      reasonLogActiveDays: stats.reasonLogActiveDays,
       walkedAwayToday: stats.walkedAwayToday,
       walkedAwayWeek: stats.walkedAwayWeek,
       observations: coachObservations,
@@ -3122,13 +3128,15 @@ async function handleChat({ tabId, mode, domain, isApp, appLabel, userMessage, c
           scope, negotiated: true, androidForegroundTime });
       } else if (tc.name === 'note_observation' && (mode === 'gate' || mode === 'checkin')) {
         // The coach's cross-day memory. Capped, deduplicated, and readable in
-        // settings — a bounded notepad, not a dossier.
+        // settings — a bounded notepad, not a dossier. Thirty, not ten: with
+        // the reason log reaching back three months, ten notes rolled over
+        // within weeks and the patterns it noticed went with them.
         const text = String(input.observation || '').trim().slice(0, 300);
         if (text) {
           await mutateStorage('coachObservations', (list) => {
             if (list.some(o => o && o.text === text)) return list;
             list.push({ text, domain, at: Date.now() });
-            return list.slice(-10);
+            return list.slice(-30);
           }, []);
         }
       } else if (tc.name === 'update_context' && mode === 'context') {

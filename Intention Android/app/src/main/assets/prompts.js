@@ -152,6 +152,7 @@ Voice, always:
 - 2 to 4 short sentences per reply. Real coaches don't lecture.
 - Never reuse an opener or a question you already used today \u2014 you can see today's earlier conversation; if you asked it once, find a different angle (the clock, their track record, the specific page, or just respond to their words).
 - A user turn in parentheses like "(user just opened the conversation)" is a signal from Intention, not something the user typed. Never mention or quote it. When you see one, open the conversation yourself: one or two short sentences, specific to this exact moment \u2014 use the page context, the clock, and their history. Ask one real question.
+- Each "(user just opened the conversation)" starts a new visit with an empty chat on their screen. Anything before it is your memory of earlier visits today, which they can no longer see: draw on it ("earlier you said..."), but never answer it as if it were still open in front of them.
 
 EVERY REPLY, DO THIS IN ORDER:
 
@@ -433,6 +434,38 @@ function renderRecentHistory(recentDays) {
     return `  - ${formatDayLabel(day.date)}: ${Math.round(day.minutes || 0)}m over ${grants} grant${grants === 1 ? '' : 's'}${reasonsStr}`;
   });
   return `\n- Earlier days on this site (most recent first):\n${lines.join('\n')}`;
+}
+
+// The long memory: every reason given on this site over the past three
+// months, before this week, grouped by repeats (tracking.js
+// summarizeReasonLog). "Reply to a work message" for the ninth time since
+// August is coaching material no single week shows. Capped so a heavy user's
+// log can't crowd the prompt; the most repeated reasons come first and are
+// the ones kept.
+const MAX_REASON_LOG_SHOWN = 15;
+const OUTCOME_WORDS = {
+  closed_early: 'closed early', finished: 'finished', tab_closed: 'closed the tab',
+  left_target: 'left', ran_out: 'ran out', extended: 'extended'
+};
+function renderReasonLog(domain, reasonLog, passes, activeDays) {
+  const all = (reasonLog || []).filter(r => r && String(r.reason || '').trim());
+  if (!all.length) return '';
+  const shown = all.slice(0, MAX_REASON_LOG_SHOWN);
+  const lines = shown.map((r) => {
+    const text = String(r.reason).trim().slice(0, 140);
+    const count = Number(r.count) || 1;
+    const when = count > 1 && r.firstDate && r.firstDate !== r.lastDate
+      ? `${count} times between ${formatDayLabel(r.firstDate)} and ${formatDayLabel(r.lastDate)}`
+      : `${count === 1 ? 'once' : `${count} times`}, ${formatDayLabel(r.lastDate)}`;
+    const outcomes = Object.entries(r.outcomes || {})
+      .filter(([k, n]) => OUTCOME_WORDS[k] && n > 0)
+      .map(([k, n]) => `${OUTCOME_WORDS[k]} ${n}`);
+    return `  - "${text}" \u2014 ${when}${outcomes.length ? ` (${outcomes.join(', ')})` : ''}`;
+  });
+  const p = Number(passes) || 0;
+  const d = Number(activeDays) || 0;
+  const header = `\n- Their reason log for ${domain}, the three months before this week: ${p} pass${p === 1 ? '' : 'es'} on ${d} day${d === 1 ? '' : 's'}. Reasons, most often given first:`;
+  return `${header}\n${lines.join('\n')}${andMore(all.length - shown.length, 'other reason')}\n  This is your long memory of them. Use it when a reason today echoes one here ("that's the fifth time since September for this one") or when it shows a pattern they'd want named; never recite the list.`;
 }
 
 // The trust arithmetic is done here, in code, rather than left to the model:
@@ -902,7 +935,7 @@ function renderRemovalBlock({ blockedSites, blockedApps, daysActive, minutesToda
   return lines.join('\n');
 }
 
-function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildGateSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, reasonLog, reasonLogPasses, reasonLogActiveDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   // An app and a web page are mutually exclusive targets; only one block can
   // apply, and the app one wins because there is no page to describe.
@@ -924,7 +957,7 @@ function buildGateSystemPrompt({ domain, userContext, contextProjects, contextRe
   // every prompt test with it.
   const scopeStr = renderScopeBlock(pageScope);
   const sessionsStr = renderSessionsToday(sessionsToday);
-  const historyStr = renderRecentHistory(recentDays);
+  const historyStr = renderRecentHistory(recentDays) + renderReasonLog(domain, reasonLog, reasonLogPasses, reasonLogActiveDays);
   const weekSiteStr = Number.isFinite(Number(minutesWeekSite))
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';
@@ -968,7 +1001,7 @@ ${reasonsStr === '(none yet today)'
   });
 }
 
-function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
+function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contextReasons, siteReason, coachInstructions, originalReason, endedScope, grantsToday, grantsCap, minutesEach, dailyTimeMinutes, minutesTodaySite, minutesTodayAll, minutesWeekSite, reasonsToday, sessionsToday, recentDays, reasonLog, reasonLogPasses, reasonLogActiveDays, pageContext, appContext, pageScope, partContext, walkedAwayToday, walkedAwayWeek, observations }) {
   const reasonsStr = renderReasonsToday(reasonsToday);
   const pageCtxStr = appContext ? renderAppContextBlock(appContext, partContext) : renderPageContextBlock(pageContext);
   const partStr = renderPartBlock({ siteLabel: domain, ...(partContext || {}) });
@@ -982,7 +1015,7 @@ function buildCheckinSystemPrompt({ domain, userContext, contextProjects, contex
     ? `\n\nThe pass that just ended was scoped to one page: ${sanitizePageField(endedScope.label || '', 60) || '(unnamed)'}. They did not leave it early \u2014 the time simply ran out on it.`
     : '';
   const sessionsStr = renderSessionsToday(sessionsToday);
-  const historyStr = renderRecentHistory(recentDays);
+  const historyStr = renderRecentHistory(recentDays) + renderReasonLog(domain, reasonLog, reasonLogPasses, reasonLogActiveDays);
   const weekSiteStr = Number.isFinite(Number(minutesWeekSite))
     ? `\n- Minutes on ${domain} over the last 7 days: ${Math.round(Number(minutesWeekSite))}`
     : '';

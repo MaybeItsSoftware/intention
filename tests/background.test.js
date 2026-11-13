@@ -2872,6 +2872,52 @@ describe('walking away from the gate', () => {
   });
 });
 
+// The long memory: reasons from the three months before this week reach the
+// coach grouped by repeats; this week's stay in the day-by-day history.
+describe('reason log', () => {
+  const dayKeyAgo = (n) => {
+    const d = new Date(); d.setDate(d.getDate() - n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const visit = (reason, outcome = 'finished') => ({ reason, outcome, minutes: 5 });
+  const seed = () => ({
+    ...CONFIGURED,
+    dailyStats: {
+      [dayKeyAgo(3)]: { 'instagram.com': { minutes: 5, grants: 1, sessions: [visit('this week only')] } },
+      [dayKeyAgo(20)]: { 'instagram.com': { minutes: 5, grants: 1, sessions: [visit('Reply to Sam.', 'ran_out')] } },
+      [dayKeyAgo(40)]: { 'instagram.com': { minutes: 10, grants: 2, sessions: [visit('reply to sam'), visit('check an event')] } },
+      [dayKeyAgo(85)]: { 'instagram.com': { minutes: 5, grants: 1, sessions: [visit('reply to Sam')] } },
+      [dayKeyAgo(120)]: { 'instagram.com': { minutes: 5, grants: 1, sessions: [visit('too old to show')] } }
+    }
+  });
+
+  it('groups repeats across three months and leaves out this week and older', async () => {
+    const { ctx } = loadBackground({ seed: seed() });
+    const stats = await ctx.getStatsForDomain('instagram.com');
+    expect(stats.reasonLogPasses).toBe(4);
+    expect(stats.reasonLogActiveDays).toBe(3);
+    expect(stats.reasonLog[0]).toMatchObject({
+      reason: 'Reply to Sam.', count: 3, days: 3,
+      firstDate: dayKeyAgo(85), lastDate: dayKeyAgo(20),
+      outcomes: { finished: 2, ran_out: 1 }
+    });
+    const reasons = stats.reasonLog.map(r => r.reason);
+    expect(reasons).toContain('check an event');
+    expect(reasons).not.toContain('this week only');
+    expect(reasons).not.toContain('too old to show');
+  });
+
+  it('puts the log in the coach\'s prompt', async () => {
+    const fetch = grantingFetch(10);
+    const { ctx } = loadBackground({ seed: seed(), fetch });
+    await ctx.handleMessage({ action: 'chat', mode: 'gate', domain: 'instagram.com', userMessage: 'a' }, tab(1));
+    const system = systemPromptOf(fetch);
+    expect(system).toContain('reason log for instagram.com');
+    expect(system).toContain('"Reply to Sam." \u2014 3 times between');
+    expect(system).toContain('ran out 1');
+  });
+});
+
 // An LLM reply that saves one coach observation, in Anthropic's response shape.
 function notingFetch(observation) {
   return makeMockFetch({
@@ -2883,7 +2929,7 @@ function notingFetch(observation) {
 }
 
 describe('note_observation', () => {
-  const tenNotes = () => Array.from({ length: 10 }, (_, i) => ({ text: `note ${i}`, domain: 'x.com', at: 1 }));
+  const fullNotes = () => Array.from({ length: 30 }, (_, i) => ({ text: `note ${i}`, domain: 'x.com', at: 1 }));
 
   it('stores the note and shows it to the next conversation', async () => {
     const fetch = notingFetch('They reach for Instagram mid-afternoon.');
@@ -2907,7 +2953,7 @@ describe('note_observation', () => {
 
   it('does not store the same note twice', async () => {
     const { ctx, chrome } = loadBackground({
-      seed: { ...CONFIGURED, coachObservations: tenNotes() },
+      seed: { ...CONFIGURED, coachObservations: fullNotes() },
       fetch: notingFetch('note 9')
     });
     await ctx.handleMessage(
@@ -2915,13 +2961,13 @@ describe('note_observation', () => {
       tab(1)
     );
     const texts = chrome.storage._store.coachObservations.map(o => o.text);
-    expect(texts).toHaveLength(10);
+    expect(texts).toHaveLength(30);
     expect(texts.filter(t => t === 'note 9')).toHaveLength(1);
   });
 
-  it('caps the notepad at ten, dropping the oldest', async () => {
+  it('caps the notepad at thirty, dropping the oldest', async () => {
     const { ctx, chrome } = loadBackground({
-      seed: { ...CONFIGURED, coachObservations: tenNotes() },
+      seed: { ...CONFIGURED, coachObservations: fullNotes() },
       fetch: notingFetch('a fresh note')
     });
     await ctx.handleMessage(
@@ -2929,7 +2975,7 @@ describe('note_observation', () => {
       tab(1)
     );
     const texts = chrome.storage._store.coachObservations.map(o => o.text);
-    expect(texts).toHaveLength(10);
+    expect(texts).toHaveLength(30);
     expect(texts).not.toContain('note 0');
     expect(texts.at(-1)).toBe('a fresh note');
   });
