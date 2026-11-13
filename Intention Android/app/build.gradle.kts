@@ -20,8 +20,8 @@ android {
         applicationId = "uk.co.maybeitssoftware.intention"
         minSdk = 26
         targetSdk = 36
-        versionCode = 78
-        versionName = "1.3.3"
+        versionCode = 79
+        versionName = "1.3.4"
         // Tramline release builds pass -PversionCode=/-PversionName=; local
         // builds and scripts/bump-version.sh keep using the literals above.
         (project.findProperty("versionCode") as String?)?.let { versionCode = it.toInt() }

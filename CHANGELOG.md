@@ -1,3 +1,9 @@
+## [1.3.4](https://github.com/MaybeItsSoftware/intention/compare/v1.3.3...v1.3.4) (2026-11-13)
+
+### Bug Fixes
+
+* **android:** notice and survive a stopped blocker, and keep its crash reports ([96b3671](https://github.com/MaybeItsSoftware/intention/commit/96b367165bc09fa212b004a24c98b321340b3277))
+
 ## [1.3.3](https://github.com/MaybeItsSoftware/intention/compare/v1.3.2...v1.3.3) (2026-11-09)
 
 ### Bug Fixes
