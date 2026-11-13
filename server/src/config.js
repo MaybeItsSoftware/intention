@@ -34,9 +34,15 @@ export function normalisePem(raw) {
   }
   value = value.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n').trim();
   const match = value.match(/^(-----BEGIN [A-Z ]+-----)\s*([\s\S]*?)\s*(-----END [A-Z ]+-----)$/);
-  if (!match) return value;
-  const body = match[2].replace(/\s+/g, '').match(/.{1,64}/g) || [];
-  return `${match[1]}\n${body.join('\n')}\n${match[3]}\n`;
+  if (match) {
+    const body = match[2].replace(/\s+/g, '').match(/.{1,64}/g) || [];
+    return `${match[1]}\n${body.join('\n')}\n${match[3]}\n`;
+  }
+  if (/^[A-Za-z0-9+/=\s]+$/.test(value)) {
+    const body = value.replace(/\s+/g, '').match(/.{1,64}/g) || [];
+    if (body.length) return `-----BEGIN PRIVATE KEY-----\n${body.join('\n')}\n-----END PRIVATE KEY-----\n`;
+  }
+  return value;
 }
 
 function pemParses(pem) {
@@ -160,7 +166,7 @@ export const config = {
     // signature, but can't re-check refunds via Get Transaction Info.
     issuerId: process.env.APPLE_ISSUER_ID || '',
     keyId: process.env.APPLE_KEY_ID || '',
-    privateKey: (process.env.APPLE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    privateKey: normalisePem(process.env.APPLE_PRIVATE_KEY),
     // Which App Store Server API to try FIRST. Both are always tried — a
     // transaction that isn't in one is looked up in the other (see
     // appStoreBaseUrls in apple.js) — so this is a round-trip saving for
