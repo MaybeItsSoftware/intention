@@ -435,6 +435,7 @@ describe('POST /v1/entitlement/recover', () => {
       expect((await recover({ platform: 'apple', accountToken: UUID }, d, '198.51.100.22')).status).toBe(200);
     }
   });
+
 });
 
 // The claim is sealed in the token and echoed in the response body, so the

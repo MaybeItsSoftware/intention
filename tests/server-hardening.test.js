@@ -629,6 +629,49 @@ describe('a refund revokes the subject\'s tokens', () => {
   });
 });
 
+describe('POST /v1/admin/move-balance', () => {
+  const ADMIN = 'a'.repeat(48);
+  const admin = { authorization: `Bearer ${ADMIN}` };
+  const from = subjectFor('google', 'old-device');
+  const to = subjectFor('google', 'new-device');
+
+  beforeEach(() => override(config, { adminSecret: ADMIN }));
+
+  it('is operator-only', async () => {
+    expect((await post('/v1/admin/move-balance', { from, to })).status).toBe(401);
+    override(config, { adminSecret: '' });
+    expect((await post('/v1/admin/move-balance', { from, to }, admin)).status).toBe(404);
+  });
+
+  it('moves the whole balance and re-points only the named purchases', async () => {
+    const d = deps();
+    await post('/v1/entitlement/verify', { platform: 'google', receipt: { purchaseToken: 'ptoken-1' } }, {}, d);
+    const owner = subjectFor('google', 'acct-google-1');
+    const res = await post('/v1/admin/move-balance', {
+      fromPlatform: 'google', fromAccountToken: 'acct-google-1', toPlatform: 'google', toAccountToken: 'new-device',
+      platform: 'google', purchaseTokens: ['ptoken-1', 'not-a-purchase']
+    }, admin, d);
+    expect(res.status).toBe(200);
+    expect(res.body.repointed).toBe(1);
+    expect(getBalanceMicros(owner, d.store)).toBe(0);
+    expect(getBalanceMicros(to, d.store)).toBe(res.body.balanceMicros);
+    expect(res.body.balanceMicros).toBeGreaterThan(0);
+  });
+
+  it('refuses a missing or identical pair', async () => {
+    expect((await post('/v1/admin/move-balance', { from }, admin)).status).toBe(400);
+    expect((await post('/v1/admin/move-balance', { from, to: from }, admin)).status).toBe(400);
+  });
+
+  it('recovery on its own never moves anyone else\'s balance', async () => {
+    const d = deps();
+    adjustBalance(from, CREDIT1, d.store);
+    const res = await post('/v1/entitlement/recover', { platform: 'google', accountToken: 'new-device' }, {}, d);
+    expect(res.status).toBe(404);
+    expect(getBalanceMicros(from, d.store)).toBe(CREDIT1);
+  });
+});
+
 describe('POST /v1/admin/revoke', () => {
   const ADMIN = 'a'.repeat(48);
   const admin = { authorization: `Bearer ${ADMIN}` };

@@ -70,7 +70,8 @@ const IP_LIMITS = {
   '/v1/report': { limit: 20, windowMs: HOUR },
   // Operator-only, so legitimate use is a handful of calls a day; the limit is
   // what makes guessing the admin secret pointless on top of its length.
-  '/v1/admin/revoke': { limit: 10, windowMs: HOUR }
+  '/v1/admin/revoke': { limit: 10, windowMs: HOUR },
+  '/v1/admin/move-balance': { limit: 10, windowMs: HOUR }
 };
 
 // Failed recoveries are tracked separately from volume: a miss
@@ -113,6 +114,7 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
       case '/v1/report': return reportEndpoint(headers, body, deps.reports || defaultReports);
       case '/v1/admin/revoke': return adminRevokeEndpoint(headers, body, backing);
+      case '/v1/admin/move-balance': return adminMoveBalanceEndpoint(headers, body, backing);
       case '/v1/webhooks/apple': return await appleWebhookEndpoint(body, deps, backing);
       case '/v1/webhooks/google': return await googleWebhookEndpoint(body, headers, deps, backing, query);
       default:
@@ -631,6 +633,8 @@ function recoverEndpoint(body, backing, limiter, ip) {
     }
   }
 
+  // The subject, not the UUID: the UUID alone is what recovery accepts.
+  logEvent('entitlement_recover_miss', { subject: subjectFor(platform, asserted), platform });
   limiter.record('recover-fail', ip || 'unknown', RECOVER_FAILS.windowMs);
   return json(404, {
     error: 'No coaching credit is attached to this device.',
@@ -879,7 +883,8 @@ function sanitizeToolSchema(node, depth = 0) {
 // accountToken } to derive it the same way verify does.
 const ADMIN_SECRET_MIN_CHARS = 32;
 
-function adminRevokeEndpoint(headers, body, backing) {
+// Null when the caller is the operator; otherwise the response to send.
+function adminGate(headers) {
   const secret = config.adminSecret;
   if (!secret || secret.length < ADMIN_SECRET_MIN_CHARS) {
     return json(404, { error: 'Not found', code: 'not_found' });
@@ -887,19 +892,80 @@ function adminRevokeEndpoint(headers, body, backing) {
   if (!safeEqualString(bearer(headers), secret)) {
     return json(401, { error: 'Unauthorized', code: 'unauthorized' });
   }
+  return null;
+}
 
-  let subject = typeof body?.subject === 'string' ? body.subject.trim() : '';
-  if (!subject && (body?.platform === 'apple' || body?.platform === 'google')) {
-    const token = assertedAccountToken(body?.accountToken);
-    if (token) subject = subjectFor(body.platform, token);
+// A subject given directly, or derived from platform + account UUID the way
+// verify derives it. Empty when neither is well formed.
+function adminSubject(subject, platform, accountToken) {
+  let s = typeof subject === 'string' ? subject.trim() : '';
+  if (!s && (platform === 'apple' || platform === 'google')) {
+    const token = assertedAccountToken(accountToken);
+    if (token) s = subjectFor(platform, token);
   }
-  if (!/^[0-9a-f]{32}$/.test(subject)) {
+  return /^[0-9a-f]{32}$/.test(s) ? s : '';
+}
+
+function adminRevokeEndpoint(headers, body, backing) {
+  const denied = adminGate(headers);
+  if (denied) return denied;
+
+  const subject = adminSubject(body?.subject, body?.platform, body?.accountToken);
+  if (!subject) {
     return json(400, { error: 'subject (or platform + accountToken) is required', code: 'bad_request' });
   }
 
   const tokenVersion = bumpTokenVersion(subject, backing);
   logEvent('tokens_revoked', { subject, tokenVersion, by: 'admin' });
   return json(200, { ok: true, subject, tokenVersion });
+}
+
+// Moves a whole balance from one subject to another, for a user stranded by
+// a changed device ID (an Android reinstall mints a new account UUID, and
+// recovery has nothing to match). Operator-only and explicit on purpose:
+// doing this automatically inside recovery would hand the balance to
+// whichever fresh install asked first. The new device's subject is in the
+// entitlement_recover_miss log line its failed recovery wrote.
+//
+// Body: { from, to } as subjects, or { fromPlatform, fromAccountToken } /
+// { toPlatform, toAccountToken }; optional { platform, purchaseTokens: [...] }
+// re-points those purchases' credit records at the new subject, so a later
+// refund claws back from the account that now holds the credit.
+function adminMoveBalanceEndpoint(headers, body, backing) {
+  const denied = adminGate(headers);
+  if (denied) return denied;
+
+  const from = adminSubject(body?.from, body?.fromPlatform, body?.fromAccountToken);
+  const to = adminSubject(body?.to, body?.toPlatform, body?.toAccountToken);
+  if (!from || !to || from === to) {
+    return json(400, { error: 'two different subjects (from, to) are required', code: 'bad_request' });
+  }
+  const recordPlatform = body?.platform;
+  const purchaseTokens = Array.isArray(body?.purchaseTokens)
+    ? body.purchaseTokens.filter(t => typeof t === 'string' && t)
+    : [];
+  if (purchaseTokens.length && recordPlatform !== 'apple' && recordPlatform !== 'google') {
+    return json(400, { error: 'platform is required with purchaseTokens', code: 'bad_request' });
+  }
+
+  const balance = getBalanceMicros(from, backing);
+  let repointed = 0;
+  inBatch(backing, () => {
+    if (balance > 0) {
+      adjustBalance(to, balance, backing);
+      adjustBalance(from, -balance, backing);
+    }
+    for (const token of purchaseTokens) {
+      const rec = getCreditRecord(recordPlatform, token, backing);
+      if (rec && rec.subject === from) {
+        rec.subject = to;
+        markCredited(recordPlatform, token, rec, backing);
+        repointed += 1;
+      }
+    }
+  });
+  logEvent('balance_moved', { from, to, balance, repointed, by: 'admin' });
+  return json(200, { ok: true, from, to, balanceMicros: balance, repointed });
 }
 
 // ---- Reports --------------------------------------------------------------
