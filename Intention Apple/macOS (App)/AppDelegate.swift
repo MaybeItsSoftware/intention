@@ -52,7 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Apple event is only the *current* event while the launch is being
         // handled, and the storyboard window goes up in between. Catching it
         // this early is also what keeps the Dock icon from ever being drawn.
-        if Self.launchedAsLoginItem() { enterBackgroundLaunch() }
+        if Self.launchedAsLoginItem() || Self.launchedWithSession() { enterBackgroundLaunch() }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -79,6 +79,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let event = NSAppleEventManager.shared().currentAppleEvent,
               event.eventID == kAEOpenApplication else { return false }
         return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
+
+    // Third opinion, and in practice the one that fires: on macOS 15 a login
+    // launch arrives as a plain default launch with no login-item property,
+    // so both checks above wave it through and the window lands on top of the
+    // desktop. What is left is timing. The Dock starts with the login session,
+    // so being launched within a few minutes of it is a login launch. Opening
+    // Intention by hand in that window gets the quiet start too; opening it
+    // again goes through applicationShouldHandleReopen and shows it as normal.
+    //
+    // No check of SMAppService's status here: the item can be a legacy one
+    // added in System Settings, which SMAppService need not report as enabled
+    // even though it is what launched us.
+    private static let sessionLaunchWindow: TimeInterval = 180
+
+    private static func launchedWithSession() -> Bool {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        let sinceSession = sessionStart().map { Date().timeIntervalSince($0) }
+        NSLog("[Intention] launch: uptime %.0fs, since Dock %@", uptime,
+              sinceSession.map { String(format: "%.0fs", $0) } ?? "unknown")
+        if uptime < sessionLaunchWindow { return true }
+        return sinceSession.map { $0 < sessionLaunchWindow } ?? false
+    }
+
+    // When the Dock started. NSRunningApplication.launchDate is nil for
+    // anything launchd started rather than Launch Services, which at login
+    // includes the Dock, so the kernel's own record is the one to trust.
+    private static func sessionStart() -> Date? {
+        guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else {
+            return nil
+        }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, dock.processIdentifier]
+        if sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 {
+            let started = info.kp_proc.p_starttime
+            return Date(timeIntervalSince1970: TimeInterval(started.tv_sec) + TimeInterval(started.tv_usec) / 1_000_000)
+        }
+        return dock.launchDate
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
