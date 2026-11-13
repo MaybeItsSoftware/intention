@@ -336,6 +336,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+#intention-root .int-step-value { gap: 6px; cursor: text; }
+#intention-root .int-step-input {
+  width: 5ch;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  outline: none;
+  background: var(--well);
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+#intention-root .int-step-input:focus { border-color: var(--primary); background: var(--paper); }
+#intention-root .int-step-unit { color: var(--text-muted); }
+
 #intention-root .int-visit-note, #intention-root .int-visit-hint {
   width: 100%;
   margin: -6px 0 0;

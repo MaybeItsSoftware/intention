@@ -465,7 +465,7 @@ describe('when the background never answers', () => {
       const take = dom.created.find(el => el.className === 'int-solid-btn');
       const [less, more] = dom.created.filter(el => el.className === 'int-step-btn');
       for (let i = 0; i < 10; i++) if (!more.disabled) more._on.click[0]();
-      expect(dom.created.find(el => el.className === 'int-step-value').textContent).toBe('7 min');
+      expect(dom.created.find(el => el.className === 'int-step-input').value).toBe('7');
       expect(more.disabled).toBe(true);
       less._on.click[0]();
       expect(take.textContent).toBe('Unlock for 5 minutes');
@@ -490,10 +490,10 @@ describe('when the background never answers', () => {
     });
     await vi.advanceTimersByTimeAsync(10000);
     const take = dom.created.find(el => el.className === 'int-solid-btn');
-    const value = dom.created.find(el => el.className === 'int-step-value');
+    const value = dom.created.find(el => el.className === 'int-step-input');
     const reasonLabel = dom.created.find(el => el.className === 'int-visit-label');
     const [less, more] = dom.created.filter(el => el.className === 'int-step-btn');
-    expect(value.textContent).toBe('1 min');
+    expect(value.value).toBe('1');
     expect(less.disabled).toBe(true);
     expect(take.textContent).toBe('Unlock for 1 minute');
     expect(take.disabled).toBe(false);
@@ -510,9 +510,9 @@ describe('when the background never answers', () => {
     // Steps go by fives past five.
     more._on.click[0]();
     more._on.click[0]();
-    expect(value.textContent).toBe('10 min');
+    expect(value.value).toBe('10');
     less._on.click[0]();
-    expect(value.textContent).toBe('5 min');
+    expect(value.value).toBe('5');
 
     const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
     const hint = dom.created.find(el => el.className === 'int-visit-hint');
@@ -525,6 +525,47 @@ describe('when the background never answers', () => {
     less._on.click[0]();
     press(take);
     expect(sent[0]).toMatchObject({ minutes: 3, reason: '' });
+    vi.useRealTimers();
+  });
+
+  it('takes a typed visit length, holding the button until it is one the budget allows', async () => {
+    vi.useFakeTimers();
+    const sent = [];
+    const dom = loadContent({
+      storage: { setupComplete: true, blockedDomains: ['instagram.com'] },
+      sendMessage: (message, cb) => {
+        if (message.action === 'checkPageMatch') cb({ setupComplete: true, isBlocked: true, matchedDomain: 'instagram.com', accessRoute: 'hosted', session: null, intention: { mode: 'dailyTime', dailyMinutes: 60, minutesUsed: 15, minutesLeft: 45, opens: 0, opensUsed: 0, reasonFreeMinutes: 3 } });
+        if (message.action === 'intentionGrant') { sent.push(message); cb({ grantedSession: { intervalMinutes: message.minutes } }); }
+      }
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    const take = dom.created.find(el => el.className === 'int-solid-btn');
+    const field = dom.created.find(el => el.className === 'int-step-input');
+    const note = dom.created.find(el => el.className === 'int-visit-note');
+    const type = text => { field.value = text; field._on.input[0](); };
+    const reason = dom.created.find(el => (el.className || '').includes('int-visit-reason'));
+    reason.value = 'Reply to a message';
+    reason._on.input[0]();
+
+    type('');
+    expect(take.disabled).toBe(true);
+    expect(take.textContent).toBe('Unlock');
+
+    type('90');
+    expect(field.value).toBe('90');
+    expect(take.disabled).toBe(true);
+    expect(note.textContent).toBe('Up to 45 min this time.');
+
+    // Leaving the field puts it back inside the budget.
+    field._on.blur[0]();
+    expect(field.value).toBe('45');
+    expect(take.disabled).toBe(false);
+
+    type('2x2');
+    expect(field.value).toBe('22');
+    expect(take.textContent).toBe('Unlock for 22 minutes');
+    press(take);
+    expect(sent[0]).toMatchObject({ minutes: 22, reason: 'Reply to a message' });
     vi.useRealTimers();
   });
 

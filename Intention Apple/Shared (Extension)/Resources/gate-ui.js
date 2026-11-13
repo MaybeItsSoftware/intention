@@ -496,9 +496,25 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
     less.className = 'int-step-btn';
     less.textContent = '\u2212';
     less.setAttribute('aria-label', 'Shorter');
-    const value = document.createElement('output');
+    // The number is also a field, for when the length you want is a long way
+    // from one minute. Text rather than type=number: no spinner arrows
+    // doubling the buttons beside it, and no scroll wheel nudging it by
+    // accident. The numeric keypad still comes up on phones.
+    const value = document.createElement('label');
     value.className = 'int-step-value';
-    value.setAttribute('aria-live', 'polite');
+    const typed = document.createElement('input');
+    typed.className = 'int-step-input';
+    typed.type = 'text';
+    typed.inputMode = 'numeric';
+    typed.autocomplete = 'off';
+    typed.maxLength = 4;
+    typed.setAttribute('aria-label', 'Visit length in minutes');
+    const unit = document.createElement('span');
+    unit.className = 'int-step-unit';
+    unit.textContent = 'min';
+    unit.setAttribute('aria-hidden', 'true');
+    value.appendChild(typed);
+    value.appendChild(unit);
     const more = document.createElement('button');
     more.type = 'button';
     more.className = 'int-step-btn';
@@ -509,13 +525,30 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
     stepper.appendChild(more);
     fields.appendChild(stepper);
 
+    // While someone is typing, the field keeps exactly what they typed (an
+    // empty box, or 90 with 45 left) and the take button stays disabled until
+    // it is a length they can have. Leaving the field puts it back in range.
+    let editing = false;
     paintStepper = () => {
-      value.textContent = `${minutes} min`;
-      less.disabled = minutes <= 1;
-      more.disabled = minutes >= maxMinutes;
+      if (!editing) typed.value = String(minutes);
+      less.disabled = !(minutes > 1);
+      more.disabled = !(minutes < maxMinutes);
     };
-    less.addEventListener('click', () => { minutes = down(minutes); changed(); });
-    more.addEventListener('click', () => { minutes = up(minutes); changed(); });
+    const clamp = m => Math.min(maxMinutes, Math.max(1, Number.isInteger(m) ? m : 1));
+    const step = by => { editing = false; minutes = by(clamp(minutes)); changed(); };
+    less.addEventListener('click', () => step(down));
+    more.addEventListener('click', () => step(up));
+    typed.addEventListener('input', () => {
+      editing = true;
+      typed.value = typed.value.replace(/\D/g, '');
+      minutes = typed.value ? parseInt(typed.value, 10) : NaN;
+      changed();
+    });
+    typed.addEventListener('blur', () => {
+      editing = false;
+      minutes = clamp(minutes);
+      changed();
+    });
   }
 
   const note = document.createElement('p');
@@ -554,11 +587,13 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
     // says what it wants, and the disabled button says the rest.
     hint.textContent = state.needsReason && reasonInput.value.trim() ? state.problem : '';
     hint.hidden = !hint.textContent;
-    note.textContent = state.needsReason
-      ? `Over ${reasonFree} min needs a reason.`
-      : reasonFree > 0 && intention.mode === 'dailyTime'
-        ? `Up to ${reasonFree} min without a reason.`
-        : '';
+    note.textContent = intention.mode === 'dailyTime' && minutes > maxMinutes
+      ? `Up to ${maxMinutes} min this time.`
+      : state.needsReason
+        ? `Over ${reasonFree} min needs a reason.`
+        : reasonFree > 0 && intention.mode === 'dailyTime'
+          ? `Up to ${reasonFree} min without a reason.`
+          : '';
     note.hidden = !note.textContent;
     return state;
   };
@@ -575,7 +610,11 @@ function createIntentionVisitForm(container, intention, draft, onChange) {
 
 // The take button's words, which follow the stepper.
 function intentionTakeLabel(intention, mode, minutes) {
-  if (intention.mode === 'dailyTime') return `Unlock for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  if (intention.mode === 'dailyTime') {
+    // Mid-edit the field can be empty; the button waits for a number.
+    if (!Number.isInteger(minutes) || minutes < 1) return 'Unlock';
+    return `Unlock for ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
   return mode === 'checkin' ? 'Use another open' : `Open for ${intention.minutesEach} minutes`;
 }
 
