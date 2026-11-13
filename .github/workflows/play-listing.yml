@@ -1,0 +1,44 @@
+name: Update Google Play listing
+
+# Pushes the store listing TEXT in "Intention Android/fastlane/metadata"
+# (title, short and full description) to Google Play. Manual only: the release
+# workflow deliberately never touches the listing, so this is the one place
+# the repo copy becomes the live one. Images, screenshots and changelogs are
+# skipped — those stay edited in the Play console.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  listing:
+    name: Upload listing text
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Upload title and descriptions
+        working-directory: Intention Android
+        env:
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          fastlane supply \
+            --package_name uk.co.maybeitssoftware.intention \
+            --metadata_path fastlane/metadata/android \
+            --skip_upload_apk true \
+            --skip_upload_aab true \
+            --skip_upload_images true \
+            --skip_upload_screenshots true \
+            --skip_upload_changelogs true

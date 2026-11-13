@@ -1,5 +1,7 @@
 Intention gives you a pause before the apps that pull you away from what matters. Set a rule for each app, explain why you want to open it, and carry that reason with you while you use your time.
 
+Intention uses Android's AccessibilityService API to block the apps and websites you choose. This is its core feature: without Accessibility permission it cannot block anything. Details are in the Accessibility Service section below.
+
 Choose the rule that fits each app. You can set a number of visits with minutes for each one, or a maximum amount of time for the whole day. With a daily time budget, you decide how much of the time left to spend on each visit. When you have used your intention, your AI coach can talk through a specific reason and decide whether a short extra pass makes sense.
 
 See the time you have spent on your blocked apps and websites, with a breakdown by day and by target. Intention can also show app icons and familiar website marks, so the report is easy to scan. Android app usage needs Usage Access; without it, website time is still available.
@@ -8,5 +10,15 @@ You can make narrow exceptions for Reddit: allow a specific subreddit or a speci
 
 The coach learns what you are working on through conversation and uses that context to help you pause, decide, and get back to your goals. Coaching credit is purchased in the app, is used only for AI messages, and does not expire. Your settings and usage history stay on your device.
 
-ACCESSIBILITY SERVICE DISCLOSURE
-Intention uses Android's Accessibility Service to identify blocked apps in the foreground and show their gate. To apply website rules in supported browsers, it reads the browser's displayed address bar after navigation; text being edited in the address bar is ignored. If you choose a rule for a specific app section, such as Reels, it checks a fixed set of on-screen interface labels and view IDs to identify that section. It also detects Intention's own App info and Accessibility settings screens to offer a leaving conversation. These checks run on your device. Intention does not store or send the screen content it checks to the AI coach. You can revoke Accessibility permission in Android settings.
+ACCESSIBILITY SERVICE (AccessibilityService API)
+Intention is a digital wellbeing app, not an accessibility tool. It uses the AccessibilityService API for one purpose: to detect when you open an app or website you have chosen to block, and show Intention's pause screen over it. You turn the service on yourself after agreeing to an in-app disclosure, and you can turn it off at any time in Android Settings > Accessibility.
+
+While the service is on, it reads:
+- The name of the app in the foreground, to check whether it is one you blocked.
+- In supported browsers, the address shown in the address bar after a page loads, to check it against the websites you blocked. Text you are typing in the address bar is ignored.
+- Only in an app where you chose to block one part (for example Reels), a fixed set of on-screen section labels and view IDs, to tell which part is open. It never reads posts, messages, passwords or anything you type.
+- Whether you have opened Intention's own App info page or its Accessibility settings, so it can offer a conversation with your coach first. It never blocks you from leaving or switching the service off.
+
+How this data is used: it is checked on your device against your own block list and is not stored, sold or shared. The one exception is when you choose to talk to your coach: the name of the app or the address of the site you were opening is sent with your message to the AI service that answers it.
+
+Intention never taps, types, or controls other apps on your behalf, and never changes your device settings.
