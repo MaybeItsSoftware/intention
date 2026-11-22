@@ -1,3 +1,17 @@
+## [1.4.0](https://github.com/MaybeItsSoftware/intention/compare/v1.3.4...v1.4.0) (2026-11-22)
+
+### Features
+
+* **coach:** remember three months of reasons, and open every visit on an empty chat ([01a698d](https://github.com/MaybeItsSoftware/intention/commit/01a698d4b6272add3e1974f8a0cdd7361b23452d))
+* **gate:** type a visit length instead of stepping to it ([556f5b4](https://github.com/MaybeItsSoftware/intention/commit/556f5b441f495cf2a3646137ec66ab425d76cf7f))
+* **privacy:** let users delete their coaching data from the app ([040fa94](https://github.com/MaybeItsSoftware/intention/commit/040fa946f2c5899fb812908dc0bbd4c6b853ad16))
+* **server:** admin route to move a balance to a reinstalled device ([1b793e3](https://github.com/MaybeItsSoftware/intention/commit/1b793e349e644c256c091f37a2225faaf235396b))
+
+### Bug Fixes
+
+* **billing:** restore finished purchases on a new install ([46f5c80](https://github.com/MaybeItsSoftware/intention/commit/46f5c80cb9f9a9df31ba1c9fc3d19f7a317c4c17))
+* **macos:** start quietly when launched at login on macOS 15 ([0239ef7](https://github.com/MaybeItsSoftware/intention/commit/0239ef76849c62c379ea529e279c1c8fb23cd7e7))
+
 ## [1.3.4](https://github.com/MaybeItsSoftware/intention/compare/v1.3.3...v1.3.4) (2026-11-13)
 
 ### Bug Fixes
