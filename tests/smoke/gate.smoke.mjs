@@ -394,13 +394,20 @@ async function main() {
 
     const reopenAt = Date.now();
     const historyRenderedAt = await watchRendered(page2, OPENER_REPLY, 3000);
-    record('a same-day reopen replays the earlier conversation instantly',
+    record('a same-day reopen has the coach speaking straight away',
       historyRenderedAt != null && (historyRenderedAt - reopenAt) < 1500,
       historyRenderedAt == null ? 'history never rendered' : `${historyRenderedAt - reopenAt}ms`);
 
-    await page2.waitForTimeout(2000);
-    record('a reopen with history fires no second opener request',
-      received.length === 1, `${received.length} request(s)`);
+    // Since 01a698d every visit opens on an empty chat and the coach speaks
+    // first — the day's transcript stays with the background, which sends it
+    // to the model, rather than being replayed on screen. So a reopen asks for
+    // one fresh opener, never more. That request is then dropped from
+    // `received` so the scripted turns below keep their indices.
+    await waitFor(() => received.length >= 2, 4000, 50);
+    await page2.waitForTimeout(500);
+    record('a reopen fires at most one fresh opener request',
+      received.length <= 2, `${received.length} request(s)`);
+    received.splice(1);
 
     // Script the rest of the conversation: an observation, a probe, a grant.
     stub.replyFor = (i) => ({
