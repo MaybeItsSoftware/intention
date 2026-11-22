@@ -716,3 +716,63 @@ describe('POST /v1/admin/revoke', () => {
     expect((await post('/v1/admin/revoke', {}, admin)).status).toBe(400);
   });
 });
+
+describe('POST /v1/entitlement/delete', () => {
+  const owner = subjectFor('google', 'acct-google-1');
+  const buy = async (d) => {
+    await post('/v1/entitlement/verify', { platform: 'google', receipt: { purchaseToken: 'ptoken-1' } }, {}, d);
+  };
+
+  it('forgets the balance, unlinks purchases, drops matching reports and revokes tokens', async () => {
+    const d = deps();
+    await buy(d);
+    expect(getBalanceMicros(owner, d.store)).toBeGreaterThan(0);
+    const tvBefore = getTokenVersion(owner, d.store);
+    d.reports.add({ id: 'r1', reported: 'x', subject: owner });
+    d.reports.add({ id: 'r2', reported: 'y', subject: 'someone-else' });
+
+    const res = await post('/v1/entitlement/delete', { platform: 'google', accountToken: 'acct-google-1' }, {}, d);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ deleted: true, reports: 1 });
+    expect(res.body.purchases).toBeGreaterThan(0);
+    expect(getBalanceMicros(owner, d.store)).toBe(0);
+    expect(getTokenVersion(owner, d.store)).toBe(tvBefore + 1);
+    expect(d.reports.records.map(r => r.id)).toEqual(['r2']);
+    const rec = getCreditRecord('google', 'order-1', d.store);
+    expect(rec.subject).toBeNull();
+    expect(rec.purchaseToken).toBeUndefined();
+
+    // Gone from recovery, and the receipt cannot mint the credit again.
+    expect((await post('/v1/entitlement/recover', { platform: 'google', accountToken: 'acct-google-1' }, {}, d)).status).toBe(404);
+    await buy(d);
+    expect(getBalanceMicros(owner, d.store)).toBe(0);
+  });
+
+  it('is satisfied, but charged as a miss, when nothing is on file', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      const res = await post('/v1/entitlement/delete', { platform: 'google', accountToken: `nobody-${i}-uuid` }, {}, d);
+      expect(res.body.deleted).toBe(false);
+    }
+    expect((await post('/v1/entitlement/delete', { platform: 'google', accountToken: 'nobody-x-uuid' }, {}, d)).status).toBe(429);
+  });
+
+  it('refuses a malformed request', async () => {
+    expect((await post('/v1/entitlement/delete', { platform: 'web', accountToken: 'acct-google-1' })).status).toBe(400);
+    expect((await post('/v1/entitlement/delete', { platform: 'google', accountToken: 'x' })).status).toBe(400);
+  });
+});
+
+describe('FileReportStore.forget', () => {
+  it('rewrites both generations without the subject', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'int-reports-')), 'reports.jsonl');
+    const reports = new FileReportStore(file, { maxBytes: 200 });
+    reports.add({ id: 'a', subject: 's1', reported: 'x'.repeat(40) });
+    reports.add({ id: 'b', subject: 's2', reported: 'x'.repeat(40) });
+    reports.add({ id: 'c', subject: 's1', reported: 'x'.repeat(40) });
+    expect(reports.forget('s1')).toBe(2);
+    const all = [file, `${file}.1`].filter(existsSync).map(f => readFileSync(f, 'utf8')).join('');
+    expect(all).toContain('"id":"b"');
+    expect(all).not.toContain('"s1"');
+  });
+});

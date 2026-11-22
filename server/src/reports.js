@@ -1,4 +1,4 @@
-import { appendFileSync, renameSync, statSync, mkdirSync } from 'node:fs';
+import { appendFileSync, renameSync, statSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { config } from './config.js';
 
@@ -50,6 +50,36 @@ export class FileReportStore {
     appendFileSync(this.filePath, line);
     this.bytes += size;
   }
+
+  // Drops every report carrying `subject`, from both generations — the
+  // user-requested deletion path (POST /v1/entitlement/delete). A rewrite of
+  // at most 2 × maxBytes, on a rare human action, so no cleverness needed.
+  // Reports sent without a token carry no subject and cannot be matched.
+  forget(subject) {
+    if (!subject) return 0;
+    let removed = 0;
+    for (const file of [this.filePath, `${this.filePath}.1`]) {
+      let raw;
+      try {
+        raw = readFileSync(file, 'utf8');
+      } catch (e) {
+        if (e.code === 'ENOENT') continue;
+        throw e;
+      }
+      const kept = [];
+      for (const line of raw.split('\n')) {
+        if (!line) continue;
+        let rec = null;
+        try { rec = JSON.parse(line); } catch (e) {}
+        if (rec && rec.subject === subject) { removed += 1; continue; }
+        kept.push(line);
+      }
+      const out = kept.length ? `${kept.join('\n')}\n` : '';
+      writeFileSync(file, out);
+      if (file === this.filePath) this.bytes = Buffer.byteLength(out);
+    }
+    return removed;
+  }
 }
 
 // Default when there is no state volume (tests, local dev): the most recent
@@ -65,6 +95,13 @@ export class MemoryReportStore {
     if (this.records.length > this.maxRecords) {
       this.records.splice(0, this.records.length - this.maxRecords);
     }
+  }
+
+  forget(subject) {
+    if (!subject) return 0;
+    const before = this.records.length;
+    this.records = this.records.filter(r => r.subject !== subject);
+    return before - this.records.length;
   }
 }
 

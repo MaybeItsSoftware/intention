@@ -393,6 +393,22 @@ async function recoverEntitlement({ platform, accountToken, backendUrl }) {
   return normalizeEntitlement({ ...data, source: platform, recoveryCheckedAt: Date.now() });
 }
 
+// The Privacy card's "Delete my coaching data". Authenticated the way recovery
+// is, by this device's account id — the only thing that ties a balance to a
+// person, since there are no accounts. Returns { deleted } (false when the
+// server held nothing, which is still a satisfied request). Throws on a
+// network or server failure: unlike silent recovery, somebody is watching
+// this one and has to be told it did not happen.
+async function deleteCoachingData(backendUrl) {
+  if (BILLING_MODE !== 'store') return { deleted: false };
+  const accountToken = await storeAccountToken();
+  if (!accountToken) return { deleted: false };
+  return postBackend(backendUrl, '/v1/entitlement/delete', {
+    platform: IS_ANDROID_STORE ? 'google' : 'apple',
+    accountToken
+  });
+}
+
 // The first-run form of the above: on a build with a store bridge, ask the
 // bridge for the surviving account id and try it once.
 //

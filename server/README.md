@@ -60,6 +60,7 @@ key can't fill a gap.
 | `POST /v1/entitlement/verify` | — | `{ platform, receipt, accountToken? }` → credits the top-up (once), returns entitlement + token |
 | `POST /v1/entitlement/refresh` | — | `{ token }` → re-checked token, live balance (never re-grants) |
 | `POST /v1/entitlement/recover` | — | `{ platform, accountToken }` → entitlement + token for a balance that already exists, or 404 `no_balance_for_account` |
+| `POST /v1/entitlement/delete` | — | `{ platform, accountToken }` → the in-app "Delete my coaching data". Deletes the balance and sandbox ledger, strips the subject and purchase token from its purchase records (the order-id keys stay, so a receipt can't be credited twice), drops its coach reports, and revokes its tokens. `{ deleted: false }` when nothing is on file, which counts toward recover's miss lockout |
 | `POST /v1/chat` | Bearer | `{ system, messages, tools }` → `{ text, toolCalls, balanceMicros, balanceGbp }` |
 | `POST /v1/webhooks/apple` | Apple JWS | App Store Server Notifications V2 (refund/revocation clawback) |
 | `POST /v1/webhooks/google` | Token / PubSub | Google Play RTDN (refund/cancellation clawback) |

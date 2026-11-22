@@ -415,6 +415,15 @@
               <h2>Privacy</h2>
               <p class="subtitle">What Intention keeps on this device, what it sends when you talk to your coach, and where that goes.</p>
               <a class="link-button" href="https://maybeitssoftware.co.uk/intention/privacy" target="_blank" rel="noopener noreferrer">Read the privacy policy</a>
+              <!-- Store builds only (BILLING_MODE === 'store'): the only data
+                   the developer holds is coaching credit and reports, keyed
+                   to this device's account id. Google Play's data-deletion
+                   link points users here: maybeitssoftware.co.uk/intention/delete-data -->
+              <div id="delete-data-block" hidden>
+                <p class="subtitle" style="margin-top: 12px;">Delete your coaching credit balance, the purchase records linked to it and any coach messages you reported from the developer’s server. Unused credit is lost and can’t be restored.</p>
+                <button type="button" id="delete-data-btn" class="secondary danger" style="width: 100%;">Delete my coaching data</button>
+                <div id="delete-data-status" class="status" role="status" aria-live="polite"></div>
+              </div>
             </section>
 
             <details class="card advanced-card" data-section="coach">

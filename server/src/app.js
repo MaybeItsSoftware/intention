@@ -8,7 +8,7 @@ import {
   adjustBalance, getBalanceMicros, markCredited,
   getCreditRecord, refundTopUp, hasBalanceRecord,
   getTokenVersion, bumpTokenVersion, getSandboxCreditMicros, addSandboxCreditMicros,
-  getSandboxDailyMicros, addSandboxDailyMicros, inBatch, StoreError, store
+  getSandboxDailyMicros, addSandboxDailyMicros, inBatch, forgetSubject, StoreError, store
 } from './store.js';
 import { reports as defaultReports } from './reports.js';
 import { callCoachLLM, UpstreamError } from './llm.js';
@@ -60,6 +60,9 @@ const IP_LIMITS = {
   // nothing left but the account UUID — so this and the miss lockout below
   // are the only things standing in front of it.
   '/v1/entitlement/recover': { limit: 30, windowMs: HOUR },
+  // The in-app "Delete my coaching data". Same credential as recover (the
+  // account UUID), so the same budget, and misses share recover's lockout.
+  '/v1/entitlement/delete': { limit: 10, windowMs: HOUR },
   '/v1/webhooks/apple': { limit: 120, windowMs: MINUTE },
   '/v1/webhooks/google': { limit: 120, windowMs: MINUTE },
   // Reporting is deliberately reachable without a token (a user on their own
@@ -111,6 +114,7 @@ export async function handleRequest({ method, path, headers = {}, body = null, q
       case '/v1/entitlement/verify': return await verifyEndpoint(body, headers, deps, backing);
       case '/v1/entitlement/refresh': return refreshEndpoint(body, backing);
       case '/v1/entitlement/recover': return recoverEndpoint(body, backing, limiter, ip);
+      case '/v1/entitlement/delete': return deleteEndpoint(body, backing, limiter, ip, deps.reports || defaultReports);
       case '/v1/chat': return await chatEndpoint(headers, body, deps, backing, limiter);
       case '/v1/report': return reportEndpoint(headers, body, deps.reports || defaultReports);
       case '/v1/admin/revoke': return adminRevokeEndpoint(headers, body, backing);
@@ -640,6 +644,53 @@ function recoverEndpoint(body, backing, limiter, ip) {
     error: 'No coaching credit is attached to this device.',
     code: 'no_balance_for_account'
   });
+}
+
+// The user's own deletion request, from the app's Privacy card. Authenticated
+// exactly as recover is — by the account UUID, which is what recover already
+// accepts as enough to *spend* the balance, so it is enough to delete it.
+//
+// Every case-variant subject is forgotten, not just the first found: a
+// balance and its reports may sit under different spellings of one UUID (see
+// accountTokenCandidates). A subject with nothing on file is a 200 with
+// `deleted: false` — the request is satisfied either way — but it is charged
+// to recover's miss budget, so this cannot be used as a cheaper oracle.
+function deleteEndpoint(body, backing, limiter, ip, reportStore) {
+  if (limiter.atLimit('recover-fail', ip || 'unknown', RECOVER_FAILS.limit)) {
+    return rateLimited();
+  }
+  const platform = body?.platform;
+  if (platform !== 'apple' && platform !== 'google') {
+    return json(400, { error: `Unknown platform: ${platform}`, code: 'bad_request' });
+  }
+  const asserted = assertedAccountToken(body?.accountToken);
+  if (!asserted) {
+    return json(400, { error: 'accountToken is required', code: 'bad_request' });
+  }
+
+  let deleted = false;
+  let purchases = 0;
+  let reportsRemoved = 0;
+  for (const candidate of accountTokenCandidates(asserted)) {
+    const subject = subjectFor(platform, candidate);
+    if (!hasBalanceRecord(subject, backing)) continue;
+    const result = forgetSubject(subject, backing);
+    deleted = true;
+    purchases += result.purchases;
+    try {
+      reportsRemoved += Number(reportStore?.forget?.(subject) || 0);
+    } catch (e) {
+      // The ledger is already forgotten; a report file we cannot rewrite is
+      // logged for the operator rather than failing the user's request.
+      console.error('[intention] report scrub failed', e);
+    }
+    logEvent('subject_forgotten', { subject, platform, forfeitMicros: result.balanceMicros, purchases: result.purchases });
+  }
+
+  if (!deleted) {
+    limiter.record('recover-fail', ip || 'unknown', RECOVER_FAILS.windowMs);
+  }
+  return json(200, { ok: true, deleted, purchases, reports: reportsRemoved });
 }
 
 // subjectFor hashes the account token verbatim, and nothing normalises its

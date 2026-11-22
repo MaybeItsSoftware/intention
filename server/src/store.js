@@ -92,6 +92,19 @@ export class MemoryStore {
   get size() {
     return this.map.size;
   }
+
+  // Live keys starting with `prefix`. Only forgetSubject below needs it: the
+  // purchase records are keyed by store transaction, not by subject, so
+  // finding a subject's means walking them. Rare and operator-scale, so a
+  // scan is fine.
+  keysWithPrefix(prefix, now = Date.now()) {
+    const keys = [];
+    for (const [key, entry] of this.map) {
+      if (entry.expiresAt && entry.expiresAt < now) continue;
+      if (key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  }
 }
 
 // Durable variant: the in-memory Map stays the authoritative synchronous
@@ -443,4 +456,39 @@ export function bumpTokenVersion(subject, backing = store) {
   const next = getTokenVersion(subject, backing) + 1;
   backing.set(`tv:${subject}`, next, null);
   return next;
+}
+
+// ---- Deletion ---------------------------------------------------------------
+//
+// POST /v1/entitlement/delete: the user's own "delete my data". One batch, so
+// a failed flush leaves everything as it was rather than half-forgotten.
+//
+// What goes: the balance (unused credit is forfeit — the client says so before
+// it asks) and the sandbox ledger. What is scrubbed rather than removed: every
+// purchase record naming the subject. Those are the idempotency keys that stop
+// a store receipt being credited twice, so the key (the store's own order id)
+// must stay or a replayed receipt would mint credit again; only the link to
+// the subject and the raw purchase token are dropped. What is written: one
+// more token version, so any token the device or a copy of it still holds is
+// dead — deleting `tv:` instead would reset it to 0 and revive them.
+export function forgetSubject(subject, backing = store) {
+  return inBatch(backing, () => {
+    const hadBalance = hasBalanceRecord(subject, backing);
+    const balanceMicros = getBalanceMicros(subject, backing);
+    backing.delete(balanceKey(subject));
+    backing.delete(sandboxCreditKey(subject));
+
+    let purchases = 0;
+    const keys = typeof backing.keysWithPrefix === 'function' ? backing.keysWithPrefix('credited:') : [];
+    for (const key of keys) {
+      const rec = backing.get(key);
+      if (!rec || typeof rec !== 'object' || rec.subject !== subject) continue;
+      const { subject: _s, purchaseToken: _p, orderId: _o, ...kept } = rec;
+      backing.set(key, { ...kept, subject: null, forgottenAt: Date.now() }, null);
+      purchases += 1;
+    }
+
+    bumpTokenVersion(subject, backing);
+    return { hadBalance, balanceMicros, purchases };
+  });
 }

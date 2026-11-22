@@ -855,6 +855,17 @@ blockquote {
   background: var(--danger-fill);
 }
 
+/* Privacy card's "Delete my coaching data": destructive, so it wears the
+   danger hue as border and text, filled only on hover. */
+button.secondary.danger {
+  border-color: var(--danger-line);
+  color: var(--danger-text);
+}
+
+button.secondary.danger:hover {
+  background: var(--danger-fill);
+}
+
 #coach-modal, #gate-modal, #loosen-modal, .add-modal, #paywall-modal {
   position: fixed;
   inset: 0;

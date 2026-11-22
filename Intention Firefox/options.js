@@ -823,6 +823,9 @@ async function showSettingsView(state) {
     document.getElementById('paywall-modal').hidden = true;
   });
 
+  const deleteBlock = document.getElementById('delete-data-block');
+  if (deleteBlock) deleteBlock.hidden = BILLING_MODE !== 'store';
+  bindOnce('delete-data-btn', 'click', deleteCoachingDataFlow);
   bindOnce('export-list-btn', 'click', exportBlocklistFile);
   bindOnce('import-list-btn', 'click', () => document.getElementById('import-list-input')?.click());
   bindOnce('import-list-input', 'change', importBlocklistFile);
@@ -941,6 +944,35 @@ async function importBlocklistFile(event) {
   } finally {
     // Selecting the same file later must raise another change event.
     input.value = '';
+  }
+}
+
+// The user's own deletion request (Privacy card, store builds only). What it
+// removes lives on the server; what is on this device stays until the app is
+// removed, and the confirm says both so nobody is surprised either way.
+async function deleteCoachingDataFlow() {
+  const btn = document.getElementById('delete-data-btn');
+  const ok = window.confirm('Delete your coaching data from the developer’s server?\n\n' +
+    'This removes your coaching credit balance, the purchase records linked to it, and any coach messages you reported. ' +
+    'Any unused credit is lost and can’t be restored or refunded.\n\n' +
+    'Your blocked sites, apps and history stay on this device until you remove Intention.');
+  if (!ok) return;
+  if (btn) btn.disabled = true;
+  setStatus('delete-data-status', 'Deleting…', '');
+  try {
+    const result = await deleteCoachingData(await currentBackendUrl());
+    // Cleared locally whatever the server held: the token is revoked either
+    // way, and the marker stops the paywall re-asking recovery straight away
+    // for a balance that is no longer there.
+    await persistEntitlement({ active: false, source: '', recoveryCheckedAt: Date.now() });
+    await onAccessChanged(await refreshAccessUI('access-paywall'));
+    setStatus('delete-data-status', result?.deleted
+      ? 'Done. Your coaching data has been deleted from the developer’s server.'
+      : 'Done. The developer’s server held no coaching data for this device.', 'success');
+  } catch (e) {
+    setStatus('delete-data-status', `Couldn’t delete your data: ${e?.message || e}. Check your connection and try again, or email privacy@maybeitssoftware.co.uk.`, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
