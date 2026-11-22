@@ -1,0 +1,7 @@
+# Keep secrets and local files out of `gcloud run deploy --source server`.
+.gcloudignore
+.env
+.env.*
+!.env.template
+node_modules/
+README.md
